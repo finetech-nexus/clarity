@@ -24,7 +24,9 @@ jobs:
           - image: clarity-web
             context: ./frontend
             file: ./frontend/Dockerfile
-            build_args: NEXT_PUBLIC_API_URL=https://clarity-api.api.dev.sandbox.internal.nbank.fr
+            build_args: |
+              NEXT_PUBLIC_API_URL=https://clarity.api.dev.sandbox.internal.nbank.fr
+              CLARITY_API_UPSTREAM=http://clarity-api.kyc-aml.svc.cluster.local:8095
     steps:
       - name: Checkout
         uses: actions/checkout@v5

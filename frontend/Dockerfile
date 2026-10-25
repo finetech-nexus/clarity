@@ -4,7 +4,9 @@ COPY package.json package-lock.json* ./
 RUN npm install
 COPY . .
 ARG NEXT_PUBLIC_API_URL=http://localhost:8095
+ARG CLARITY_API_UPSTREAM=
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV CLARITY_API_UPSTREAM=$CLARITY_API_UPSTREAM
 RUN npm run build
 EXPOSE 3010
 CMD ["npm", "start"]
