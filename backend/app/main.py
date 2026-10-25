@@ -83,6 +83,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(marble_v1beta)
     app.include_router(marble_console_router)
     app.include_router(ballerine_router)
+    from app.api.kyc_check import router as kyc_check_router
+
+    app.include_router(kyc_check_router)
     app.include_router(ballerine_studio_router)
     app.include_router(clarity_router)
     from app.api.desks import router as desks_router
