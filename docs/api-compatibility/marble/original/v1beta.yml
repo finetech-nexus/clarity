@@ -1,0 +1,2208 @@
+openapi: 3.1.0
+info:
+  title: Marble decision engine API
+  description: Public API on decisions and data ingestion.
+  version: 1.0.0
+x-readme:
+  explorer-enabled: false
+  proxy-enabled: false
+  samples-languages:
+    - shell
+    - python
+    - javascript
+    - go
+    - ruby
+servers:
+  - url: https://api.checkmarble.com/v1beta
+tags:
+  - name: Async Decisions
+    description: Routes for asynchronous decision execution
+  - name: Cases
+    description: Routes for cases
+  - name: Tags
+    description: Routes for tags
+  - name: Continuous Screenings
+    description: Routes for continuous screenings
+  - name: Record
+    description: Routes for record (data ingested into Marble)
+  - name: User scoring
+    description: Routes for user scoring
+paths:
+  /ingest/{objectType}/uploads:
+    get:
+      operationId: listBatchIngestionLogs
+      tags:
+        - Ingestion
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: List batch ingestion logs
+      parameters:
+        - name: objectType
+          description: Filter decisions by their scenario
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: status
+          description: Only show logs in a specific status
+          in: query
+          schema:
+            type: string
+            enum: [pending processing success failure]
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/after"
+      responses:
+        "200":
+          description: List of batch ingestion events
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BaseResponse"
+                  - $ref: "#/components/schemas/BasePagination"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/BatchIngestionLog"
+        "400":
+          $ref: "#/components/responses/400"
+
+    put:
+      operationId: asyncIngestCsv
+      tags:
+        - Ingestion
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: Upload a CSV file that will be ingested asynchronously
+      parameters:
+        - name: objectType
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: content-type
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ["text/csv"]
+        - name: x-goog-if-generation-match
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ["0"]
+        - name: monitor
+          in: query
+          description: Whether to put the ingested object under continuous monitoring
+          schema:
+            type: boolean
+        - name: monitoring_config_id
+          in: query
+          description:
+            If monitoring the object, which configuration to use. Can be
+            repeated multiple times.
+          schema:
+            type: string
+            format: uuid
+        - name: skip_screening
+          in: query
+          description:
+            If monitoring, whether to skip the initial screening of the
+            ingested object.
+          schema:
+            type: boolean
+      description: |
+        This endpoint will emit a presigned URL to which to upload the file.
+
+        The actual upload must start within one minute of the initial call, and terminate within 15 minutes.
+
+        The HTTP client used **must** then replay the request to the provided URL with the same headers as the initial request except for
+        the Marble API key, and upload the CSV file.
+
+        For Marble's hosted platform or when using Google Cloud Storage, adding the header indicated here (`x-goog-if-generation-match: 0`)
+        is mandatory. For self-hosted deployment, refer to Marble's documentation to learn more about requirements, depending on the
+        blob storage in use.
+      requestBody:
+        content:
+          text/csv: {}
+      responses:
+        "202":
+          description: Upload URL created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BaseResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AsyncUploadCreated"
+        "400":
+          $ref: "#/components/responses/400"
+
+  /decisions/async:
+    post:
+      operationId: createAsyncDecisionBatch
+      tags:
+        - Async Decisions
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: Create a batch of async decision executions
+      description: |
+        Enqueue multiple asynchronous decision executions at once.
+
+        When `ingest` is true, the object will be ingested before decisions are created. Note that this endpoint is not compatible with
+        optional side effects of ingestion, such as addition to continuous screening (though if the record is already being monitored,
+        it will trigger a new screening with the updated data).
+
+        All trigger objects are validated against the data model on reception. If any object fails validation, the entire batch is rejected with per-object error details.
+        Each object is processed independently in the background.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - trigger_objects
+              anyOf:
+                - required: [trigger_object_type]
+                - required: [scenario_id]
+              properties:
+                trigger_object_type:
+                  description: |
+                    Name of the data model table for the trigger objects.
+                    At least one of `trigger_object_type` or `scenario_id` must be provided.
+                    When only `scenario_id` is provided, the trigger object type is derived from the scenario.
+                  type: string
+                trigger_objects:
+                  description: Array of trigger object payloads (1 to 100 objects)
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items:
+                    type: object
+                    additionalProperties: true
+                scenario_id:
+                  description: |
+                    Optional scenario ID to restrict execution to a single scenario.
+                    At least one of `trigger_object_type` or `scenario_id` must be provided.
+                  type: string
+                  format: uuid
+                ingest:
+                  description: Whether to ingest each trigger object before creating decisions
+                  type: boolean
+                  default: false
+      responses:
+        "201":
+          description: Async decision executions created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BaseResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/AsyncDecisionExecutionCreated"
+        "400":
+          $ref: "#/components/responses/400"
+
+  /decisions/async/{executionId}:
+    get:
+      operationId: getAsyncDecisionExecution
+      tags:
+        - Async Decisions
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: Get async decision execution status
+      description: |
+        Retrieve the current status and details of an async decision execution.
+        Old executions are kept for 30 days after completion, so the endpoint may
+        return a 404 status for old executions that have been deleted.
+      parameters:
+        - name: executionId
+          required: true
+          in: path
+          description: ID of the async decision execution
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Async decision execution details
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BaseResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AsyncDecisionExecution"
+        "400":
+          $ref: "#/components/responses/400"
+        "404":
+          $ref: "#/components/responses/404"
+
+  /cases:
+    get:
+      operationId: listCases
+      tags:
+        - Cases
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: List cases
+      description: |
+        List cases according to a filter set.
+
+        This endpoint will list all cases matching the filter, sorted by creation date, in the requested order. It will not reorder "waiting for action" or hide snoozed cases.
+      parameters:
+        - name: inbox_id
+          description: |
+            Only list cases in the specified inboxes.
+
+            This parameter may be repeated as necessary.
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          description: |
+            Filter cases by their investigation status.
+
+            This parameter may be repeated as necessary.
+          in: query
+          schema:
+            type: string
+            enum: [pending, investigating, closed]
+        - name: assigned_to
+          description: List cases assigned to the specified user
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: start
+          description: Filter cases created on and after this date
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: end
+          description: Filter cases created strictly before this date
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/order"
+        - $ref: "#/components/parameters/after"
+      responses:
+        "200":
+          description: List of cases
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BaseResponse"
+                  - $ref: "#/components/schemas/BasePagination"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Case"
+        "400":
+          $ref: "#/components/responses/400"
+
+    post:
+      operationId: createCase
+      tags:
+        - Cases
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: Create new case
+      description: |
+        Create a new case.
+
+        This endpoint enforces the following preconditions:
+
+          - All decisions exist and are not already assigned to a case
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - inbox_id
+                - name
+              properties:
+                inbox_id:
+                  description: ID of the inbox to create the case in
+                  type: string
+                  format: uuid
+                name:
+                  description: Name of the case
+                  type: string
+                assignee_email:
+                  description: Email address of the assignee
+                  type: string
+                  format: email
+                decisions:
+                  description:
+                    List of decision_ids to attach to this case. Must not already be
+                    assigned to a case.
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        "200":
+          description: New case
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BaseResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Case"
+        "400":
+          $ref: "#/components/responses/400"
+        "422":
+          $ref: "#/components/responses/422"
+
+  /cases/{caseId}:
+    get:
+      operationId: getCase
+      tags:
+        - Cases
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: Get case
+      description: |
+        Get case by its ID.
+      parameters:
+        - name: caseId
+          required: true
+          in: path
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Case
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BaseResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Case"
+        "400":
+          $ref: "#/components/responses/400"
+
+    patch:
+      operationId: updateCase
+      tags:
+        - Cases
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: Update case
+      description: |
+        Update a case.
+
+        Some actions will be available through specific endpoints and will not be updateable from here.
+      parameters:
+        - name: caseId
+          required: true
+          in: path
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                inbox:
+                  description: ID of the inbox to move the case in
+                  type: string
+                  format: uuid
+                name:
+                  description: Name of the case
+                  type: string
+                outcome:
+                  description: Outcome of the case
+                  type: string
+                  enum: [unset confirmed_risk valuable_alert false_positive]
+
+      responses:
+        "200":
+          description: Case
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BaseResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Case"
+        "400":
+          $ref: "#/components/responses/400"
+        "422":
+          $ref: "#/components/responses/422"
+
+  /cases/{caseId}/close:
+    post:
+      operationId: closeCase
+      tags:
+        - Cases
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: Close case
+      description: |
+        Close a case with an optional outcome.
+
+        This endpoint is idempotent and will result in a no-op if the case is already closed with the same outcome.
+      parameters:
+        - name: caseId
+          required: true
+          in: path
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                outcome:
+                  description: Final outcome of the case
+                  type: string
+                  enum: [unset confirmed_risk valuable_alert false_positive]
+                  default: unset
+      responses:
+        "200":
+          description: Case
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BaseResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Case"
+        "400":
+          $ref: "#/components/responses/400"
+        "422":
+          $ref: "#/components/responses/422"
+
+  /cases/{caseId}/reopen:
+    post:
+      operationId: reopenCase
+      tags:
+        - Cases
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: Reopen a closed case
+      description: |
+        Reopen a closed case.
+
+        This endpoint is idempotent and will result in a no-op if the case is still open.
+      parameters:
+        - name: caseId
+          required: true
+          in: path
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Case
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BaseResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Case"
+        "400":
+          $ref: "#/components/responses/400"
+        "422":
+          $ref: "#/components/responses/422"
+
+  /cases/{caseId}/escalate:
+    post:
+      operationId: escalateCase
+      tags:
+        - Cases
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: Escalate case
+      description: |
+        Escalate a case, moving it to the configured escalation inbox and marking it as waiting for action.
+
+        This endpoint enforces the following preconditions:
+
+          - The source inbox is configured to have an escalation inbox
+      parameters:
+        - name: caseId
+          required: true
+          in: path
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Case
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BaseResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Case"
+        "400":
+          $ref: "#/components/responses/400"
+        "422":
+          $ref: "#/components/responses/422"
+
+  /cases/{caseId}/comments:
+    get:
+      operationId: listCaseComments
+      tags:
+        - Cases
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: List case comments
+      description: |
+        List comments that were left on the given case.
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/order"
+        - $ref: "#/components/parameters/after"
+        - name: caseId
+          required: true
+          in: path
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: List of comments
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BaseResponse"
+                  - $ref: "#/components/schemas/BasePagination"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/CaseComment"
+        "400":
+          $ref: "#/components/responses/400"
+        "413":
+          $ref: "#/components/responses/413"
+
+    post:
+      operationId: createCaseComment
+      tags:
+        - Cases
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: Create new case comment
+      description: |
+        Write a new comment on the provided case.
+      parameters:
+        - name: caseId
+          required: true
+          in: path
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - comment
+              properties:
+                comment:
+                  description: |
+                    Body of the comment.
+
+                    You can format the comment with markdown markup. The comment must be up to 16384 characters.
+                  type: string
+                  maxLength: 16384
+      responses:
+        "201":
+          description: Comment created
+        "400":
+          $ref: "#/components/responses/400"
+        "422":
+          $ref: "#/components/responses/422"
+
+  /cases/{caseId}/files:
+    get:
+      operationId: listCaseFiles
+      tags:
+        - Cases
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: List case files
+      description: |
+        List files that were uploaded and attached to the provided case.
+      parameters:
+        - name: caseId
+          required: true
+          in: path
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: List of files
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BaseResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/CaseFile"
+        "400":
+          $ref: "#/components/responses/400"
+
+    post:
+      operationId: uploadCaseFile
+      tags:
+        - Cases
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: Upload case file
+      description: |
+        Upload a new file and attach it to an existing case.
+      parameters:
+        - name: caseId
+          required: true
+          in: path
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  description: File to upload, maximum 5MB.
+                  type: string
+                  format: binary
+                  maxLength: 5242880
+      responses:
+        "200":
+          description: File reference
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BaseResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/CaseFile"
+        "400":
+          $ref: "#/components/responses/400"
+        "422":
+          $ref: "#/components/responses/422"
+
+  /cases/{caseId}/files/{fileId}/download:
+    get:
+      operationId: downloadCaseFile
+      tags:
+        - Cases
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: Download a case file
+      description: |
+        Download the file that was uploaded on a case.
+
+        This endpoint will provide a temporary download URL for the file that can be retrieved in two ways, depending on the capabilities and configuration of your HTTP client:
+
+           - It will be included in the response body
+           - It will be part of a redirect status flow in the response
+      parameters:
+        - name: caseId
+          required: true
+          in: path
+          schema:
+            type: string
+            format: uuid
+        - name: fileId
+          required: true
+          in: path
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "302":
+          $ref: "#/components/responses/302"
+
+  /cases/{caseId}/ai_reviews:
+    get:
+      operationId: listAiCaseReviews
+      tags:
+        - Cases
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: List AI case reviews
+      description: |
+        List AI reviews generated for the given case, ordered by creation date.
+        The review content is not included, use the get AI review by ID endpoint to fetch the full content.
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/order"
+        - $ref: "#/components/parameters/after"
+        - name: caseId
+          required: true
+          in: path
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: List of AI case reviews
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BaseResponse"
+                  - $ref: "#/components/schemas/BasePagination"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/CaseAiReview"
+        "400":
+          $ref: "#/components/responses/400"
+
+    post:
+      operationId: enqueueCaseReview
+      tags:
+        - Cases
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: Enqueue an AI case review
+      description: |
+        Create a new AI review for the given case, which will be processed asynchronously.
+        Requires AI case review to be enabled for the organization
+        Returns a 409 conflict if a review is already pending for this case.
+      parameters:
+        - name: caseId
+          required: true
+          in: path
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "202":
+          description: Case review successfully enqueued
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BaseResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required:
+                          - ai_review_id
+                        properties:
+                          ai_review_id:
+                            type: string
+                            format: uuid
+        "400":
+          $ref: "#/components/responses/400"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+
+  /cases/{caseId}/ai_reviews/{aiReviewId}:
+    get:
+      operationId: getAiCaseReview
+      tags:
+        - Cases
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: Get AI case review
+      description: |
+        Get an AI case review by its ID. The full review content is included when the status is "completed".
+      parameters:
+        - name: caseId
+          required: true
+          in: path
+          schema:
+            type: string
+            format: uuid
+        - name: aiReviewId
+          required: true
+          in: path
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: AI case review
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BaseResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/CaseAiReviewDetail"
+        "400":
+          $ref: "#/components/responses/400"
+        "404":
+          $ref: "#/components/responses/404"
+
+  /tags:
+    get:
+      operationId: listTags
+      tags:
+        - Tags
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: List tags
+      description: |
+        List all tags for the organization.
+
+        Tags can be filtered by target type using the optional `target` query parameter.
+      parameters:
+        - name: target
+          description: Filter tags by target type
+          in: query
+          schema:
+            type: string
+            enum: [case, object]
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/order"
+        - $ref: "#/components/parameters/after"
+      responses:
+        "200":
+          description: List of tags
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BaseResponse"
+                  - $ref: "#/components/schemas/BasePagination"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Tag"
+        "400":
+          $ref: "#/components/responses/400"
+
+  /cases/{caseId}/tags:
+    post:
+      operationId: addCaseTags
+      tags:
+        - Cases
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: Add tags to a case
+      description: |
+        Add one or more tags to a case. This operation is idempotent: adding a tag that is already present on the case is a no-op.
+
+        All provided tag IDs must reference tags with `target=case`. Returns 400 if any tag has a different target.
+      parameters:
+        - name: caseId
+          required: true
+          in: path
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - tag_ids
+              properties:
+                tag_ids:
+                  description: List of tag IDs to add to the case
+                  type: array
+                  minItems: 1
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        "200":
+          description: Updated case
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BaseResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Case"
+        "400":
+          $ref: "#/components/responses/400"
+        "404":
+          $ref: "#/components/responses/404"
+
+  /cases/{caseId}/tags/{tagId}:
+    delete:
+      operationId: removeCaseTag
+      tags:
+        - Cases
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: Remove a tag from a case
+      description: |
+        Remove a tag from a case. This operation is idempotent: removing a tag that is not present on the case is a no-op.
+      parameters:
+        - name: caseId
+          required: true
+          in: path
+          schema:
+            type: string
+            format: uuid
+        - name: tagId
+          required: true
+          in: path
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Tag removed from case (or was not present)
+        "400":
+          $ref: "#/components/responses/400"
+        "404":
+          $ref: "#/components/responses/404"
+
+  /continuous-screenings/objects:
+    post:
+      summary: Add an object under continuous screening with given configuration
+      description: |
+        This endpoint is idempotent. If the object is already under monitoring, the call succeeds and
+        re-runs the screening, returning the latest result. It is safe to retry this call to retrieve
+        an up-to-date screening result.
+      operationId: addContinuousScreeningObject
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      tags:
+        - Continuous Screenings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - object_type
+                - object_id
+                - config_stable_id
+              properties:
+                object_type:
+                  type: string
+                config_stable_id:
+                  type: string
+                  format: uuid
+                object_id:
+                  type: string
+                skip_screen:
+                  type: boolean
+                  default: false
+                  description:
+                    Whether to skip screening the object immediately. If true, the API
+                    returns 201 Created without data.
+      responses:
+        "201":
+          description: Monitored object added or already existed. Returns the latest screening result if screening was performed, or an empty response if screening was skipped.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContinuousScreening"
+        "400":
+          $ref: "#/components/responses/400"
+        "403":
+          $ref: "#/components/responses/403"
+
+    delete:
+      summary: Remove an object from continuous screening
+      operationId: removeContinuousScreeningObject
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      tags:
+        - Continuous Screenings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - object_type
+                - object_id
+                - config_stable_id
+              properties:
+                object_type:
+                  type: string
+                object_id:
+                  type: string
+                config_stable_id:
+                  type: string
+                  format: uuid
+      responses:
+        "204":
+          description: Monitored object deleted
+        "400":
+          $ref: "#/components/responses/400"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+
+  /records/{recordType}/{recordId}/annotations:
+    get:
+      operationId: listRecordAnnotations
+      tags:
+        - Record
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: List annotations for an record
+      description: |
+        List all annotations attached to a specific record.
+      parameters:
+        - name: recordType
+          in: path
+          required: true
+          description: Type of the record as defined in the data model
+          schema:
+            type: string
+        - name: recordId
+          in: path
+          required: true
+          description: Client-side ID of the record
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of annotations
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BaseResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/RecordAnnotation"
+        "400":
+          $ref: "#/components/responses/400"
+        "404":
+          $ref: "#/components/responses/404"
+
+    post:
+      operationId: createRecordAnnotation
+      tags:
+        - Record
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: Attach annotations to an record
+      description: |
+        Attach one or more annotations to a specific record. Supported annotation types are `comment`, `tag` and `risk_tag`.
+
+        For `tag` and `risk_tag` types, if an identical annotation already exists on the record, the existing annotation is returned instead of creating a duplicate.
+
+        To attach a file annotation, use the dedicated endpoint
+        `POST /records/{recordType}/{recordId}/annotations/files`.
+      parameters:
+        - name: recordType
+          in: path
+          required: true
+          description: Type of the record as defined in the data model
+          schema:
+            type: string
+        - name: recordId
+          in: path
+          required: true
+          description: Client-side ID of the record
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - annotations
+              properties:
+                annotations:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items:
+                    oneOf:
+                      - $ref: "#/components/schemas/CreateCommentAnnotation"
+                      - $ref: "#/components/schemas/CreateTagAnnotation"
+                      - $ref: "#/components/schemas/CreateRiskTagAnnotation"
+      responses:
+        "201":
+          description: Annotation(s) created or pre-existing
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BaseResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/RecordAnnotation"
+        "400":
+          $ref: "#/components/responses/400"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+
+  /records/{recordType}/{recordId}/annotations/files:
+    post:
+      operationId: createRecordFileAnnotation
+      tags:
+        - Record
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: Attach files to a record as an annotation
+      description: |
+        Upload one or more files and attach them as a file annotation to a specific record.
+      parameters:
+        - name: recordType
+          in: path
+          required: true
+          description: Type of the record as defined in the data model
+          schema:
+            type: string
+        - name: recordId
+          in: path
+          required: true
+          description: Client-side ID of the record
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - caption
+                - files[]
+              properties:
+                caption:
+                  description: Caption for the uploaded files
+                  type: string
+                files[]:
+                  description: One or more files to attach. At least one file is required.
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items:
+                    type: string
+                    format: binary
+      responses:
+        "201":
+          description: File annotation(s) created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BaseResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/RecordAnnotation"
+        "400":
+          $ref: "#/components/responses/400"
+        "404":
+          $ref: "#/components/responses/404"
+
+  /records/annotations/{id}/files/{partId}/download:
+    get:
+      operationId: downloadRecordAnnotationFile
+      tags:
+        - Record
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: Download a file annotation part
+      description: |
+        Download a specific file within a file annotation.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID of the file annotation
+          schema:
+            type: string
+            format: uuid
+        - name: partId
+          in: path
+          required: true
+          description: Filename of the specific file part within the annotation
+          schema:
+            type: string
+      responses:
+        "302":
+          $ref: "#/components/responses/302"
+        "400":
+          $ref: "#/components/responses/400"
+        "404":
+          $ref: "#/components/responses/404"
+
+  /records/annotations:
+    delete:
+      operationId: deleteRecordAnnotations
+      tags:
+        - Record
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: Delete annotations by ID
+      description: |
+        Delete one or more annotations by their IDs.
+
+        This operation is idempotent — IDs that do not exist are silently ignored. All deletions are performed atomically.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        "204":
+          description: Annotations deleted
+        "400":
+          $ref: "#/components/responses/400"
+
+  /risk-levels/{objectType}/{objectId}:
+    get:
+      operationId: getActiveRiskLevel
+      tags:
+        - User scoring
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: Retrieve a record's active risk level
+      parameters:
+        - name: objectType
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: objectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Current risk level
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BaseResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/RecordRiskLevel"
+        "400":
+          $ref: "#/components/responses/400"
+        "404":
+          $ref: "#/components/responses/404"
+
+    post:
+      operationId: overrideRiskLevel
+      tags:
+        - User scoring
+      security:
+        - BearerTokenAuth: []
+        - ApiKeyAuth: []
+      summary: Override a record's risk level
+      parameters:
+        - name: objectType
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: objectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [risk_level]
+              properties:
+                risk_level:
+                  type: integer
+                  minimum: 1
+      responses:
+        "200":
+          description: New risk level
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BaseResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/RecordRiskLevel"
+        "400":
+          $ref: "#/components/responses/400"
+        "404":
+          $ref: "#/components/responses/404"
+
+components:
+  securitySchemes:
+    BearerTokenAuth:
+      type: http
+      scheme: bearer
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-KEY
+
+  responses:
+    "302":
+      description: Resource can be downloaded elsewhere
+      headers:
+        location:
+          schema:
+            type: string
+            format: url
+            description:
+              The download URL of the file. If your HTTP client follows
+              redirects, it will be downloaded directly.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [redirect_to]
+            properties:
+              redirect_to:
+                description:
+                  The download URL of the file. Can be used if your HTTP client does
+                  not follows redirects.
+                type: string
+                format: url
+    "400":
+      description: Provided parameters or payload is malformed or invalid
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    "401":
+      description: Credentials are missing or invalid
+    "403":
+      description:
+        The provided credentials are missing the required permissions for
+        the requested action
+    "404":
+      description: The requested resource does not exist
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    "409":
+      description: The resource being created conflicts with an existing resource
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    "413":
+      description: The request body exceeds maximum allowed size.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    "422":
+      description: The requested action is not possible on the requested resource
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  parameters:
+    limit:
+      name: limit
+      description: How many item to return on each page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+
+    order:
+      name: order
+      description: Sort direction for items
+      in: query
+      schema:
+        type: string
+        enum: ["ASC", "DESC"]
+    after:
+      name: after
+      description: |
+        Value to start iterating from.
+
+        Should be a value returned in the `pagination.next_page_id` field of a response.
+      in: query
+      schema:
+        type: string
+
+  schemas:
+    BaseResponse:
+      title: Base response
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          description: Requested objects from the API
+
+    BasePagination:
+      type: object
+      properties:
+        pagination:
+          title: Pagination information
+          type: object
+          required:
+            - has_more
+          properties:
+            has_more:
+              description: Whether there are more elements to iteration through
+              type: boolean
+            next_page_id:
+              description: Value to use in pagination filter to request for the next page
+              type: string
+
+    BatchIngestionLog:
+      title: Batch ingestion log
+      type: object
+      required:
+        - id
+        - object_type
+        - status
+        - started_at
+        - rows_processed
+        - rows_ingested
+      properties:
+        id:
+          type: string
+          format: uuid
+        object_type:
+          description: Name of the object type being ingested.
+          type: string
+        status:
+          type: string
+          enum: [pending, processing, success, failure]
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          description: Time at which ingestion finished, will be `null` until completed.
+          type: string
+          format: date-time
+        rows_processed:
+          type: integer
+        rows_ingested:
+          type: integer
+        error:
+          type: string
+        error_code:
+          description: Stable machine-readable failure reason.
+          type: string
+          enum: [invalid_input, global_timeout, upload_not_received, file_too_large, internal_error]
+
+    AsyncUploadCreated:
+      title: Upload URL signed and generated
+      type: object
+      required:
+        - upload_url
+      properties:
+        upload_url:
+          type: string
+          format: url
+
+    AsyncDecisionExecutionCreated:
+      title: Async decision execution created
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          type: string
+          format: uuid
+
+    AsyncDecisionExecution:
+      title: Async decision execution
+      type: object
+      required:
+        - id
+        - object_type
+        - status
+        - decision_ids
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        object_type:
+          description: Name of the data model table for the trigger object
+          type: string
+        scenario_id:
+          description: Scenario ID if execution was restricted to a single scenario
+          type: string
+          format: uuid
+        status:
+          description: |
+            Current status of the execution:
+            - `pending`: enqueued, waiting to be processed
+            - `ingested`: trigger object has been ingested, decisions are being created
+            - `completed`: all decisions have been created successfully
+            - `failed`: execution failed (see `error_message` for details)
+          type: string
+          enum: [pending, ingested, completed, failed]
+        decision_ids:
+          description: IDs of decisions created by this execution (populated on completion)
+          type: array
+          items:
+            type: string
+            format: uuid
+        error_message:
+          description: Error message if the execution failed
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Error:
+      title: Error response
+      type: object
+      required:
+        - code
+      properties:
+        code:
+          description: Defined, machine-readable identifier for the error
+          type: string
+          enum:
+            - invalid_payload
+            - unprocessable_entity
+            - not_found
+            - feature_disabled
+            - feature_not_configured
+            - server_error
+        messages:
+          description: |
+            List of human-readable descriptions for the error.
+
+            Those messages are subject to change over time, we do not recommend relying on them.
+          type: array
+          items:
+            type: string
+        detail:
+          description: |
+            Free-form objects providing details on the error
+
+            Those messages are subject to change over time, we do not recommend relying on them.
+          type: object
+          additionalProperties: true
+
+    Ref:
+      title: Reference
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          description:
+            Optional name for the referenced object, not all references will
+            have it.
+
+    Tag:
+      title: Tag
+      type: object
+      required:
+        - id
+        - name
+        - target
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        target:
+          type: string
+          enum: [case, object]
+
+    Case:
+      title: Case
+      type: object
+      required:
+        - id
+        - inbox
+        - name
+        - status
+        - outcome
+        - contributors
+        - tags
+        - review_level
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        inbox:
+          $ref: "#/components/schemas/Ref"
+        name:
+          type: string
+        assignee:
+          $ref: "#/components/schemas/Ref"
+        status:
+          type: string
+          enum: [pending, investigating, closed]
+        outcome:
+          type: string
+          enum: [unset, confirmed_risk, valuable_alert, false_positive]
+        contributors:
+          type: array
+          items:
+            $ref: "#/components/schemas/Ref"
+        tags:
+          type: array
+          items:
+            $ref: "#/components/schemas/Ref"
+        snoozed_until:
+          type: string
+          format: date-time
+        review_level:
+          anyOf:
+            - type: string
+              enum: [probable_false_positive, investigate, escalate]
+            - type: "null"
+          description: |
+            The review level from AI review.
+            This field is only filled if the ai case review feature is enabled and did a review on this case, otherwise it is null.
+        created_at:
+          type: string
+          format: date-time
+
+    CaseComment:
+      title: Case comment
+      type: object
+      required:
+        - id
+        - user
+        - comment
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        user:
+          $ref: "#/components/schemas/Ref"
+        comment:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    CaseFile:
+      title: Case file
+      type: object
+      required:
+        - id
+        - file_name
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        file_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    CaseAiReview:
+      title: Case AI review
+      type: object
+      required:
+        - id
+        - case_id
+        - status
+        - reaction
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        case_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, completed, failed, insufficient_funds]
+        reaction:
+          anyOf:
+            - type: string
+              enum: [ok, ko]
+            - type: "null"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CaseAiReviewDetail:
+      title: Case AI review detail
+      allOf:
+        - $ref: "#/components/schemas/CaseAiReview"
+        - type: object
+          required:
+            - content
+          properties:
+            content:
+              description: The AI review content. Only present when status is "completed".
+              anyOf:
+                - $ref: "#/components/schemas/CaseAiReviewContentV1"
+                - type: object
+                - type: "null"
+
+    CaseAiReviewContentV1:
+      title: Case AI review content (v1)
+      type: object
+      required:
+        - version
+        - output
+        - sanity_check
+      properties:
+        version:
+          type: string
+          enum: [v1]
+        output:
+          description: The main case review text produced by the AI
+          type: string
+        sanity_check:
+          description: The sanity check result produced by the AI
+          anyOf:
+            - type: string
+            - type: "null"
+
+    ScreeningEntity:
+      type: string
+      enum:
+        [
+          "Thing",
+          "Address",
+          "Airplane",
+          "Asset",
+          "Associate",
+          "Company",
+          "CryptoWallet",
+          "Debt",
+          "Directorship",
+          "Employment",
+          "Family",
+          "Identification",
+          "LegalEntity",
+          "Membership",
+          "Occupancy",
+          "Organization",
+          "Ownership",
+          "Passport",
+          "Payment",
+          "Person",
+          "Position",
+          "PublicBody",
+          "Representation",
+          "Sanction",
+          "Security",
+          "Succession",
+          "UnknownLink",
+          "Vessel",
+          "Vehicle",
+        ]
+    ScreeningQuery:
+      type: object
+      required:
+        - schema
+        - properties
+      properties:
+        schema:
+          $ref: "#/components/schemas/ScreeningEntity"
+        properties:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+    ContinuousScreeningMatch:
+      type: object
+      required:
+        - id
+        - status
+        - payload
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        list_provider_entity_id:
+          description: |
+            The list provider entity matched. Set when the screening was triggered
+            by an object creation or update (`object_added`, `object_updated`).
+            Null for `dataset_updated` (in that case, the entity is on the parent
+            `ContinuousScreening`).
+          anyOf:
+            - type: string
+            - type: "null"
+        object_type:
+          description: |
+            The monitored object's type. Set when the screening was triggered by
+            a dataset update (`dataset_updated`). Null otherwise.
+          anyOf:
+            - type: string
+            - type: "null"
+        object_id:
+          description: |
+            The monitored object's ID. Set when the screening was triggered by a
+            dataset update (`dataset_updated`). Null otherwise.
+          anyOf:
+            - type: string
+            - type: "null"
+        status:
+          type: string
+          enum:
+            - pending
+            - confirmed_hit
+            - no_hit
+            - skipped
+        payload:
+          type: object
+          properties:
+            match:
+              type: boolean
+            score:
+              type: number
+            schema:
+              type: string
+            caption:
+              type: string
+            datasets:
+              type: array
+              items:
+                type: string
+            properties:
+              type: object
+        reviewed_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ContinuousScreening:
+      type: object
+      required:
+        - id
+        - continuous_screening_config_stable_id
+        - status
+        - trigger_type
+        - partial
+        - number_of_matches
+        - matches
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        continuous_screening_config_stable_id:
+          type: string
+          format: uuid
+        case_id:
+          anyOf:
+            - type: string
+            - type: "null"
+        object_type:
+          anyOf:
+            - type: string
+            - type: "null"
+        object_id:
+          anyOf:
+            - type: string
+            - type: "null"
+        list_provider_entity_id:
+          description: |
+            The list provider entity that triggered the screening. Set when the
+            screening was triggered by a dataset update (`dataset_updated`). Null
+            otherwise (in that case, the entity is on each match).
+          anyOf:
+            - type: string
+            - type: "null"
+        status:
+          type: string
+          enum:
+            - in_review
+            - error
+            - confirmed_hit
+            - no_hit
+        trigger_type:
+          type: string
+          enum:
+            - object_added
+            - object_updated
+            - dataset_updated
+        partial:
+          type: boolean
+        number_of_matches:
+          type: integer
+        matches:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContinuousScreeningMatch"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    RecordAnnotation:
+      title: Record annotation
+      type: object
+      required:
+        - id
+        - object_type
+        - object_id
+        - annotation_type
+        - payload
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        object_type:
+          type: string
+          description: Type of the annotated object as defined in the data model
+        object_id:
+          type: string
+          description: Client-side ID of the annotated object
+        annotation_type:
+          type: string
+          enum: [comment, tag, risk_tag, file]
+        payload:
+          type: object
+          description: |
+            Payload contents depend on the annotation_type:
+            - `comment`: `{text: string}`
+            - `tag`: `{tag_id: string}`
+            - `risk_tag`: `{tag: string, reason?: string, url?: string}`
+            - `file`: `{caption: string, files: [{id: string, filename: string}]}`
+        created_at:
+          type: string
+          format: date-time
+
+    CreateAnnotationBase:
+      type: object
+      required:
+        - type
+        - payload
+      properties:
+        type:
+          type: string
+        payload:
+          type: object
+
+    CreateCommentAnnotation:
+      title: Create comment annotation
+      allOf:
+        - $ref: "#/components/schemas/CreateAnnotationBase"
+        - properties:
+            type:
+              enum: [comment]
+            payload:
+              required:
+                - text
+              properties:
+                text:
+                  type: string
+                  description: Text content of the comment
+
+    CreateTagAnnotation:
+      title: Create tag annotation
+      allOf:
+        - $ref: "#/components/schemas/CreateAnnotationBase"
+        - properties:
+            type:
+              enum: [tag]
+            payload:
+              required:
+                - tag_id
+              properties:
+                tag_id:
+                  type: string
+                  format: uuid
+                  description: ID of the tag to attach to the object
+
+    CreateRiskTagAnnotation:
+      title: Create risk tag annotation
+      allOf:
+        - $ref: "#/components/schemas/CreateAnnotationBase"
+        - properties:
+            type:
+              enum: [risk_tag]
+            payload:
+              required:
+                - tag
+              properties:
+                tag:
+                  type: string
+                  description: Risk tag identifier
+                  enum: [sanctions, peps, adverse-media, third-parties]
+                reason:
+                  type: string
+                  description: Human-readable reason for applying the risk tag
+                url:
+                  type: string
+                  format: uri
+                  description: URL to supporting evidence for the risk tag
+
+    RecordRiskLevel:
+      title: Record risk level
+      type: object
+      required:
+        - source
+        - risk_level
+        - current
+        - created_at
+      properties:
+        source:
+          type: string
+          enum: [initial, ruleset, override]
+        risk_level:
+          type: integer
+        current:
+          type: boolean
+        overridden_by:
+          $ref: "#/components/schemas/Ref"
+        created_at:
+          type: string
+          format: date-time
+        stale_at:
+          type: string
+          format: date-time

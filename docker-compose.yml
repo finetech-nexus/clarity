@@ -1,0 +1,55 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: clarity
+      POSTGRES_PASSWORD: clarity
+      POSTGRES_DB: clarity
+    ports:
+      - "54329:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clarity"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7
+    ports:
+      - "63799:6379"
+
+  flowable:
+    image: flowable/flowable-rest:6.8.0
+    ports:
+      - "8088:8080"
+    environment:
+      FLOWABLE_COMMON_APP_IDM-ADMIN_USER: rest-admin
+      FLOWABLE_COMMON_APP_IDM-ADMIN_PASSWORD: test
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      CLARITY_DATABASE_URL: postgresql+psycopg://clarity:clarity@postgres:5432/clarity
+      CLARITY_FLOWABLE_URL: http://flowable:8080
+      CLARITY_FLOWABLE_USER: rest-admin
+      CLARITY_FLOWABLE_PASSWORD: test
+      CLARITY_JWT_SECRET: change-this-jwt-secret-before-any-real-deployment
+      CLARITY_ENV: development
+    ports:
+      - "8095:8095"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8095
+    ports:
+      - "3010:3010"
+    depends_on:
+      - api

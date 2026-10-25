@@ -1,0 +1,34 @@
+{
+  "product": "Clarity",
+  "as_of": "2026-10-25",
+  "fully_compatible_ratio": 0.0,
+  "statement": "Aucune surface n'est entièrement compatible avec le contrat amont complet. Le ratio 0 reflète l'absence d'une campagne qui ferait passer toutes les opérations du périmètre déclaré, pas l'absence de routes.",
+  "marble_public_v1": {
+    "operations_in_spec": 15,
+    "routes_implemented": 15,
+    "operations_with_automated_tests": ["createDecision", "getDecision", "listDecision date-range rejection", "ingestObject", "addScreeningWhitelist", "searchScreeningWhitelist", "createCase", "createCaseComment"],
+    "provider_dependent": ["getScreeningEntity"],
+    "not_claimed_fully_compatible": true
+  },
+  "marble_ingestion": {
+    "operations_in_spec": 4,
+    "routes_implemented": 4,
+    "server_url_in_spec": null
+  },
+  "marble_v1beta": {
+    "operations_in_spec": 31,
+    "routes_implemented": 12,
+    "unsupported_examples": ["async decisions", "case files", "ai reviews", "continuous screenings", "record annotations"]
+  },
+  "marble_console": {
+    "paths_in_index": 196,
+    "routes_implemented": 0
+  },
+  "ballerine": {
+    "static_openapi_present": false,
+    "revision_read": "4303cd3e0",
+    "success_path_for_veriff": false
+  },
+  "schemathesis": "non exécuté",
+  "upstream_sandbox": "non disponible dans cet environnement"
+}

@@ -1,0 +1,179 @@
+/analytics:
+  get:
+    tags:
+      - Analytics
+    summary: List analytics associated with the current organization (present in the JWT)
+    operationId: legacyListAnalytics
+    security:
+      - bearerAuth: []
+    responses:
+      "200":
+        description: The analytics corresponding to the current organization (present in the JWT)
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - analytics
+              properties:
+                analytics:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/LegacyAnalyticsDto"
+      "401":
+        $ref: "components.yml#/responses/401"
+      "403":
+        $ref: "components.yml#/responses/403"
+      "404":
+        $ref: "components.yml#/responses/404"
+/config:
+  get:
+    tags:
+      - Application config
+    summary: Retrieves the configuration of the frontend app
+    operationId: getAppConfig
+    responses:
+      "200":
+        description: The config
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppConfigDto"
+components:
+  schemas:
+    LegacyAnalyticsDto:
+      type: object
+      required:
+        - embedding_type
+        - signed_embedding_url
+      properties:
+        embedding_type:
+          type: string
+          enum: [global_dashboard, unknown_embedding_type]
+        signed_embedding_url:
+          type: string
+          format: uri
+    AppConfigDto:
+      type: object
+      required:
+        - version
+        - outdated
+        - status
+        - urls
+        - auth
+        - features
+        - is_managed_marble
+      properties:
+        version:
+          type: string
+        outdated:
+          type: object
+          required: [outdated]
+          properties:
+            outdated:
+              type: boolean
+            latest_version:
+              type: string
+            latest_url:
+              type: string
+              format: url
+            release_notes:
+              type: array
+              items:
+                type: string
+        status:
+          type: object
+          required:
+            - migrations
+            - has_org
+            - has_user
+          properties:
+            migrations:
+              type: boolean
+            has_org:
+              type: boolean
+            has_user:
+              type: boolean
+        urls:
+          type: object
+          required:
+            - marble
+            - metabase
+            - blobs
+          properties:
+            marble:
+              type: string
+            metabase:
+              type: string
+            blobs:
+              type: array
+              items:
+                type: string
+        auth:
+          type: object
+          required:
+            - provider
+            - firebase
+          properties:
+            provider:
+              type: string
+              enum: [firebase, oidc]
+            firebase:
+              type: object
+              required:
+                - is_emulator
+                - emulator_host
+                - project_id
+                - api_key
+                - auth_domain
+              properties:
+                is_emulator:
+                  type: boolean
+                emulator_host:
+                  type: string
+                project_id:
+                  type: string
+                api_key:
+                  type: string
+                auth_domain:
+                  type: string
+            oidc:
+              type: object
+              required:
+                - issuer
+                - client_id
+                - redirect_uri
+                - scopes
+                - extra_params
+              properties:
+                issuer:
+                  type: string
+                  format: url
+                client_id:
+                  type: string
+                redirect_uri:
+                  type: string
+                  format: url
+                scopes:
+                  type: array
+                  items:
+                    type: string
+                extra_params:
+                  type: object
+                  additionalProperties:
+                    type: string
+        features:
+          type: object
+          required:
+            - sso
+            - segment
+            - webhook_secret_rotation
+          properties:
+            sso:
+              type: boolean
+            segment:
+              type: boolean
+            webhook_secret_rotation:
+              type: boolean
+        is_managed_marble:
+          type: boolean

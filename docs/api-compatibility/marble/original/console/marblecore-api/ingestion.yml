@@ -1,0 +1,417 @@
+/ingestion/{objectType}:
+  post:
+    tags:
+      - Ingestion
+    summary: Ingest some data
+    operationId: createIngestion
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: objectType
+        description: Type of the data that needs to be ingested
+        in: path
+        required: true
+        schema:
+          type: string
+    requestBody:
+      description: "Data that needs to be added to the database. The `objectType` is used to determine the type of the data"
+      content:
+        application/json:
+          schema:
+            type: object
+      required: true
+    responses:
+      "201":
+        description: Data created
+      "401":
+        $ref: "components.yml#/responses/401"
+      "403":
+        $ref: "components.yml#/responses/403"
+      "422":
+        $ref: "components.yml#/responses/422"
+/ingestion/{objectType}/upload-logs:
+  get:
+    tags:
+      - Ingestion
+    summary: Get ingestion upload logs for an object type
+    operationId: getIngestionUploadLogs
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: objectType
+        description: Type of the data that needs to be ingested
+        in: path
+        required: true
+        schema:
+          type: string
+    responses:
+      "200":
+        description: Ingestion upload logs
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: "#/components/schemas/UploadLog"
+      "401":
+        $ref: "components.yml#/responses/401"
+      "403":
+        $ref: "components.yml#/responses/403"
+      "404":
+        $ref: "components.yml#/responses/404"
+/client_data/{tableName}/{objectId}:
+  get:
+    tags:
+      - Data Model
+    summary: Get an ingested object based on the tableId and objectId passed
+    operationId: getIngestedObject
+    parameters:
+      - name: tableName
+        description: ID of the table from which we want the object
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: objectId
+        description: ID of the object we want the object
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    responses:
+      "200":
+        description: The ingested object wanted
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DataModelObjectDto"
+      "404":
+        $ref: "components.yml#/responses/404"
+      "401":
+        $ref: "components.yml#/responses/401"
+      "403":
+        $ref: "components.yml#/responses/403"
+/client_data/{objectType}/{objectId}/cases:
+  get:
+    tags:
+      - Ingestion
+    summary: Get cases for an object
+    description: |
+      Includes cases linked through manual entity links as well as decisions.
+      Returns the existing case summary DTO, without detailed entities.
+    operationId: getCasesForObject
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: objectType
+        description: Type of the object
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: objectId
+        description: ID of the object
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    responses:
+      "200":
+        description: The cases for the object
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: "cases.yml#/components/schemas/CaseDto"
+      "401":
+        $ref: "components.yml#/responses/401"
+      "403":
+        $ref: "components.yml#/responses/403"
+      "404":
+        $ref: "components.yml#/responses/404"
+      "422":
+        $ref: "components.yml#/responses/422"
+
+/client_data/{tableName}/list:
+  post:
+    tags:
+      - Ingestion
+    summary: Get a list of objects from a table, given a starting object, a set of filters & ordering field matching the exploration options available on the starting object, and optional cursor pagination.
+    operationId: listClientObjects
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: tableName
+        description: ID of the table from which we want the object
+        in: path
+        required: true
+        schema:
+          type: string
+    requestBody:
+      description: "Data that needs to be added to the database. The `objectType` is used to determine the type of the data"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ClientDataListRequestBody"
+      required: true
+    responses:
+      "200":
+        description: The ingested object wanted
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClientDataListResponseDto"
+      "400":
+        $ref: "components.yml#/responses/400"
+      "401":
+        $ref: "components.yml#/responses/401"
+      "403":
+        $ref: "components.yml#/responses/403"
+      "404":
+        $ref: "components.yml#/responses/404"
+      "422":
+        $ref: "components.yml#/responses/422"
+/annotations/{annotationId}:
+  delete:
+    tags:
+      - Annotations
+    summary: Removes an annotation by ID
+    operationId: deleteAnnotation
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: annotationId
+        description: The ID of the annotation to delete
+        in: path
+        required: true
+        schema:
+          type: string
+    responses:
+      "200":
+        description: Annotation deleted
+      "400":
+        $ref: "components.yml#/responses/400"
+      "401":
+        $ref: "components.yml#/responses/401"
+      "403":
+        $ref: "components.yml#/responses/403"
+      "404":
+        $ref: "components.yml#/responses/404"
+      "422":
+        $ref: "components.yml#/responses/422"
+
+components:
+  schemas:
+    UploadLog:
+      type: object
+      required:
+        - started_at
+        - finished_at
+        - status
+        - lines_processed
+        - num_rows_ingested
+      properties:
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: ["success", "failure", "progressing", "pending"]
+        lines_processed:
+          type: integer
+        num_rows_ingested:
+          type: integer
+    DataModelObjectDto:
+      type: object
+      required:
+        - data
+        - metadata
+      properties:
+        data:
+          type: object
+          additionalProperties: true
+        metadata:
+          type: object
+          required:
+            - valid_from
+          properties:
+            valid_from:
+              type: string
+              format: date-time
+    ClientDataListRequestBody:
+      type: object
+      required:
+        - exploration_options
+      properties:
+        exploration_options:
+          type: object
+          properties:
+            source_table_name:
+              type: string
+              description: The table from which we want to start the exploration.
+            filter_field_name:
+              type: string
+              description: The main field on which we want to filter the objects
+            filter_field_value:
+              description:
+                The value of the main field on which we want to filter the objects, based on the 'source'
+                object used as a reference.
+              oneOf:
+                - type: string
+                - type: number
+            ordering_field_name:
+              type: string
+              description: The field on which we want to order the objects (in descending order)
+          required:
+            - source_table_name
+            - filter_field_name
+            - filter_field_value
+            - ordering_field_name
+        # secondary_filters:
+        #   type: object
+        #   additionalProperties: true
+        #   description:
+        #     Additional filters to apply to the exploration. key/value must match the name and
+        #     type of fields on the table that is being explored.
+        # TODO: NOT FINISHED, NEEDS TO BE COMPLETED
+        cursor_id:
+          description: The id of the object after which to paginate, using ordering by the specified field in 'exploration_options'
+          oneOf:
+            - type: string
+            - type: number
+        limit:
+          type: integer
+          description: The maximum number of objects to return
+          minimum: 1
+          maximum: 100
+          default: 30
+    ClientDataListResponseDto:
+      type: object
+      required:
+        - data
+        - metadata
+        - pagination
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClientObjectDetailDto"
+        metadata:
+          type: object
+          required:
+            - field_statistics
+          properties:
+            field_statistics:
+              type: object
+              additionalProperties:
+                $ref: "#/components/schemas/FieldStatisticsDto"
+        pagination:
+          type: object
+          required:
+            - has_next_page
+          properties:
+            next_cursor_id:
+              description: The id of the object after which to paginate, using ordering by the specified field in 'exploration_options'
+              oneOf:
+                - type: string
+                - type: number
+            has_next_page:
+              type: boolean
+              description: Whether there are more objects to paginate
+    FieldStatisticsDto:
+      type: object
+      required:
+        - type
+      discriminator:
+        propertyName: type
+        mapping:
+          String: "#/components/schemas/StringFieldStatisticsDto"
+          Bool: "#/components/schemas/BoolFieldStatisticsDto"
+          Float: "#/components/schemas/FloatFieldStatisticsDto"
+          Timestamp: "#/components/schemas/TimestampFieldStatisticsDto"
+          IpAddress: "#/components/schemas/IpAddressFieldStatisticsDto"
+          Coords: "#/components/schemas/CoordsFieldStatisticsDto"
+    StringFieldStatisticsDto:
+      allOf:
+        - $ref: "#/components/schemas/FieldStatisticsDto"
+        - type: object
+          properties:
+            max_length:
+              type: number
+            format:
+              type: string
+    BoolFieldStatisticsDto:
+      allOf:
+        - $ref: "#/components/schemas/FieldStatisticsDto"
+    FloatFieldStatisticsDto:
+      allOf:
+        - $ref: "#/components/schemas/FieldStatisticsDto"
+        - type: object
+          properties:
+            max_length:
+              type: number
+    TimestampFieldStatisticsDto:
+      allOf:
+        - $ref: "#/components/schemas/FieldStatisticsDto"
+    IpAddressFieldStatisticsDto:
+      allOf:
+        - $ref: "#/components/schemas/FieldStatisticsDto"
+    CoordsFieldStatisticsDto:
+      allOf:
+        - $ref: "#/components/schemas/FieldStatisticsDto"
+    ClientObjectDetailDto:
+      description: ->
+        Nested object containing the details of an ingested client object. "data" holds the data of the object as described in the client data model.
+        "related_objects" holds a list of other ingested "parent" objects, reached by a many to one link from the base object. An arbitrary limit on the depth
+        of nesting and early stop in case of loops may be applied by the backend.
+      type: object
+      required:
+        - metadata
+        - data
+        - related_objects
+      properties:
+        metadata:
+          description: Metadata of the object, in particular the ingestion date. Only present if the object has actually been ingested.
+          type: object
+          required:
+            - object_type
+            - can_be_annotated
+          properties:
+            valid_from:
+              type: string
+              format: date-time
+            object_type:
+              type: string
+              description: object type in the data model that the data corresponds to
+            can_be_annotated:
+              type: boolean
+              description: Whether the object can be annotated or not. True for all objects that have been ingested, and for pivot objects that have the "object_id" field from a link.
+        data:
+          type: object
+          description: The actual data of the object, as described in the client data model.
+          required: ["object_id", "updated_at"]
+          properties:
+            object_id:
+              type: string
+            updated_at:
+              type: string
+              format: date-time
+          additionalProperties: true
+        related_objects:
+          type: array
+          items:
+            type: object
+            properties:
+              link_name:
+                type: string
+                description: The name of the link pointing to the object
+              related_object_detail:
+                $ref: "#/components/schemas/ClientObjectDetailDto"
+        annotations:
+          $ref: "components.yml#/schemas/GroupedAnnotations"

@@ -1,0 +1,703 @@
+# COMMON
+
+Error:
+  type: object
+  required:
+    - code
+    - message
+  properties:
+    code:
+      type: integer
+    message:
+      type: string
+Pagination:
+  type: object
+  required:
+    - has_next_page
+  properties:
+    has_next_page:
+      type: boolean
+
+# 360 CLIENT
+
+Client360Table:
+  $ref: client-360.yml#/components/schemas/Client360Table
+
+# CUSTOMER AGGREGATES
+
+CustomerAggregateDto:
+  $ref: customer-aggregates.yml#/components/schemas/CustomerAggregateDto
+CustomerAggregateResultDto:
+  $ref: customer-aggregates.yml#/components/schemas/CustomerAggregateResultDto
+CreateCustomerAggregateBodyDto:
+  $ref: customer-aggregates.yml#/components/schemas/CreateCustomerAggregateBodyDto
+
+# ANNOTATIONS
+
+GroupedAnnotations:
+  $ref: annotations.yml#/components/schemas/GroupedAnnotations
+TagEntityAnnotationDto:
+  $ref: annotations.yml#/components/schemas/TagEntityAnnotationDto
+CommentEntityAnnotationDto:
+  $ref: annotations.yml#/components/schemas/CommentEntityAnnotationDto
+FileEntityAnnotationDto:
+  $ref: annotations.yml#/components/schemas/FileEntityAnnotationDto
+RiskTagEntityAnnotationDto:
+  $ref: annotations.yml#/components/schemas/RiskTagEntityAnnotationDto
+CreateAnnotationDto:
+  $ref: annotations.yml#/components/schemas/CreateAnnotationDto
+
+# AUTHORIZATION
+
+Token:
+  $ref: authorization.yml#/components/schemas/Token
+CredentialsDto:
+  $ref: authorization.yml#/components/schemas/CredentialsDto
+
+# DECISIONS
+
+OutcomeDto:
+  $ref: decisions.yml#/components/schemas/OutcomeDto
+DecisionDto:
+  $ref: decisions.yml#/components/schemas/DecisionDto
+DecisionDetailDto:
+  $ref: decisions.yml#/components/schemas/DecisionDetailDto
+CreateDecisionBody:
+  $ref: decisions.yml#/components/schemas/CreateDecisionBody
+RuleExecutionDto:
+  $ref: decisions.yml#/components/schemas/RuleExecutionDto
+ScheduledExecutionDto:
+  $ref: decisions.yml#/components/schemas/ScheduledExecutionDto
+
+# CASES
+
+ReviewStatusDto:
+  $ref: cases.yml#/components/schemas/ReviewStatusDto
+CaseStatusDto:
+  $ref: cases.yml#/components/schemas/CaseStatusDto
+CaseStatusForCaseEventDto:
+  $ref: cases.yml#/components/schemas/CaseStatusForCaseEventDto
+CaseDto:
+  $ref: cases.yml#/components/schemas/CaseDto
+CaseEntityRefDto:
+  $ref: cases.yml#/components/schemas/CaseEntityRefDto
+CaseEntityDto:
+  $ref: cases.yml#/components/schemas/CaseEntityDto
+CaseDetailDto:
+  $ref: cases.yml#/components/schemas/CaseDetailDto
+CaseDecisionDto:
+  $ref: cases.yml#/components/schemas/CaseDecisionDto
+DetailedCaseDecisionDto:
+  $ref: cases.yml#/components/schemas/DetailedCaseDecisionDto
+NextCaseIdDto:
+  $ref: cases.yml#/components/schemas/NextCaseIdDto
+CaseFileDto:
+  $ref: cases.yml#/components/schemas/CaseFileDto
+CaseTagDto:
+  $ref: cases.yml#/components/schemas/CaseTagDto
+CaseEventDto:
+  $ref: cases.yml#/components/schemas/CaseEventDto
+CaseEntityAddedEventDto:
+  $ref: cases.yml#/components/schemas/CaseEntityAddedEventDto
+CaseEntityRemovedEventDto:
+  $ref: cases.yml#/components/schemas/CaseEntityRemovedEventDto
+CaseCreatedEventDto:
+  $ref: cases.yml#/components/schemas/CaseCreatedEventDto
+CaseStatusUpdatedEventDto:
+  $ref: cases.yml#/components/schemas/CaseStatusUpdatedEventDto
+CaseOutcomeUpdatedEventDto:
+  $ref: cases.yml#/components/schemas/CaseOutcomeUpdatedEventDto
+CaseAssignedEventDto:
+  $ref: cases.yml#/components/schemas/CaseAssignedEventDto
+DecisionAddedEventDto:
+  $ref: cases.yml#/components/schemas/DecisionAddedEventDto
+CommentAddedEventDto:
+  $ref: cases.yml#/components/schemas/CommentAddedEventDto
+NameUpdatedEventDto:
+  $ref: cases.yml#/components/schemas/NameUpdatedEventDto
+CaseTagsUpdatedEventDto:
+  $ref: cases.yml#/components/schemas/CaseTagsUpdatedEventDto
+FileAddedEventDto:
+  $ref: cases.yml#/components/schemas/FileAddedEventDto
+InboxChangedEventDto:
+  $ref: cases.yml#/components/schemas/InboxChangedEventDto
+RuleSnoozeCreatedDto:
+  $ref: cases.yml#/components/schemas/RuleSnoozeCreatedDto
+DecisionReviewedEventDto:
+  $ref: cases.yml#/components/schemas/DecisionReviewedEventDto
+SarCreatedEventDto:
+  $ref: cases.yml#/components/schemas/SarCreatedEventDto
+SarDeletedEventDto:
+  $ref: cases.yml#/components/schemas/SarDeletedEventDto
+SarStatusChangedEventDto:
+  $ref: cases.yml#/components/schemas/SarStatusChangedEventDto
+SarFileUploadedEventDto:
+  $ref: cases.yml#/components/schemas/SarFileUploadedEventDto
+EntityAnnotatedEventDto:
+  $ref: cases.yml#/components/schemas/EntityAnnotatedEventDto
+CaseSnoozedDto:
+  $ref: cases.yml#/components/schemas/CaseSnoozedDto
+CaseUnsnoozedDto:
+  $ref: cases.yml#/components/schemas/CaseUnsnoozedDto
+CaseContributorDto:
+  $ref: cases.yml#/components/schemas/CaseContributorDto
+UpdateCaseBodyDto:
+  $ref: cases.yml#/components/schemas/UpdateCaseBodyDto
+AssignCaseBodyDto:
+  $ref: cases.yml#/components/schemas/AssignCaseBodyDto
+UpdateCaseEntitiesBodyDto:
+  $ref: cases.yml#/components/schemas/UpdateCaseEntitiesBodyDto
+CreateCaseBodyDto:
+  $ref: cases.yml#/components/schemas/CreateCaseBodyDto
+PivotObjectDto:
+  $ref: cases.yml#/components/schemas/PivotObjectDto
+CaseReviewFeedbackDto:
+  $ref: cases.yml#/components/schemas/CaseReviewFeedbackDto
+CaseReviewProofDto:
+  $ref: cases.yml#/components/schemas/CaseReviewProofDto
+CaseReviewDto:
+  $ref: cases.yml#/components/schemas/CaseReviewDto
+CaseReviewContentDto:
+  $ref: cases.yml#/components/schemas/CaseReviewContentDto
+CaseReviewOkDto:
+  $ref: cases.yml#/components/schemas/CaseReviewOkDto
+CaseReviewNotOkDto:
+  $ref: cases.yml#/components/schemas/CaseReviewNotOkDto
+AiCaseReviewListItemDto:
+  $ref: cases.yml#/components/schemas/AiCaseReviewListItemDto
+FieldStatisticsDto:
+  $ref: ingestion.yml#/components/schemas/FieldStatisticsDto
+StringFieldStatisticsDto:
+  $ref: ingestion.yml#/components/schemas/StringFieldStatisticsDto
+BoolFieldStatisticsDto:
+  $ref: ingestion.yml#/components/schemas/BoolFieldStatisticsDto
+FloatFieldStatisticsDto:
+  $ref: ingestion.yml#/components/schemas/FloatFieldStatisticsDto
+TimestampFieldStatisticsDto:
+  $ref: ingestion.yml#/components/schemas/TimestampFieldStatisticsDto
+IpAddressFieldStatisticsDto:
+  $ref: ingestion.yml#/components/schemas/IpAddressFieldStatisticsDto
+CoordsFieldStatisticsDto:
+  $ref: ingestion.yml#/components/schemas/CoordsFieldStatisticsDto
+KYCAnalysisDto:
+  $ref: cases.yml#/components/schemas/KYCAnalysisDto
+GroundingCitationDto:
+  $ref: cases.yml#/components/schemas/GroundingCitationDto
+CaseMassUpdateChangeStatusDto:
+  $ref: cases.yml#/components/schemas/CaseMassUpdateChangeStatusDto
+CaseMassUpdateAssignDto:
+  $ref: cases.yml#/components/schemas/CaseMassUpdateAssignDto
+CaseMassUpdateMoveToInboxDto:
+  $ref: cases.yml#/components/schemas/CaseMassUpdateMoveToInboxDto
+
+# SUSPICIOUS ACTIVITY REPORTS
+
+SuspiciousActivityReportDto:
+  $ref: sar.yml#/components/schemas/SuspiciousActivityReportDto
+SuspiciousActivityReportBodyDto:
+  $ref: sar.yml#/components/schemas/SuspiciousActivityReportBodyDto
+
+# TAGS
+
+Tag:
+  $ref: tags.yml#/components/schemas/Tag
+
+# INGESTION
+
+UploadLog:
+  $ref: ingestion.yml#/components/schemas/UploadLog
+DataModelObjectDto:
+  $ref: ingestion.yml#/components/schemas/DataModelObjectDto
+ClientDataListRequestBody:
+  $ref: ingestion.yml#/components/schemas/ClientDataListRequestBody
+ClientDataListResponseDto:
+  $ref: ingestion.yml#/components/schemas/ClientDataListResponseDto
+ClientObjectDetailDto:
+  $ref: ingestion.yml#/components/schemas/ClientObjectDetailDto
+
+# CUSTOM LISTS
+
+CustomListDto:
+  $ref: custom-lists.yml#/components/schemas/CustomListDto
+CustomListValueDto:
+  $ref: custom-lists.yml#/components/schemas/CustomListValueDto
+CustomListWithValuesDto:
+  $ref: custom-lists.yml#/components/schemas/CustomListWithValuesDto
+CreateCustomListBodyDto:
+  $ref: custom-lists.yml#/components/schemas/CreateCustomListBodyDto
+UpdateCustomListBodyDto:
+  $ref: custom-lists.yml#/components/schemas/UpdateCustomListBodyDto
+CreateCustomListValueBody:
+  $ref: custom-lists.yml#/components/schemas/CreateCustomListValueBody
+
+# SCENARIOS
+
+ScenarioDto:
+  $ref: scenarios.yml#/components/schemas/ScenarioDto
+ScenarioCreateInputDto:
+  $ref: scenarios.yml#/components/schemas/ScenarioCreateInputDto
+ScenarioCopyInputDto:
+  $ref: scenarios.yml#/components/schemas/ScenarioCopyInputDto
+ScenarioUpdateInputDto:
+  $ref: scenarios.yml#/components/schemas/ScenarioUpdateInputDto
+ScenarioAstValidateInputDto:
+  $ref: scenarios.yml#/components/schemas/ScenarioAstValidateInputDto
+AstValidationDto:
+  $ref: scenarios.yml#/components/schemas/AstValidationDto
+ScenarioValidationErrorDto:
+  $ref: scenarios.yml#/components/schemas/ScenarioValidationErrorDto
+ScenarioValidationErrorCodeDto:
+  $ref: scenarios.yml#/components/schemas/ScenarioValidationErrorCodeDto
+ScenarioRuleLatestVersionDto:
+  $ref: scenarios.yml#/components/schemas/ScenarioRuleLatestVersionDto
+ScenarioASTAiDescriptionDto:
+  $ref: scenarios.yml#/components/schemas/ScenarioASTAiDescriptionDto
+RuleCatalogDto:
+  $ref: scenarios.yml#/components/schemas/RuleCatalogDto
+RuleCatalogRuleDto:
+  $ref: scenarios.yml#/components/schemas/RuleCatalogRuleDto
+RuleCatalogLocalizedTextDto:
+  $ref: scenarios.yml#/components/schemas/RuleCatalogLocalizedTextDto
+
+# AST EVALUATION
+
+NodeDto:
+  $ref: ast.yml#/components/schemas/NodeDto
+NodeEvaluationDto:
+  $ref: ast.yml#/components/schemas/NodeEvaluationDto
+ConstantDto:
+  $ref: ast.yml#/components/schemas/ConstantDto
+EvaluationErrorDto:
+  $ref: ast.yml#/components/schemas/EvaluationErrorDto
+EvaluationErrorCodeDto:
+  $ref: ast.yml#/components/schemas/EvaluationErrorCodeDto
+FuncAttributes:
+  $ref: ast.yml#/components/schemas/FuncAttributes
+
+# SCENARIO ITERATIONS
+
+ScenarioIterationDto:
+  $ref: scenario-iterations.yml#/components/schemas/ScenarioIterationDto
+ScenarioIterationWithBodyDto:
+  $ref: scenario-iterations.yml#/components/schemas/ScenarioIterationWithBodyDto
+CreateScenarioIterationBody:
+  $ref: scenario-iterations.yml#/components/schemas/CreateScenarioIterationBody
+UpdateScenarioIterationBody:
+  $ref: scenario-iterations.yml#/components/schemas/UpdateScenarioIterationBody
+CreateScenarioIterationRuleBodyDto:
+  $ref: scenario-iteration-rules.yml#/components/schemas/CreateScenarioIterationRuleBodyDto
+UpdateScenarioIterationRuleBodyDto:
+  $ref: scenario-iteration-rules.yml#/components/schemas/UpdateScenarioIterationRuleBodyDto
+
+# RULES
+
+ScenarioIterationRuleMetadataDto:
+  $ref: scenario-iteration-rules.yml#/components/schemas/ScenarioIterationRuleMetadataDto
+ScenarioIterationRuleDto:
+  $ref: scenario-iteration-rules.yml#/components/schemas/ScenarioIterationRuleDto
+ScenarioValidationDto:
+  $ref: scenario-iterations.yml#/components/schemas/ScenarioValidationDto
+
+# SCREENINGS
+
+OpenSanctionsCatalogDataset:
+  $ref: screenings.yml#/components/schemas/OpenSanctionsCatalogDataset
+OpenSanctionsCatalogSection:
+  $ref: screenings.yml#/components/schemas/OpenSanctionsCatalogSection
+ScreeningAvailableFilters:
+  $ref: screenings.yml#/components/schemas/ScreeningAvailableFilters
+ScreeningAvailableFiltersSection:
+  $ref: screenings.yml#/components/schemas/ScreeningAvailableFiltersSection
+OpenSanctionsDatasetFreshnessDto:
+  $ref: screenings.yml#/components/schemas/OpenSanctionsDatasetFreshnessDto
+OpenSanctionsUpstreamDatasetFreshnessDto:
+  $ref: screenings.yml#/components/schemas/OpenSanctionsUpstreamDatasetFreshnessDto
+OpenSanctionsCatalogDto:
+  $ref: screenings.yml#/components/schemas/OpenSanctionsCatalogDto
+ScreeningConfigBodySectionDto:
+  $ref: screenings.yml#/components/schemas/ScreeningConfigBodySectionDto
+ScreeningConfigBodyFiltersDto:
+  $ref: screenings.yml#/components/schemas/ScreeningConfigBodyFiltersDto
+ScreeningConfigDto:
+  $ref: screenings.yml#/components/schemas/ScreeningConfigDto
+ScreeningDto:
+  $ref: screenings.yml#/components/schemas/ScreeningDto
+ScreeningSuccessDto:
+  $ref: screenings.yml#/components/schemas/ScreeningSuccessDto
+ScreeningErrorDto:
+  $ref: screenings.yml#/components/schemas/ScreeningErrorDto
+ScreeningFileDto:
+  $ref: screenings.yml#/components/schemas/ScreeningFileDto
+ScreeningSanctionEntityDto:
+  $ref: screenings.yml#/components/schemas/ScreeningSanctionEntityDto
+ScreeningMatchPayloadDto:
+  $ref: screenings.yml#/components/schemas/ScreeningMatchPayloadDto
+ScreeningMatchDto:
+  $ref: screenings.yml#/components/schemas/ScreeningMatchDto
+ScreeningEntityDto:
+  $ref: screenings.yml#/components/schemas/ScreeningEntityDto
+ScreeningRequestDto:
+  $ref: screenings.yml#/components/schemas/ScreeningRequestDto
+ScreeningQueryDto:
+  $ref: screenings.yml#/components/schemas/ScreeningQueryDto
+ScreeningRefineDto:
+  $ref: screenings.yml#/components/schemas/ScreeningRefineDto
+updateScreeningMatchDto:
+  $ref: screenings.yml#/components/schemas/updateScreeningMatchDto
+ScreeningAiSuggestionDto:
+  $ref: screenings.yml#/components/schemas/ScreeningAiSuggestionDto
+ScreeningFreeformSearchDto:
+  $ref: screenings.yml#/components/schemas/ScreeningFreeformSearchDto
+ScreeningFreeformSearchConfigDto:
+  $ref: screenings.yml#/components/schemas/ScreeningFreeformSearchConfigDto
+SaveScreeningSearchDto:
+  $ref: screenings.yml#/components/schemas/SaveScreeningSearchDto
+ScreeningSavedSearch:
+  $ref: screenings.yml#/components/schemas/ScreeningSavedSearch
+
+# SCENARIO PUBLICATIONS
+
+ScenarioPublicationStatusDto:
+  $ref: scenario-publications.yml#/components/schemas/ScenarioPublicationStatusDto
+ScenarioPublication:
+  $ref: scenario-publications.yml#/components/schemas/ScenarioPublication
+CreateScenarioPublicationBody:
+  $ref: scenario-publications.yml#/components/schemas/CreateScenarioPublicationBody
+PublicationAction:
+  $ref: scenario-publications.yml#/components/schemas/PublicationAction
+
+# DATA MODEL
+
+LinkToSingleDto:
+  $ref: data-model.yml#/components/schemas/LinkToSingleDto
+FieldDto:
+  $ref: data-model.yml#/components/schemas/FieldDto
+FtmEntity:
+  $ref: data-model.yml#/components/schemas/FtmEntity
+TableDto:
+  $ref: data-model.yml#/components/schemas/TableDto
+DataModelDto:
+  $ref: data-model.yml#/components/schemas/DataModelDto
+CreateTableBody:
+  $ref: data-model.yml#/components/schemas/CreateTableBody
+CreateTableResponseDto:
+  $ref: data-model.yml#/components/schemas/CreateTableResponseDto
+CreateTableBodyField:
+  $ref: data-model.yml#/components/schemas/CreateTableBodyField
+CreateTableBodyLink:
+  $ref: data-model.yml#/components/schemas/CreateTableBodyLink
+UpdateTableBodyDto:
+  $ref: data-model.yml#/components/schemas/UpdateTableBodyDto
+CreateTableFieldDto:
+  $ref: data-model.yml#/components/schemas/CreateTableFieldDto
+UpdateTableFieldDto:
+  $ref: data-model.yml#/components/schemas/UpdateTableFieldDto
+FieldSemanticType:
+  $ref: data-model.yml#/components/schemas/FieldSemanticType
+FieldOperationDto:
+  $ref: data-model.yml#/components/schemas/FieldOperationDto
+AddFieldOperationDto:
+  $ref: data-model.yml#/components/schemas/AddFieldOperationDto
+ModFieldOperationDto:
+  $ref: data-model.yml#/components/schemas/ModFieldOperationDto
+DelFieldOperationDto:
+  $ref: data-model.yml#/components/schemas/DelFieldOperationDto
+ModFieldDataDto:
+  $ref: data-model.yml#/components/schemas/ModFieldDataDto
+DelFieldDataDto:
+  $ref: data-model.yml#/components/schemas/DelFieldDataDto
+LinkOperationDto:
+  $ref: data-model.yml#/components/schemas/LinkOperationDto
+AddLinkOperationDto:
+  $ref: data-model.yml#/components/schemas/AddLinkOperationDto
+DelLinkOperationDto:
+  $ref: data-model.yml#/components/schemas/DelLinkOperationDto
+DelLinkDataDto:
+  $ref: data-model.yml#/components/schemas/DelLinkDataDto
+CreateTableLinkBody:
+  $ref: data-model.yml#/components/schemas/CreateTableLinkBody
+OpenAPISpec:
+  $ref: data-model.yml#/components/schemas/OpenAPISpec
+PivotDto:
+  $ref: data-model.yml#/components/schemas/PivotDto
+PivotValueDto:
+  $ref: data-model.yml#/components/schemas/PivotValueDto
+CreatePivotInputDto:
+  $ref: data-model.yml#/components/schemas/CreatePivotInputDto
+NavigationOptionDto:
+  $ref: data-model.yml#/components/schemas/NavigationOptionDto
+CreateNavigationOptionDto:
+  $ref: data-model.yml#/components/schemas/CreateNavigationOptionDto
+IngestedDataFieldDto:
+  $ref: data-model.yml#/components/schemas/IngestedDataFieldDto
+ExportedFieldsDto:
+  $ref: data-model.yml#/components/schemas/ExportedFieldsDto
+# MISC
+
+LegacyAnalyticsDto:
+  $ref: misc.yml#/components/schemas/LegacyAnalyticsDto
+AppConfigDto:
+  $ref: misc.yml#/components/schemas/AppConfigDto
+
+# ADMINISTRATION
+
+CreateInitialOrgBody:
+  $ref: admin.yml#/components/schemas/CreateInitialOrgBody
+OrganizationDto:
+  $ref: admin.yml#/components/schemas/OrganizationDto
+CreateOrganizationBodyDto:
+  $ref: admin.yml#/components/schemas/CreateOrganizationBodyDto
+UpdateOrganizationBodyDto:
+  $ref: admin.yml#/components/schemas/UpdateOrganizationBodyDto
+OrganizationSubnetsDto:
+  $ref: admin.yml#/components/schemas/OrganizationSubnetsDto
+UserDto:
+  $ref: admin.yml#/components/schemas/UserDto
+CreateUser:
+  $ref: admin.yml#/components/schemas/CreateUser
+CreateNewOrgAdmin:
+  $ref: admin.yml#/components/schemas/CreateNewOrgAdmin
+UpdateUser:
+  $ref: admin.yml#/components/schemas/UpdateUser
+ApiKeyDto:
+  $ref: admin.yml#/components/schemas/ApiKeyDto
+CreateApiKeyBody:
+  $ref: admin.yml#/components/schemas/CreateApiKeyBody
+CreatedApiKeyDto:
+  $ref: admin.yml#/components/schemas/CreatedApiKeyDto
+AuditEventDto:
+  $ref: admin.yml#/components/schemas/AuditEventDto
+
+# ORG IMPORT
+
+ArchetypeDto:
+  $ref: org-import.yml#/components/schemas/ArchetypeDto
+ArchetypeApplyDto:
+  $ref: org-import.yml#/components/schemas/ArchetypeApplyDto
+
+# INBOXES
+
+InboxDto:
+  $ref: inboxes.yml#/components/schemas/InboxDto
+UpdateInboxesDto:
+  $ref: inboxes.yml#/components/schemas/UpdateInboxesDto
+InboxMetadataDto:
+  $ref: inboxes.yml#/components/schemas/InboxMetadataDto
+CreateInboxBodyDto:
+  $ref: inboxes.yml#/components/schemas/CreateInboxBodyDto
+InboxUserDto:
+  $ref: inboxes.yml#/components/schemas/InboxUserDto
+AddInboxUserBodyDto:
+  $ref: inboxes.yml#/components/schemas/AddInboxUserBodyDto
+
+# WEBHOOKS
+
+WebhookDto:
+  $ref: webhooks.yml#/components/schemas/WebhookDto
+WebhookSecretDto:
+  $ref: webhooks.yml#/components/schemas/WebhookSecretDto
+WebhookWithSecretDto:
+  $ref: webhooks.yml#/components/schemas/WebhookWithSecretDto
+WebhookRegisterBodyDto:
+  $ref: webhooks.yml#/components/schemas/WebhookRegisterBodyDto
+WebhookUpdateBodyDto:
+  $ref: webhooks.yml#/components/schemas/WebhookUpdateBodyDto
+
+# RULE SNOOZES
+
+RuleSnoozeDto:
+  $ref: rule-snoozes.yml#/components/schemas/RuleSnoozeDto
+RuleSnoozeWithRuleIdDto:
+  $ref: rule-snoozes.yml#/components/schemas/RuleSnoozeWithRuleIdDto
+RuleSnoozeInformationDto:
+  $ref: rule-snoozes.yml#/components/schemas/RuleSnoozeInformationDto
+SnoozesOfIterationDto:
+  $ref: rule-snoozes.yml#/components/schemas/SnoozesOfIterationDto
+SnoozesOfDecisionDto:
+  $ref: rule-snoozes.yml#/components/schemas/SnoozesOfDecisionDto
+SnoozeDecisionInputDto:
+  $ref: rule-snoozes.yml#/components/schemas/SnoozeDecisionInputDto
+
+# TEST RUNS
+
+TestRunStatusDto:
+  $ref: scenario-testrun.yml#/components/schemas/TestRunStatusDto
+TestRunDto:
+  $ref: scenario-testrun.yml#/components/schemas/TestRunDto
+TestRunDecisionDataDto:
+  $ref: scenario-testrun.yml#/components/schemas/TestRunDecisionDataDto
+TestRunRuleExecutionDataDto:
+  $ref: scenario-testrun.yml#/components/schemas/TestRunRuleExecutionDataDto
+TestRunCreateInputDto:
+  $ref: scenario-testrun.yml#/components/schemas/TestRunCreateInputDto
+
+# WORKFLOWS
+
+WorkflowRuleDto:
+  $ref: workflow.yml#/components/schemas/WorkflowRuleDto
+WorkflowRuleDetailDto:
+  $ref: workflow.yml#/components/schemas/WorkflowRuleDetailDto
+CreateWorkflowRuleDto:
+  $ref: workflow.yml#/components/schemas/CreateWorkflowRuleDto
+WorkflowConditionDto:
+  $ref: workflow.yml#/components/schemas/WorkflowConditionDto
+WorkflowConditionDetailDto:
+  $ref: workflow.yml#/components/schemas/WorkflowConditionDetailDto
+WorkflowConditionAlways:
+  $ref: workflow.yml#/components/schemas/WorkflowConditionAlways
+WorkflowConditionNever:
+  $ref: workflow.yml#/components/schemas/WorkflowConditionNever
+WorkflowConditionOutcomeIn:
+  $ref: workflow.yml#/components/schemas/WorkflowConditionOutcomeIn
+WorkflowActionDto:
+  $ref: workflow.yml#/components/schemas/WorkflowActionDto
+WorkflowActionDetailDto:
+  $ref: workflow.yml#/components/schemas/WorkflowActionDetailDto
+WorkflowActionDisabled:
+  $ref: workflow.yml#/components/schemas/WorkflowActionDisabled
+WorkflowActionCase:
+  $ref: workflow.yml#/components/schemas/WorkflowActionCase
+
+# USERS
+
+UserOrganizationDto:
+  $ref: users.yml#/components/schemas/UserOrganizationDto
+OrganizationEnvironmentDto:
+  $ref: users.yml#/components/schemas/OrganizationEnvironmentDto
+PersonalSettingsUnavailableDto:
+  $ref: users.yml#/components/schemas/PersonalSettingsUnavailableDto
+
+# AI
+
+KycEnrichmentSettingDto:
+  $ref: ai.yml#/components/schemas/KycEnrichmentSettingDto
+CaseReviewSettingDto:
+  $ref: ai.yml#/components/schemas/CaseReviewSettingDto
+AISettingsDto:
+  $ref: ai.yml#/components/schemas/AISettingsDto
+UpsertAISettingsDto:
+  $ref: ai.yml#/components/schemas/UpsertAISettingsDto
+
+  # ANALYTICS
+
+AnalyticsQueryDto:
+  $ref: analytics.yml#/components/schemas/AnalyticsQueryDto
+DecisionOutcomesPerDayResponseDto:
+  $ref: analytics.yml#/components/schemas/DecisionOutcomesPerDayResponseDto
+RuleHitTableResponseDto:
+  $ref: analytics.yml#/components/schemas/RuleHitTableResponseDto
+ScreeningHitTableResponseDto:
+  $ref: analytics.yml#/components/schemas/ScreeningHitTableResponseDto
+FieldFilterDto:
+  $ref: analytics.yml#/components/schemas/FieldFilterDto
+AvailableFiltersRequestDto:
+  $ref: analytics.yml#/components/schemas/AvailableFiltersRequestDto
+DecisionsScoreDistributionResponseDto:
+  $ref: analytics.yml#/components/schemas/DecisionsScoreDistributionResponseDto
+RuleVsDecisionOutcomeResponseDto:
+  $ref: analytics.yml#/components/schemas/RuleVsDecisionOutcomeResponseDto
+CaseStatusByDateResponseDto:
+  $ref: analytics.yml#/components/schemas/CaseStatusByDateResponseDto
+CaseStatusByInboxResponseDto:
+  $ref: analytics.yml#/components/schemas/CaseStatusByInboxResponseDto
+AvailableFiltersResponseDto:
+  $ref: analytics.yml#/components/schemas/AvailableFiltersResponseDto
+AnalyticsBracketDto:
+  $ref: analytics.yml#/components/schemas/AnalyticsBracketDto
+CaseAnalyticsQueryDto:
+  $ref: analytics.yml#/components/schemas/CaseAnalyticsQueryDto
+SarCompletedResponseDto:
+  $ref: analytics.yml#/components/schemas/SarCompletedResponseDto
+SarDelayResponseDto:
+  $ref: analytics.yml#/components/schemas/SarDelayResponseDto
+SarDelayDistributionResponseDto:
+  $ref: analytics.yml#/components/schemas/SarDelayDistributionResponseDto
+CasesCreatedResponseDto:
+  $ref: analytics.yml#/components/schemas/CasesCreatedResponseDto
+CasesFalsePositiveRateResponseDto:
+  $ref: analytics.yml#/components/schemas/CasesFalsePositiveRateResponseDto
+CasesDurationResponseDto:
+  $ref: analytics.yml#/components/schemas/CasesDurationResponseDto
+OpenCasesByAgeResponseDto:
+  $ref: analytics.yml#/components/schemas/OpenCasesByAgeResponseDto
+CaseSlaStatusByDateResponseDto:
+  $ref: analytics.yml#/components/schemas/CaseSlaStatusByDateResponseDto
+
+# CONTINUOUS SCREENINGS
+
+ContinuousScreeningDatasetUpdateSummaryDto:
+  $ref: continuous-screenings.yml#/components/schemas/ContinuousScreeningDatasetUpdateSummaryDto
+ContinuousScreeningUpdateJobSummaryDto:
+  $ref: continuous-screenings.yml#/components/schemas/ContinuousScreeningUpdateJobSummaryDto
+ContinuousScreeningJobErrorDto:
+  $ref: continuous-screenings.yml#/components/schemas/ContinuousScreeningJobErrorDto
+ContinuousScreeningClientDataIndexingDto:
+  $ref: continuous-screenings.yml#/components/schemas/ContinuousScreeningClientDataIndexingDto
+ContinuousScreeningClientDataIndexingResponseDto:
+  $ref: continuous-screenings.yml#/components/schemas/ContinuousScreeningClientDataIndexingResponseDto
+ContinuousScreeningConfigDto:
+  $ref: continuous-screenings.yml#/components/schemas/ContinuousScreeningConfigDto
+CreateContinuousScreeningConfigDto:
+  $ref: continuous-screenings.yml#/components/schemas/CreateContinuousScreeningConfigDto
+UpdateContinuousScreeningConfigDto:
+  $ref: continuous-screenings.yml#/components/schemas/UpdateContinuousScreeningConfigDto
+ContinuousScreeningObjectDto:
+  $ref: continuous-screenings.yml#/components/schemas/ContinuousScreeningObjectDto
+CreateContinuousScreeningObjectDto:
+  $ref: continuous-screenings.yml#/components/schemas/CreateContinuousScreeningObjectDto
+DeleteContinuousScreeningObjectDto:
+  $ref: continuous-screenings.yml#/components/schemas/DeleteContinuousScreeningObjectDto
+ContinuousScreeningMatchBaseDto:
+  $ref: continuous-screenings.yml#/components/schemas/ContinuousScreeningMatchBaseDto
+ContinuousScreeningMatchMarbleDto:
+  $ref: continuous-screenings.yml#/components/schemas/ContinuousScreeningMatchMarbleDto
+ContinuousScreeningMatchScreeningEntityDto:
+  $ref: continuous-screenings.yml#/components/schemas/ContinuousScreeningMatchScreeningEntityDto
+ContinuousScreeningDto:
+  $ref: continuous-screenings.yml#/components/schemas/ContinuousScreeningDto
+ContinuousScreeningRequestDto:
+  $ref: continuous-screenings.yml#/components/schemas/ContinuousScreeningRequestDto
+ContinuousScreeningMappingConfigDto:
+  $ref: continuous-screenings.yml#/components/schemas/ContinuousScreeningMappingConfigDto
+ContinuousScreeningMappingFieldDto:
+  $ref: continuous-screenings.yml#/components/schemas/ContinuousScreeningMappingFieldDto
+OpenSanctionsEntityDto:
+  $ref: continuous-screenings.yml#/components/schemas/OpenSanctionsEntityDto
+ContinuousScreeningMarbleToScreeningEntityDto:
+  $ref: continuous-screenings.yml#/components/schemas/ContinuousScreeningMarbleToScreeningEntityDto
+ContinuousScreeningScreeningEntityToMarbleDto:
+  $ref: continuous-screenings.yml#/components/schemas/ContinuousScreeningScreeningEntityToMarbleDto
+ContinuousScreeningMatchPayloadDto:
+  $ref: continuous-screenings.yml#/components/schemas/ContinuousScreeningMatchPayloadDto
+
+# SCORING
+
+ScoringSettings:
+  $ref: scoring.yml#/components/schemas/ScoringSettings
+UpdateScoringSettings:
+  $ref: scoring.yml#/components/schemas/UpdateScoringSettings
+ScoringRuleset:
+  $ref: scoring.yml#/components/schemas/ScoringRuleset
+ScoringRulesetWithRules:
+  $ref: scoring.yml#/components/schemas/ScoringRulesetWithRules
+UpdateScoringRuleset:
+  $ref: scoring.yml#/components/schemas/UpdateScoringRuleset
+ScoringScore:
+  $ref: scoring.yml#/components/schemas/ScoringScore
+ScoringDryRun:
+  $ref: scoring.yml#/components/schemas/ScoringDryRun
+
+# GRAPH EXPLORATION
+
+GraphRelation:
+  $ref: graph.yml#/components/schemas/GraphRelation
+CreateGraphRelation:
+  $ref: graph.yml#/components/schemas/CreateGraphRelation
+Graph:
+  $ref: graph.yml#/components/schemas/Graph
+GraphNodeRef:
+  $ref: graph.yml#/components/schemas/GraphNodeRef
+GraphNode:
+  $ref: graph.yml#/components/schemas/GraphNode
+GraphEdge:
+  $ref: graph.yml#/components/schemas/GraphEdge

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xmlns:flowable="http://flowable.org/bpmn"
+             targetNamespace="http://clarity.bank/workflows">
+  <process id="clarityAlertInvestigation" name="Investigation d'alerte" isExecutable="true">
+    <startEvent id="start"/>
+    <userTask id="investigate" name="Investigation"/>
+    <exclusiveGateway id="afterInvestigation"/>
+    <userTask id="checkerReview" name="Validation checker"/>
+    <exclusiveGateway id="afterChecker"/>
+    <endEvent id="closedEnd"/>
+    <sequenceFlow id="a1" sourceRef="start" targetRef="investigate"/>
+    <sequenceFlow id="a2" sourceRef="investigate" targetRef="afterInvestigation"/>
+    <sequenceFlow id="a3" sourceRef="afterInvestigation" targetRef="closedEnd">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${action == 'close'}]]></conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="a4" sourceRef="afterInvestigation" targetRef="checkerReview">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${action == 'escalate'}]]></conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="a5" sourceRef="checkerReview" targetRef="afterChecker"/>
+    <sequenceFlow id="a6" sourceRef="afterChecker" targetRef="closedEnd">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${action == 'approve'}]]></conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="a7" sourceRef="afterChecker" targetRef="investigate">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${action == 'return'}]]></conditionExpression>
+    </sequenceFlow>
+  </process>
+</definitions>

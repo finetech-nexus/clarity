@@ -1,0 +1,1333 @@
+/data-model:
+  get:
+    tags:
+      - Data Model
+    summary: Get the data model associated with the current organization (present in the JWT)
+    operationId: getDataModel
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: The data model from the organization
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - data_model
+              properties:
+                data_model:
+                  $ref: '#/components/schemas/DataModelDto'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+/data-model/tables:
+  post:
+    tags:
+      - Data Model
+    summary: Create a new table on the data model along with its initial fields and optional links
+    operationId: postDataModelTable
+    requestBody:
+      description: 'Describe the table to create'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CreateTableBody'
+      required: true
+    security:
+      - bearerAuth: []
+    responses:
+      '201':
+        description: Table created
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTableResponseDto'
+      '400':
+        description: Bad Request — missing required fields, invalid enum value, or empty fields array
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '409':
+        description: Conflict — table name already exists in this organization
+/data-model/tables/{tableId}:
+  patch:
+    tags:
+      - Data Model
+    summary: Update data model table
+    operationId: patchDataModelTable
+    parameters:
+      - name: tableId
+        description: ID of the table to update
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    requestBody:
+      description: 'Describe the modifications to make to the table'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UpdateTableBodyDto'
+      required: true
+    security:
+      - bearerAuth: []
+    responses:
+      '204':
+        description: Empty response body
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+      '409':
+        description: Conflict — field deletion has conflicts or resource creation has conflicts
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DestroyDataModelReport'
+  delete:
+    tags:
+      - Data Model
+    summary: Delete a data model table
+    operationId: deleteDataModelTable
+    parameters:
+      - name: tableId
+        description: ID of the table to delete
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: perform
+        description: Whether or not to actually delete the resource
+        in: query
+        schema:
+          type: boolean
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Resource would be or has been deleted
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DestroyDataModelReport'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+      '409':
+        description: Resource cannot be deleted
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DestroyDataModelReport'
+/data-model/tables/{tableId}/fields:
+  post:
+    tags:
+      - Data Model
+    summary: Create a new field on a table from the data model
+    operationId: postDataModelTableField
+    parameters:
+      - name: tableId
+        description: ID of the table in which to create the field
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    requestBody:
+      description: 'Describe the content of the field to create'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CreateTableFieldDto'
+      required: true
+    security:
+      - bearerAuth: []
+    responses:
+      '204':
+        description: Empty response body
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+/data-model/tables/{tableId}/navigation_options:
+  post:
+    tags:
+      - Data Model
+    summary: Create a new navigation option (one to many link) from a table from the data model. Under the hood, this creates (concurrently) a new index on the target table, which may take some time if there is already data in the table.
+    operationId: postDataModelTableNavigationOption
+    parameters:
+      - name: tableId
+        description: ID of the source table for the navigation option
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    requestBody:
+      description: 'Describe the target table & field of the navigation option'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CreateNavigationOptionDto'
+      required: true
+    security:
+      - bearerAuth: []
+    responses:
+      '204':
+        description: Empty response body
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+/data-model/fields/{fieldId}:
+  patch:
+    tags:
+      - Data Model
+    summary: Update data model field
+    operationId: patchDataModelField
+    parameters:
+      - name: fieldId
+        description: ID of the field to update
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    requestBody:
+      description: 'Describe the modifications to make to the field'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UpdateTableFieldDto'
+      required: true
+    security:
+      - bearerAuth: []
+    responses:
+      '204':
+        description: Empty response body
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+  delete:
+    tags:
+      - Data Model
+    summary: Delete a data model field
+    operationId: deleteDataModelField
+    parameters:
+      - name: fieldId
+        description: ID of the table to delete
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: perform
+        description: Whether or not to actually delete the resource
+        in: query
+        schema:
+          type: boolean
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Resource would be or has been deleted
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DestroyDataModelReport'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+      '409':
+        description: Resource cannot be deleted
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DestroyDataModelReport'
+/data-model/links:
+  post:
+    tags:
+      - Data Model
+    summary: Create a new link on a table from the data model
+    operationId: postDataModelTableLink
+    requestBody:
+      description: 'Describe the link to create'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CreateTableLinkBody'
+      required: true
+    security:
+      - bearerAuth: []
+    responses:
+      '204':
+        description: Empty response body
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+/data-model/links/{linkId}:
+  delete:
+    tags:
+      - Data Model
+    summary: Delete a data model link
+    operationId: deleteDataModelLink
+    parameters:
+      - name: linkId
+        description: ID of the link to delete
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: perform
+        description: Whether or not to actually delete the resource
+        in: query
+        schema:
+          type: boolean
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Resource would be or has been deleted
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DestroyDataModelReport'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+      '409':
+        description: Resource cannot be deleted
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DestroyDataModelReport'
+/data-model/pivots/{pivotId}:
+  delete:
+    tags:
+      - Data Model
+    summary: Delete a data model pivot
+    operationId: deleteDataModelPivot
+    parameters:
+      - name: pivotId
+        description: ID of the pivot to delete
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: perform
+        description: Whether or not to actually delete the resource
+        in: query
+        schema:
+          type: boolean
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Resource would be or has been deleted
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DestroyDataModelReport'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+      '409':
+        description: Resource cannot be deleted
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DestroyDataModelReport'
+/data-model/openapi:
+  get:
+    tags:
+      - Data Model
+    summary: Get the current version of the OpenAPI specification of the client specific API for data ingestion and decision making
+    operationId: getDataModelOpenApi
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: The OpenAPI specification of the client specific API for data ingestion and decision making for the current version
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenAPISpec'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+/data-model/openapi/{version}:
+  get:
+    tags:
+      - Data Model
+    summary: Get the OpenAPI specification of the client specific API for data ingestion and decision making for a specific version
+    operationId: getDataModelOpenApiOfVersion
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: version
+        description: Version of the API to get the OpenAPI specification for
+        in: path
+        required: true
+        schema:
+          type: string
+    responses:
+      '200':
+        description: The OpenAPI specification of the client specific API for data ingestion and decision making for the provided version
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenAPISpec'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+/data-model/pivots:
+  get:
+    tags:
+      - Data Model
+    summary: Get the pivots associated with the current organization (can be filtered by table_id)
+    operationId: listDataModelPivots
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: table_id
+        description: ID of the table to get the pivots from
+        in: query
+        schema:
+          type: string
+          format: uuid
+    responses:
+      '200':
+        description: The pivots corresponding to the current organization (and table_id if provided)
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                pivots:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/PivotDto'
+              required:
+                - pivots
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+  post:
+    tags:
+      - Data Model
+    summary: Create a pivot
+    operationId: createDataModelPivot
+    security:
+      - bearerAuth: []
+    requestBody:
+      description: 'Describe the pivot to create'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CreatePivotInputDto'
+      required: true
+    responses:
+      '200':
+        description: The created pivot
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                pivot:
+                  $ref: '#/components/schemas/PivotDto'
+              required:
+                - pivot
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+/data-model/tables/{tableId}/exported-fields:
+  get:
+    tags:
+      - Data Model
+      - Settings
+    summary: Get the exported fields on a table from the data model
+    operationId: getDataModelTableExportedFields
+    parameters:
+      - name: tableId
+        description: ID of the table to get the exported fields from
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: The exported fields on the provided table
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExportedFieldsDto'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+  post:
+    tags:
+      - Data Model
+      - Settings
+    summary: Update the exported fields on a table from the data model
+    operationId: updateDataModelTableExportedFields
+    parameters:
+      - name: tableId
+        description: ID of the table to update the exported fields on
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    security:
+      - bearerAuth: []
+    requestBody:
+      description: 'Describe the exported fields to update'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ExportedFieldsDto'
+      required: true
+    responses:
+      '200':
+        description: The updated exported fields
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExportedFieldsDto'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+
+components:
+  schemas:
+    LinkToSingleDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        parent_table_name:
+          type: string
+        parent_table_id:
+          type: string
+          format: uuid
+        parent_field_name:
+          type: string
+        parent_field_id:
+          type: string
+          format: uuid
+        child_table_name:
+          type: string
+        child_table_id:
+          type: string
+          format: uuid
+        child_field_name:
+          type: string
+        child_field_id:
+          type: string
+          format: uuid
+      required:
+        - id
+        - parent_table_name
+        - parent_table_id
+        - parent_field_name
+        - parent_field_id
+        - child_table_name
+        - child_table_id
+        - child_field_name
+        - child_field_id
+    NavigationOptionDto:
+      type: object
+      properties:
+        source_table_name:
+          type: string
+          description: name of the table we use as a starting point to explore "many" entries from another table, by correlating fields.
+        source_table_id:
+          type: string
+          format: uuid
+        source_field_name:
+          type: string
+          description: name of the field whose value we use as a filter on this object.
+        source_field_id:
+          type: string
+          format: uuid
+        target_table_name:
+          type: string
+          description: name of the table for which we explore "many" entries from a reference object. May be the same as the parent table.
+        target_table_id:
+          type: string
+          format: uuid
+        filter_field_name:
+          type: string
+          description: name of the field on which to filter the target table (on the "many" side of the relation)
+        filter_field_id:
+          type: string
+          format: uuid
+        ordering_field_name:
+          type: string
+          description: name of the field on which to order the target table (on the "many" side of the relation)
+        ordering_field_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, valid, invalid]
+          description: status of the index that is created in the database to allow data exploration on the child table.
+      required:
+        - source_table_name
+        - source_table_id
+        - source_field_name
+        - source_field_id
+        - target_table_name
+        - target_table_id
+        - filter_field_name
+        - filter_field_id
+        - ordering_field_name
+        - ordering_field_id
+        - status
+    FieldDto:
+      type: object
+      properties:
+        id:
+          type: string
+        data_type:
+          type: string
+          enum: [Bool, Int, Float, String, Timestamp, IpAddress, Coords, unknown]
+        description:
+          type: string
+        is_enum:
+          type: boolean
+        name:
+          type: string
+        nullable:
+          type: boolean
+        table_id:
+          type: string
+          format: uuid
+        values:
+          type: array
+          items:
+            oneOf:
+              - type: string
+              - type: number
+        unicity_constraint:
+          type: string
+          enum: [no_unicity_constraint, pending_unique_constraint, active_unique_constraint]
+        ftm_property:
+          type: string
+      required:
+        - id
+        - data_type
+        - description
+        - is_enum
+        - name
+        - nullable
+        - table_id
+        - unicity_constraint
+    TableDto:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        fields:
+          type: object
+          additionalProperties:
+            type: object
+            $ref: '#/components/schemas/FieldDto'
+        links_to_single:
+          type: object
+          additionalProperties:
+            type: object
+            $ref: '#/components/schemas/LinkToSingleDto'
+        navigation_options:
+          type: array
+          items:
+            $ref: '#/components/schemas/NavigationOptionDto'
+        ftm_entity:
+          $ref: '#/components/schemas/FtmEntity'
+        metadata:
+          type: object
+          nullable: true
+          additionalProperties: {}
+        primary_ordering_field:
+          type: string
+          description: Name of the field used as default ordering
+      required:
+        - id
+        - name
+        - description
+        - fields
+    FieldSemanticType:
+      type: string
+      enum:
+        - name
+        - first_name
+        - middle_name
+        - last_name
+        - enum
+        - currency
+        - country
+        - address
+        - id
+        - registration_number
+        - tax_id
+        - account_number
+        - iban
+        - bic
+        - foreign_key
+        - url
+        - email
+        - phone_number
+        - date_of_birth
+        - last_update
+        - creation_date
+        - deletion_date
+        - initiation_date
+        - validation_date
+        - monetary_amount
+        - percentage
+    FtmEntity:
+      type: string
+      enum:
+        - Person
+        - Company
+        - Organization
+        - Vessel
+        - Airplane
+
+    DataModelDto:
+      type: object
+      properties:
+        tables:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/TableDto'
+      required:
+        - tables
+    CreateTableBody:
+      type: object
+      required:
+        - name
+        - semantic_type
+      properties:
+        name:
+          type: string
+          description: snake_case table name
+        description:
+          type: string
+        alias:
+          type: string
+          description: Human-readable display name
+        semantic_type:
+          type: string
+          enum: [person, company, account, transaction, event, partner, other]
+        ftm_entity:
+          $ref: '#/components/schemas/FtmEntity'
+        metadata:
+          type: object
+          nullable: true
+          additionalProperties: {}
+        primary_ordering_field:
+          type: string
+          description: Name of the field used as default ordering
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/CreateTableBodyField'
+        links:
+          type: array
+          items:
+            $ref: '#/components/schemas/CreateTableBodyLink'
+    CreateTableResponseDto:
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: ID of the newly created table
+    CreateTableBodyField:
+      type: object
+      required:
+        - name
+        - type
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum: 
+            [Bool, Int, Float, String, Timestamp, IpAddress, Coords]
+        alias:
+          type: string
+        semantic_type:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/FieldSemanticType'
+        nullable:
+          type: boolean
+        is_enum:
+          type: boolean
+        is_unique:
+          type: boolean
+        ftm_property:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          nullable: true
+          additionalProperties: {}
+    CreateTableBodyLink:
+      type: object
+      required:
+        - name
+        - link_type
+        - child_field_name
+        - parent_table_id
+      properties:
+        name:
+          type: string
+        link_type:
+          type: string
+          enum: [related, belongs_to]
+        child_field_name:
+          type: string
+          description: Name of a field defined in the 'fields' array
+        parent_table_id:
+          type: string
+          format: uuid
+    UpdateTableBodyLink:
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        link_type:
+          type: string
+          enum: [related, belongs_to]
+        child_field_name:
+          type: string
+          description: Name of a field defined in the 'fields' array
+        parent_table_id:
+          type: string
+          format: uuid
+    UpdateTableBodyDto:
+      type: object
+      properties:
+        description:
+          type: string
+          nullable: true
+        semantic_type:
+          type: string
+          nullable: true
+          enum: [person, company, account, transaction, event, partner, other]
+        caption_field:
+          type: string
+          nullable: true
+        alias:
+          type: string
+          nullable: true
+        ftm_entity:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/FtmEntity'
+        primary_ordering_field:
+          type: string
+          nullable: true
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/FieldOperationDto'
+        links:
+          type: array
+          items:
+            $ref: '#/components/schemas/LinkOperationDto'
+        metadata:
+          type: object
+          nullable: true
+          additionalProperties: {}
+    CreateTableFieldDto:
+      type: object
+      required:
+        - name
+        - type
+        - nullable
+        - description
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum: [Bool, Int, Float, String, Timestamp, IpAddress, Coords]
+        nullable:
+          type: boolean
+        is_enum:
+          type: boolean
+        is_unique:
+          type: boolean
+        ftm_property:
+          type: string
+        metadata:
+          type: object
+          nullable: true
+          additionalProperties: {}
+
+    UpdateTableFieldDto:
+      type: object
+      properties:
+        description:
+          type: string
+        is_enum:
+          type: boolean
+        is_unique:
+          type: boolean
+        is_nullable:
+          type: boolean
+        ftm_property:
+          type: string
+          nullable: true
+        alias:
+          type: string
+        semantic_type:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/FieldSemanticType'
+        metadata:
+          type: object
+          nullable: true
+          additionalProperties: {}
+    FieldOperationDto:
+      oneOf:
+        - $ref: '#/components/schemas/AddFieldOperationDto'
+        - $ref: '#/components/schemas/ModFieldOperationDto'
+        - $ref: '#/components/schemas/DelFieldOperationDto'
+    AddFieldOperationDto:
+      type: object
+      required:
+        - op
+        - data
+      properties:
+        op:
+          type: string
+          enum: [ADD]
+        data:
+          $ref: '#/components/schemas/CreateTableBodyField'
+    ModFieldOperationDto:
+      type: object
+      required:
+        - op
+        - data
+      properties:
+        op:
+          type: string
+          enum: [MOD]
+        data:
+          $ref: '#/components/schemas/ModFieldDataDto'
+    DelFieldOperationDto:
+      type: object
+      required:
+        - op
+        - data
+      properties:
+        op:
+          type: string
+          enum: [DEL]
+        data:
+          $ref: '#/components/schemas/DelFieldDataDto'
+    DelFieldDataDto:
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          type: string
+          format: uuid
+    ModFieldDataDto:
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          type: string
+          format: uuid
+        description:
+          type: string
+        is_enum:
+          type: boolean
+        is_unique:
+          type: boolean
+        is_nullable:
+          type: boolean
+        ftm_property:
+          type: string
+          nullable: true
+        alias:
+          type: string
+        semantic_type:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/FieldSemanticType'
+        metadata:
+          type: object
+          nullable: true
+          additionalProperties: {}
+    LinkOperationDto:
+      oneOf:
+        - $ref: '#/components/schemas/AddLinkOperationDto'
+        - $ref: '#/components/schemas/ModLinkOperationDto'
+        - $ref: '#/components/schemas/DelLinkOperationDto'
+    AddLinkOperationDto:
+      type: object
+      required:
+        - op
+        - data
+      properties:
+        op:
+          type: string
+          enum: [ADD]
+        data:
+          $ref: '#/components/schemas/CreateTableBodyLink'
+    ModLinkOperationDto:
+      type: object
+      required:
+        - op
+        - data
+      properties:
+        op:
+          type: string
+          enum: [MOD]
+        data:
+          $ref: '#/components/schemas/UpdateTableBodyLink'
+    DelLinkOperationDto:
+      type: object
+      required:
+        - op
+        - data
+      properties:
+        op:
+          type: string
+          enum: [DEL]
+        data:
+          $ref: '#/components/schemas/DelLinkDataDto'
+    DelLinkDataDto:
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          type: string
+          format: uuid
+    CreateTableLinkBody:
+      type: object
+      required:
+        - name
+        - parent_table_id
+        - parent_field_id
+        - child_table_id
+        - child_field_id
+      properties:
+        name:
+          type: string
+        parent_table_id:
+          type: string
+        parent_field_id:
+          type: string
+        child_table_id:
+          type: string
+        child_field_id:
+          type: string
+    OpenAPISpec:
+      type: object
+      required:
+        - openapi
+        - tags
+        - paths
+      properties:
+        info:
+          type: object
+        openapi:
+          type: string
+        tags:
+          type: array
+          items:
+            type: object
+        paths:
+          type: object
+        components:
+          type: object
+          properties:
+            schemas:
+              type: object
+            securitySchemes:
+              type: object
+    PivotDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        base_table:
+          type: string
+        base_table_id:
+          type: string
+          format: uuid
+        pivot_table:
+          type: string
+        pivot_table_id:
+          type: string
+          format: uuid
+        field:
+          type: string
+        field_id:
+          type: string
+          format: uuid
+        path_links:
+          type: array
+          items:
+            type: string
+        path_link_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+      required:
+        - id
+        - created_at
+        - base_table
+        - base_table_id
+        - pivot_table
+        - pivot_table_id
+        - field
+        - field_id
+        - path_links
+        - path_link_ids
+    PivotValueDto:
+      type: object
+      properties:
+        pivot_id:
+          type: string
+          format: uuid
+          nullable: true
+        pivot_value:
+          type: string
+          nullable: true
+      required:
+        - pivot_id
+        - pivot_value
+    CreatePivotInputDto:
+      type: object
+      properties:
+        base_table_id:
+          type: string
+          format: uuid
+        field_id:
+          type: string
+          format: uuid
+        path_link_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+      required:
+        - base_table_id
+    CreateNavigationOptionDto:
+      type: object
+      properties:
+        source_field_id:
+          type: string
+          format: uuid
+        target_table_id:
+          type: string
+          format: uuid
+        filter_field_id:
+          type: string
+          format: uuid
+        ordering_field_id:
+          type: string
+          format: uuid
+    IngestedDataFieldDto:
+      type: object
+      required:
+        - Path
+        - Name
+      properties:
+        Path:
+          type: array
+          items:
+            type: string
+        Name:
+          type: string
+    ExportedFieldsDto:
+      type: object
+      properties:
+        trigger_object_fields:
+          type: array
+          items:
+            type: string
+        ingested_data_fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/IngestedDataFieldDto'
+      required:
+        - trigger_object_fields
+        - ingested_data_fields
+
+    DestroyDataModelReport:
+       type: object
+       required: [performed conflicts archived_iterations]
+       properties:
+          performed:
+             type: boolean
+          conflicts:
+            $ref: '#/components/schemas/DestroyDataModelReportConflicts'
+          archived_iterations:
+            type: array
+            items:
+              $ref: '#/components/schemas/DestroyDataModelReportRef'
+
+    DestroyDataModelReportRef:
+      type: object
+      required: [id label]
+      properties:
+        id:
+          type: string
+          format: uuid
+        label:
+          type: string
+
+    DestroyDataModelReportConflicts:
+      type: object
+      required:
+        - continuous_screening
+        - links
+        - pivots
+        - analytics_settings
+        - scenarios
+        - empty_scenarios
+        - scenario_iterations
+        - workflows
+        - test_runs
+      properties:
+        continuous_screening:
+          description: Whether a continuous screening config uses the resource
+          type: boolean
+        links:
+          description: List of links using the resource
+          type: array
+          items:
+            type: string
+        pivots:
+          description: List of pivots using the resource
+          type: array
+          items:
+            type: string
+        analytics_settings:
+          description: Number of analytics settings referring to the resource
+          type: integer
+        scenarios:
+          description: Scenarios using the resource as a trigger object
+          type: array
+          items:
+            $ref: '#/components/schemas/DestroyDataModelReportRef'
+        empty_scenarios:
+          description: List of scenarios that would have no live or draft version after deleting the resource
+          type: array
+          items:
+            $ref: '#/components/schemas/DestroyDataModelReportRef'
+        scenario_iterations:
+          description: Map of scenario iterations which components refer to the resource
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/DestroyDataModelReportIteration'
+        workflows:
+          description: List of scenarios which workflows use the resource
+          type: array
+          items:
+            $ref: '#/components/schemas/DestroyDataModelReportRef'
+        test_runs:
+          description: Whether an active test run uses an iteration that would be disabled
+          type: boolean
+
+    DestroyDataModelReportIteration:
+      type: object
+      required: [name scenario_id draft trigger_condition rules screenings]
+      properties:
+        name:
+          type: string
+        scenario_id:
+          type: string
+          format: uuid
+        draft:
+          type: boolean
+        trigger_condition:
+          type: boolean
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/DestroyDataModelReportRef'
+        screenings:
+          type: array
+          items:
+            $ref: '#/components/schemas/DestroyDataModelReportRef'

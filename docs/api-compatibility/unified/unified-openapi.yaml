@@ -1,0 +1,115 @@
+openapi: 3.1.0
+info:
+  title: Clarity API
+  version: 0.1.0
+  description: |
+    API native de Clarity. Elle ne remplace pas les surfaces /v1 (Marble) ni /api/v1 (Ballerine).
+    Le document servi par l'application au chemin /openapi.json est la référence exécutable et peut contenir les trois surfaces.
+servers:
+  - url: http://localhost:8095
+paths:
+  /api/clarity/v1/health:
+    get:
+      operationId: clarityHealth
+      responses:
+        "200":
+          description: Santé du service et mode du moteur de workflow.
+  /api/clarity/v1/auth/login:
+    post:
+      operationId: clarityLogin
+      responses:
+        "200":
+          description: Jeton bearer.
+        "401":
+          description: Identifiants refusés.
+  /api/clarity/v1/dashboard:
+    get:
+      operationId: clarityDashboard
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Compteurs du tenant.
+  /api/clarity/v1/customers:
+    get:
+      operationId: clarityListCustomers
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Clients du tenant.
+  /api/clarity/v1/customers/{customer_id}:
+    get:
+      operationId: clarityGetCustomer
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: customer_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Vue 360.
+        "404":
+          description: Absent de ce tenant.
+  /api/clarity/v1/onboarding/individuals:
+    post:
+      operationId: clarityOnboardIndividual
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Dossier personne physique ouvert dans Flowable ou le moteur de repli.
+  /api/clarity/v1/onboarding/businesses:
+    post:
+      operationId: clarityOnboardBusiness
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Dossier personne morale.
+  /api/clarity/v1/workflows/{workflow_id}/actions:
+    post:
+      operationId: clarityWorkflowAction
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: workflow_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Transition appliquée.
+        "403":
+          description: Rôle ou maker-checker refusé.
+  /api/clarity/v1/alerts:
+    get:
+      operationId: clarityListAlerts
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Alertes de scénarios à investiguer.
+  /api/clarity/v1/cases/{case_id}/reports:
+    post:
+      operationId: clarityDraftReport
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: case_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Préparation déclarative. Aucun dépôt réglementaire.
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer

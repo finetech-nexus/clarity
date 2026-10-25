@@ -1,0 +1,1310 @@
+/screenings:
+  get:
+    tags:
+      - Screening
+    summary: List screenings for a decision
+    operationId: listScreenings
+    parameters:
+      - name: decision_id
+        description: ID of the decision
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+    responses:
+      '200':
+        description: The list of screenings
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/ScreeningDto'
+/screenings/datasets:
+  get:
+    tags:
+      - Screening
+    summary: List Open Sanction Dataset
+    operationId: listOpenSanctionDatasets
+    responses:
+      '200':
+        description: The list of datasets
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenSanctionsCatalogDto'
+/screenings/available-filters:
+  get:
+    tags:
+      - Screening
+    summary: List available filter for the current provider
+    operationId: listScreeningAvailableFilters
+    parameters:
+      - name: feature
+        description: Feature the return the filters for
+        in: query
+        required: true
+        schema:
+          type: string
+          enum: [transaction_monitoring, continuous_monitoring, manual_search]
+    responses:
+      '200':
+        description: Available filters
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScreeningAvailableFilters'
+/screenings/freshness:
+  get:
+    tags:
+      - Screening
+    summary: Retrieve the freshness of sanction datasets
+    operationId: getDatasetsFreshness
+    responses:
+      '200':
+        description: Freshness descriptor
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenSanctionsDatasetFreshnessDto'
+/screenings/{screeningId}/files:
+  get:
+    tags:
+      - Screening
+    summary: List files for screening
+    operationId: listScreeningFiles
+    parameters:
+      - name: screeningId
+        description: ID of the screening
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    responses:
+      '200':
+        description: The list of the files
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/ScreeningFileDto'
+  post:
+    tags:
+      - Screening
+    summary: Upload a file to a screening
+    operationId: uploadScreeningFile
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: screeningId
+        description: ID of the screening
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    requestBody:
+      description: 'The file to upload'
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            properties:
+              file:
+                type: string
+                format: binary
+    responses:
+      '200':
+        description: The file uploaded
+/screenings/{screeningId}/files/{fileId}:
+  get:
+    tags:
+      - Screening
+    summary: Download a screening uploaded file
+    operationId: downloadScreeningFile
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: screeningId
+        description: ID of the screening that contains the file to be downloaded
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: fileId
+        description: ID of the file to download
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    responses:
+      '200':
+        description: Signed url to download the screening file's content
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - url
+              properties:
+                url:
+                  type: string
+                  format: uri
+                  description: Signed url to download the screening file's content
+      '401':
+        $ref: 'components.yml#/responses/401'
+/screenings/entities/{entityId}:
+  get:
+    tags:
+      - Screening
+    summary: Get the enriched data for an entity
+    operationId: getEnrichedData
+    parameters:
+      - name: entityId
+        description: ID of the entity to get the enriched data for
+        in: path
+        required: true
+        schema:
+          type: string
+    responses:
+      '200':
+        description: The enriched data for the entity
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScreeningMatchPayloadDto'
+/screenings/matches/{matchId}:
+  patch:
+    tags:
+      - Screening
+    summary: Update the status of a screening match
+    operationId: updateScreeningMatch
+    parameters:
+      - name: matchId
+        description: ID of the match to update
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    requestBody:
+      description: 'Updated match object'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/updateScreeningMatchDto'
+      required: true
+    responses:
+      '200':
+        description: The match returned ?
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScreeningMatchDto'
+/screenings/matches/{matchId}/enrich:
+  post:
+    tags:
+      - Screening
+    summary: Enrich the match payload with complete data
+    operationId: enrichScreeningMatch
+    parameters:
+      - name: matchId
+        description: ID of the match to update
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    responses:
+      '200':
+        description: The match returned ?
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScreeningMatchDto'
+      '404':
+        $ref: 'components.yml#/responses/404'
+      '409':
+        $ref: 'components.yml#/responses/409'
+/screenings/search:
+  post:
+    tags:
+      - Screening
+    summary: Search possible matches
+    operationId: searchScreeningMatches
+    requestBody:
+      description: 'Refine query params'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScreeningRefineDto'
+    responses:
+      '200':
+        description: The list of matches
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/ScreeningMatchPayloadDto'
+/screenings/refine:
+  post:
+    tags:
+      - Screening
+    summary: Try refine the search
+    operationId: refineScreening
+    requestBody:
+      description: 'Refine query'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScreeningRefineDto'
+    responses:
+      '200':
+        description: The screening created
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScreeningDto'
+
+/screenings/{screeningId}/ai-suggestions:
+  get:
+    tags:
+      - Screening
+    summary: Retrieve AI-generated suggestions for all hits in a screening
+    description: >-
+      Returns the list of AI suggestions already computed for each match in the given screening.
+      Only matches that have already been analysed will appear in the response.
+    operationId: getScreeningAiSuggestions
+    parameters:
+      - name: screeningId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    responses:
+      '200':
+        description: Array of suggestion objects (one per analysed screening match). May be empty if no suggestions have been generated yet.
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/ScreeningAiSuggestionDto'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+/screenings/{screeningId}/ai-suggestions/enqueue:
+  post:
+    tags:
+      - Screening
+    summary: Enqueue an async job to generate AI suggestions for a screening's hits
+    description: >-
+      Validates the caller's permissions and feature access, then enqueues a background job to
+      analyse all pending matches in the screening using an LLM. After the job completes, results can be retrieved via
+      GET /screenings/{screeningId}/ai-suggestions.
+    operationId: enqueueScreeningAiSuggestions
+    parameters:
+      - name: screeningId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    responses:
+      '202':
+        description: Job has been successfully enqueued
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+
+/screenings/freeform-search:
+  post:
+    tags:
+      - Screening
+    summary: Freeform search for sanctions matches
+    operationId: freeformSearch
+    parameters:
+      - name: limit
+        description: Maximum number of results to return
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 10
+          maximum: 50
+          default: 10
+    requestBody:
+      description: 'Freeform search query'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ScreeningFreeformDto'
+    responses:
+      '200':
+        description: The freeform search id and its matches
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScreeningFreeformSearchResultDto'
+  get:
+    tags:
+      - Screening
+    summary: List past freeform searches
+    operationId: listFreeformSearches
+    parameters:
+      - $ref: 'components.yml#/parameters/limit'
+      - $ref: 'components.yml#/parameters/offset_id'
+      - $ref: 'components.yml#/parameters/order'
+      - name: user_id
+        description: filter searches by user ID
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - name: api_key_id
+        description: filter searches by API key ID
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - name: saved_only
+        description: If true, only return searches for which results were saved
+        in: query
+        required: false
+        schema:
+          type: boolean
+      - name: created_after
+        description: Filter searches created after this date
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: created_before
+        description: Filter searches created before this date
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+    responses:
+      '200':
+        description: The list of past freeform searches
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - data
+                - has_next_page
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/ScreeningFreeformSearchDto'
+                has_next_page:
+                  type: boolean
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+/screenings/freeform-search/{id}/save:
+  post:
+    tags:
+      - Screening
+    summary: Manually save a freeform search and its results. Idempotent if called multiple times. Returns a 409 if the set of entities returned by the search has changed since the initial search was done.
+    operationId: saveFreeformSearch
+    parameters:
+      - name: id
+        description: ID of the freeform search to save
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    responses:
+      '200':
+        description: empty body on save
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+      '409':
+        $ref: 'components.yml#/responses/409'
+/screenings/freeform-search/{id}:
+  get:
+    tags:
+      - Screening
+    summary: Get a freeform search and its results
+    operationId: getFreeformSearch
+    parameters:
+      - name: id
+        description: ID of the freeform search to retrieve
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    responses:
+      '200':
+        description: The freeform search and its matches
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScreeningFreeformSearchDto'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+
+/screenings/searches:
+  get:
+    tags:
+      - Screening
+    summary: List saved search in the organization
+    operationId: listScreeningSavedSearches
+    responses:
+      '200':
+        description: List of saved searches
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/ScreeningSavedSearch'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+
+  post:
+    tags:
+      - Screening
+    summary: Save a screening search
+    operationId: saveScreeningSearch
+    requestBody:
+      description: Search to be saved
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SaveScreeningSearchDto'
+    responses:
+      '201':
+        description: The search that was just saved
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScreeningSavedSearch'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '409':
+        $ref: 'components.yml#/responses/409'
+
+/screenings/searches/{id}:
+  delete:
+    tags:
+      - Screening
+    summary: Delete a saved screening search
+    operationId: deleteScreeningSavedSearch
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    responses:
+      '204':
+        description: Saved search was deleted
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+
+components:
+  schemas:
+    OpenSanctionsCatalogDataset:
+      type: object
+      required:
+        - name
+        - title
+      properties:
+        name:
+          type: string
+        title:
+          type: string
+        tag:
+          type: string
+    OpenSanctionsCatalogSection:
+      type: object
+      required:
+        - name
+        - title
+        - datasets
+      properties:
+        name:
+          type: string
+        title:
+          type: string
+        datasets:
+          type: array
+          items:
+            $ref: '#/components/schemas/OpenSanctionsCatalogDataset'
+    OpenSanctionsCatalogDto:
+      type: object
+      required:
+        - sections
+      properties:
+        sections:
+          type: array
+          items:
+            $ref: '#/components/schemas/OpenSanctionsCatalogSection'
+    ScreeningAvailableFilters:
+      type: object
+      required: [provider, sections]
+      properties:
+        provider:
+          type: string
+          enum: [opensanctions, lexisnexis]
+        sections:
+          type: object
+          properties:
+            sanctions:
+              $ref: '#/components/schemas/ScreeningAvailableFiltersSection'
+            peps:
+              $ref: '#/components/schemas/ScreeningAvailableFiltersSection'
+            adverse_media:
+              $ref: '#/components/schemas/ScreeningAvailableFiltersSection'
+            other:
+              $ref: '#/components/schemas/ScreeningAvailableFiltersSection'
+            custom:
+              $ref: '#/components/schemas/ScreeningAvailableFiltersSection'
+            global:
+              $ref: '#/components/schemas/ScreeningAvailableFiltersSection'
+    ScreeningAvailableFiltersSection:
+      type: object
+      properties:
+        self:
+          type: string
+        datasets:
+          type: array
+          items:
+            type: object
+            required: [name, title]
+            properties:
+              section:
+                type: string
+              name:
+                type: string
+              title:
+                type: string
+        topics:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: object
+              required: [name, title]
+              properties:
+                name:
+                  type: string
+                title:
+                  type: string
+        enabled:
+          type: boolean
+    ScreeningConfigBodySectionDto:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        datasets:
+          type: array
+          items:
+            type: string
+        topics:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+    ScreeningConfigBodyFiltersDto:
+      type: object
+      properties:
+        sanctions:
+          $ref: '#/components/schemas/ScreeningConfigBodySectionDto'
+        peps:
+          $ref: '#/components/schemas/ScreeningConfigBodySectionDto'
+        adverse_media:
+          $ref: '#/components/schemas/ScreeningConfigBodySectionDto'
+        other:
+          $ref: '#/components/schemas/ScreeningConfigBodySectionDto'
+        custom:
+          $ref: '#/components/schemas/ScreeningConfigBodySectionDto'
+        global:
+          $ref: '#/components/schemas/ScreeningConfigBodySectionDto'
+    OpenSanctionsDatasetFreshnessDto:
+      type: object
+      required:
+        - upstream
+        - version
+        - up_to_date
+      properties:
+        upstream:
+          $ref: '#/components/schemas/OpenSanctionsUpstreamDatasetFreshnessDto'
+        version:
+          type: string
+        up_to_date:
+          type: boolean
+    OpenSanctionsUpstreamDatasetFreshnessDto:
+      type: object
+      required:
+        - version
+        - name
+        - last_export
+      properties:
+        version:
+          type: string
+        name:
+          type: string
+        last_export:
+          type: string
+          format: date-time
+    ScreeningConfigDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        rule_group:
+          type: string
+        datasets:
+          type: array
+          items:
+            type: string
+        filters:
+          $ref: '#/components/schemas/ScreeningConfigBodyFiltersDto'
+        threshold:
+          type: integer
+          minimum: 0
+          maximum: 100
+        forced_outcome:
+          $ref: 'decisions.yml#/components/schemas/OutcomeDto'
+        trigger_rule:
+          $ref: 'ast.yml#/components/schemas/NodeDto'
+        entity_type:
+          type: string
+          enum:
+            - Thing
+            - Person
+            - Organization
+            - Vehicle
+        query:
+          description: Mapping from OpenSanction entity field to AST node. All entity types support the `name` field. Additional field will depend on the selected entity type.
+          type: object
+          required:
+            - name
+          additionalProperties:
+            $ref: 'ast.yml#/components/schemas/NodeDto'
+          properties:
+            name:
+              $ref: 'ast.yml#/components/schemas/NodeDto'
+        counterparty_id_expression:
+          $ref: 'ast.yml#/components/schemas/NodeDto'
+        preprocessing:
+          description: Configuration of preprocessing steps for the counterparty name
+          type: object
+          properties:
+            use_ner:
+              description: Whether the counterparty name should go through Name Entity Recognition
+              type: boolean
+            ner_ignore_classification:
+              description: Whether NER produces generic screening queries (true) or queries matching the detected classification (false).
+              type: boolean
+            skip_if_under:
+              description: Whether to skip the rule if the counterparty name is under X characters
+              type: integer
+              minimum: 0
+            remove_numbers:
+              description: Whether to strip numbers from the counterparty name
+              type: boolean
+            ignore_list_id:
+              description: Whether to strip items from a custom list from the counterparty name
+              type: string
+              format: uuid
+    ScreeningDto:
+      type: object
+      anyOf:
+        - $ref: '#/components/schemas/ScreeningSuccessDto'
+        - $ref: '#/components/schemas/ScreeningNoHitDto'
+        - $ref: '#/components/schemas/ScreeningErrorDto'
+    ScreeningSuccessDto:
+      type: object
+      required:
+        - id
+        - config
+        - decision_id
+        - status
+        - request
+        - partial
+        - is_manual
+        - matches
+      properties:
+        id:
+          type: string
+          format: uuid
+        config:
+          type: object
+          required:
+            - name
+          properties:
+            name:
+              type: string
+        unique_counterparty_identifier:
+          type: string
+        decision_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: ['in_review', 'confirmed_hit']
+        request:
+          $ref: '#/components/schemas/ScreeningRequestDto'
+        initial_query:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScreeningQueryDto'
+        partial:
+          type: boolean
+        is_manual:
+          type: boolean
+        matches:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScreeningMatchDto'
+    ScreeningNoHitDto:
+      type: object
+      required:
+        - id
+        - config
+        - decision_id
+        - status
+        - partial
+        - is_manual
+        - matches
+      properties:
+        id:
+          type: string
+          format: uuid
+        config:
+          type: object
+          required:
+            - name
+          properties:
+            name:
+              type: string
+        unique_counterparty_identifier:
+          type: string
+        decision_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: ['no_hit']
+        request:
+          $ref: '#/components/schemas/ScreeningRequestDto'
+        initial_query:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScreeningQueryDto'
+        partial:
+          type: boolean
+        is_manual:
+          type: boolean
+        matches:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScreeningMatchDto'
+    ScreeningErrorDto:
+      type: object
+      required:
+        - id
+        - config
+        - decision_id
+        - status
+        - partial
+        - is_manual
+        - matches
+        - error_codes
+      properties:
+        id:
+          type: string
+          format: uuid
+        config:
+          type: object
+          required:
+            - name
+          properties:
+            name:
+              type: string
+        unique_counterparty_identifier:
+          type: string
+        decision_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: ['error']
+        request:
+          $ref: '#/components/schemas/ScreeningRequestDto'
+        initial_query:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScreeningQueryDto'
+        partial:
+          type: boolean
+        is_manual:
+          type: boolean
+        matches:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScreeningMatchDto'
+        error_codes:
+          type: array
+          items:
+            type: string
+            enum: ['all_fields_null_or_empty']
+    ScreeningFileDto:
+      type: object
+      required:
+        - id
+        - filename
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    ScreeningSanctionEntityDto:
+      type: object
+      required:
+        - id
+        - schema
+        - properties
+      properties:
+        id:
+          type: string
+        schema:
+          type: string
+          enum: ['Sanction']
+        properties:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+
+    ScreeningMatchPayloadDto:
+      type: object
+      required:
+        - id
+        - match
+        - score
+        - schema
+        - caption
+        - properties
+      properties:
+        id:
+          type: string
+        match:
+          type: boolean
+        score:
+          type: number
+        schema:
+          $ref: '#/components/schemas/ScreeningEntityDto'
+        caption:
+          type: string
+        properties:
+          allOf:
+            - type: object
+              properties:
+                sanctions:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/ScreeningSanctionEntityDto'
+            - type: object
+              additionalProperties:
+                type: array
+                items:
+                  type: string
+    ScreeningMatchDto:
+      type: object
+      required:
+        - id
+        - entity_id
+        - query_ids
+        - status
+        - datasets
+        - payload
+        - enriched
+        - comments
+      properties:
+        id:
+          type: string
+        entity_id:
+          type: string
+        query_ids:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: ['pending', 'confirmed_hit', 'no_hit', 'skipped']
+        datasets:
+          type: array
+        payload:
+          $ref: '#/components/schemas/ScreeningMatchPayloadDto'
+        enriched:
+          type: boolean
+        comments:
+          type: array
+          items:
+            type: object
+            required:
+              - id
+              - author_id
+              - comment
+              - created_at
+            properties:
+              id:
+                type: string
+                format: uuid
+              author_id:
+                type: string
+                format: uuid
+              comment:
+                type: string
+              created_at:
+                type: string
+                format: date-time
+    ScreeningEntityDto:
+      type: string
+      enum:
+        [
+          'Thing',
+          'Address',
+          'Airplane',
+          'Asset',
+          'Associate',
+          'Company',
+          'CryptoWallet',
+          'Debt',
+          'Directorship',
+          'Employment',
+          'Family',
+          'Identification',
+          'LegalEntity',
+          'Membership',
+          'Occupancy',
+          'Organization',
+          'Ownership',
+          'Passport',
+          'Payment',
+          'Person',
+          'Position',
+          'PublicBody',
+          'Representation',
+          'Sanction',
+          'Security',
+          'Succession',
+          'UnknownLink',
+          'Vessel',
+          'Vehicle',
+        ]
+    ScreeningQueryDto:
+      type: object
+      required:
+        - schema
+        - properties
+      properties:
+        schema:
+          $ref: '#/components/schemas/ScreeningEntityDto'
+        properties:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+    ScreeningRequestDto:
+      type: object
+      required:
+        - threshold
+        - limit
+        - search_input
+      properties:
+        threshold:
+          type: number
+        limit:
+          type: number
+        search_input:
+          type: object
+          required:
+            - queries
+          properties:
+            queries:
+              type: object
+              additionalProperties:
+                $ref: '#/components/schemas/ScreeningQueryDto'
+    ScreeningRefineDto:
+      type: object
+    updateScreeningMatchDto:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: ['confirmed_hit', 'no_hit']
+        comment:
+          type: string
+        whitelist:
+          type: boolean
+    ScreeningFreeformDto:
+      type: object
+      required:
+        - query
+      properties:
+        query:
+          $ref: '#/components/schemas/RefineQueryDto'
+        datasets:
+          type: array
+          items:
+            type: string
+        threshold:
+          type: integer
+          minimum: 0
+          maximum: 100
+    ScreeningFreeformSearchResultDto:
+      type: object
+      required:
+        - id
+        - matches
+      properties:
+        id:
+          type: string
+          format: uuid
+        matches:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScreeningMatchPayloadDto'
+    ScreeningFreeformSearchDto:
+      type: object
+      required:
+        - id
+        - created_at
+        - search_input
+        - search_config
+        - is_saved
+        - nb_hits
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        api_key_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        search_input:
+          $ref: '#/components/schemas/ScreeningFreeformSearchInputDto'
+        search_config:
+          $ref: '#/components/schemas/ScreeningFreeformSearchConfigDto'
+        is_saved:
+          type: boolean
+        nb_hits:
+          type: integer
+        matches:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScreeningMatchPayloadDto'
+    ScreeningFreeformSearchInputDto:
+      type: object
+      required:
+        - type
+        - query
+      properties:
+        type:
+          type: string
+          enum: ['Thing', 'Person', 'Organization', 'Vehicle']
+        query:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+    ScreeningFreeformSearchConfigDto:
+      type: object
+      required:
+        - provider
+        - filters
+        - limit
+      properties:
+        provider:
+          type: string
+        filters:
+          $ref: '#/components/schemas/ScreeningConfigBodyFiltersDto'
+        threshold:
+          type: integer
+          nullable: true
+          minimum: 0
+          maximum: 100
+        limit:
+          type: integer
+    RefineQueryDto:
+      type: object
+      description: One of Thing, Person, Organization, or Vehicle must be provided
+      properties:
+        Thing:
+          $ref: '#/components/schemas/RefineQueryThing'
+        Person:
+          $ref: '#/components/schemas/RefineQueryPerson'
+        Organization:
+          $ref: '#/components/schemas/RefineQueryOrganization'
+        Vehicle:
+          $ref: '#/components/schemas/RefineQueryVehicle'
+    RefineQueryThing:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+    RefineQueryPerson:
+      type: object
+      properties:
+        name:
+          type: string
+        birthDate:
+          type: string
+        nationality:
+          type: string
+        passportNumber:
+          type: string
+        address:
+          type: string
+    RefineQueryOrganization:
+      type: object
+      properties:
+        name:
+          type: string
+        country:
+          type: string
+        registrationNumber:
+          type: string
+        address:
+          type: string
+    ScreeningAiSuggestionDto:
+      type: object
+      required:
+        - match_id
+        - entity_id
+        - confidence
+        - reason
+        - version
+        - created_at
+      properties:
+        match_id:
+          type: string
+          description: ID of the screening match this suggestion applies to
+        entity_id:
+          type: string
+          description: ID of the sanctioned entity proposed as a match
+        confidence:
+          type: string
+          enum: ['probable_false_positive', 'inconclusive', 'investigate']
+          description: AI assessment of the match
+        reason:
+          type: string
+          description: Concise AI explanation for the suggestion (1–3 sentences)
+        version:
+          type: string
+          description: Schema version of the suggestion object
+          example: v1
+        created_at:
+          type: string
+          format: date-time
+          description: When the suggestion was generated
+    RefineQueryVehicle:
+      type: object
+      properties:
+        name:
+          type: string
+        registrationNumber:
+          type: string
+    SaveScreeningSearchDto:
+      type: object
+      required: [name, config]
+      properties:
+        name:
+          type: string
+        config:
+          $ref: "#/components/schemas/ScreeningFreeformDto"
+    ScreeningSavedSearch:
+      type: object
+      required:
+        - id
+        - org_id
+        - name
+        - provider
+        - config
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        org_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        provider:
+          type: string
+        config:
+          $ref: "#/components/schemas/ScreeningFreeformDto"
+        created_at:
+          type: string
+          format: date-time

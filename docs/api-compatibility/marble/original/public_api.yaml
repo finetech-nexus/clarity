@@ -1,0 +1,677 @@
+openapi: 3.0.3
+info:
+  title: Marble decision engine API
+  description: Public API on decisions and data ingestion.
+  version: 0.1.0
+x-readme:
+  explorer-enabled: false
+  proxy-enabled: false
+  samples-languages: ["shell", "python", "javascript", "go", "ruby"]
+servers:
+  - url: "api.checkmarble.com"
+tags:
+  - name: Ingestion
+    description: Routes for data ingestion
+  - name: Decision
+    description: Routes for creating and reading decisions
+  - name: ScheduledExecutions
+    description: Routes for listing scheduled executions
+paths:
+  /ingestion/{object_type}:
+    post:
+      summary: Ingest a new object
+      tags:
+        - Ingestion
+      security:
+        - ApiKeyAuth: []
+      description: Ingest a new object from the data model
+      parameters:
+        - in: path
+          name: object_type
+          schema:
+            type: string
+            example: transactions
+          required: true
+          description: name of the object type used for ingestion.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/data_model_object"
+      responses:
+        200:
+          description: The object was successfully ingested.
+        400:
+          description: The provided object is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDto'
+        500:
+          description: An error happened while ingesting the object.
+    patch:
+      summary: Ingest a new object, and allow a partial payload (only the fields to update)
+      tags:
+        - Ingestion
+      security:
+        - ApiKeyAuth: []
+      description: Ingest (upsert) a new version of an object from the data model
+      parameters:
+        - in: path
+          name: object_type
+          schema:
+            type: string
+            example: transactions
+          required: true
+          description: name of the object type used for ingestion.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/data_model_object"
+      responses:
+        200:
+          description: The object was successfully ingested.
+        400:
+          description: The provided object is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDto'
+        500:
+          description: An error happened while ingesting the object.
+  /ingestion/{object_type}/multiple:
+    post:
+      summary: Ingest new objects by batch
+      tags:
+        - Ingestion
+      security:
+        - ApiKeyAuth: []
+      description: Ingest an array of objects from the data model
+      parameters:
+        - in: path
+          name: object_type
+          schema:
+            type: string
+            example: transactions
+          required: true
+          description: name of the object type used for ingestion.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: "#/components/schemas/data_model_object"
+              maxItems: 100
+      responses:
+        200:
+          description: The object was successfully ingested.
+        400:
+          description: One of the provided object is invalid (with respect to the data model), or too many objects have been sent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDto'
+        500:
+          description: An error happened while ingesting the object.
+    patch:
+      summary: Ingest new objects by batch, and allow a partial payload (only the fields to update)
+      tags:
+        - Ingestion
+      security:
+        - ApiKeyAuth: []
+      description: Ingest (upsert) an array of new versions of objects from the data model
+      parameters:
+        - in: path
+          name: object_type
+          schema:
+            type: string
+            example: transactions
+          required: true
+          description: name of the object type used for ingestion.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: "#/components/schemas/data_model_object"
+              maxItems: 100
+      responses:
+        200:
+          description: The object was successfully ingested.
+        400:
+          description: One of the provided object is invalid (with respect to the data model), or too many objects have been sent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDto'
+        500:
+          description: An error happened while ingesting the object.
+  /decisions:
+    post:
+      tags:
+        - Decision
+      security:
+        - ApiKeyAuth: []
+      description: Request a decision, executing a scenario against the input object.
+      summary: Create a decision
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/decisions_input"
+      responses:
+        200:
+          description: A decision was successfully taken.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/decision"
+        400:
+          description: The input is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDto'
+        500:
+          description: An error happened while taking a decision.
+    get:
+      tags:
+        - Decision
+      security:
+        - ApiKeyAuth: []
+      description: List matching decisions for the organization
+      summary: List decisions based on the provided filters and pagination
+      parameters:
+        - name: outcome[]
+          description: decision outcomes used to filter the list
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/outcome"
+        - name: scenario_id[]
+          description: scenario IDs used to filter the list
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+              format: uuid
+        - name: trigger_object[]
+          description: trigger objects used to filter the list
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+        - $ref: "#/components/parameters/start_date"
+        - $ref: "#/components/parameters/end_date"
+        - name: has_case
+          description: Filter decisions that have a case associated with them or not (true or false, default returns all)
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: scheduled_execution_id[]
+          description: scheduled execution IDs used to filter the list
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+              format: uuid
+        - name: sorting
+          description: the field used to sort the items
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - created_at
+        - $ref: "#/components/parameters/offset_id"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/order"
+      responses:
+        200:
+          description: List of corresponding decisions
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/pagination"
+                  - type: object
+                    required:
+                      - items
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/decision"
+        400:
+          description: The input is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDto'
+        500:
+          description: An error happened while taking a decision.
+  /decisions/all:
+    post:
+      tags:
+        - Decision
+      security:
+        - ApiKeyAuth: []
+      description: List all relevant scenarios for this object type, and create decisions for them
+      summary: Create all the possible decisions for the input object
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/decisions_input_all_scenarios"
+      responses:
+        200:
+          description: Between 0 and N decisions were created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  decisions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/decision"
+                  metadata:
+                    type: object
+                    properties:
+                      count:
+                        $ref: "#/components/schemas/decisions_count_metadata"
+        400:
+          description: The input is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDto'
+        500:
+          description: An error happened while creating the decisions
+  /decisions/{decision_id}:
+    get:
+      tags:
+        - Decision
+      security:
+        - ApiKeyAuth: []
+      description: Request a decision, executing a scenario against the input object.
+      summary: Retrieve a decision
+      parameters:
+        - in: path
+          name: decision_id
+          schema:
+            type: string
+          required: true
+          description: Id of the decision to retrieve.
+      responses:
+        200:
+          description: The decision corresponding to the provided `decision_id`
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/decision"
+        400:
+          description: The input is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDto'
+        500:
+          description: An error happened while taking a decision.
+  /scheduled-executions:
+    get:
+      tags:
+        - ScheduledExecutions
+      summary: List Scheduled Executions
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: scenario_id
+          description: ID of the scenario used to filter the list
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        200:
+          description: List of Scheduled Executions of the organization
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - scheduled_executions
+                properties:
+                  scheduled_executions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/scheduled_execution"
+        400:
+          description: The input is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDto'
+        401:
+          description: Unauthorized
+        500:
+          description: An error happened while listing the scheduled executions
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-KEY
+  parameters:
+    offset_id:
+      in: query
+      name: offset_id
+      description: the item from which to paginate
+      required: false
+      schema:
+        type: string
+        format: uuid
+    limit:
+      in: query
+      name: limit
+      description: the number of items to fetch
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+    order:
+      in: query
+      name: order
+      description: the order of the items to fetch
+      required: false
+      schema:
+        type: string
+        enum:
+          - ASC
+          - DESC
+    start_date:
+      in: query
+      name: start_date
+      description: start date used to filter the list
+      required: false
+      schema:
+        type: string
+        format: date-time
+    end_date:
+      in: query
+      name: end_date
+      description: end date used to filter the list
+      required: false
+      schema:
+        type: string
+        format: date-time
+  schemas:
+    data_model_object:
+      type: object
+      description: The schema of the object should follow the provided data model, including all additional properties from the data model.
+      properties:
+        object_id:
+          description: Client side ID of the object to ingest.
+          type: string
+        updated_at:
+          description: Date the object was last updated.
+          type: string
+          format: date-time
+      required:
+        - object_id
+        - updated_at
+      additionalProperties: true
+    decisions_input:
+      type: object
+      properties:
+        object_type:
+          description: Object type, as per the data model
+          type: string
+          example: transactions
+        scenario_id:
+          description: Id of the scenario to execute
+          type: string
+          format: uuid
+        trigger_object:
+          description: The object to execute the scenario on, as per the client data model
+          $ref: "#/components/schemas/data_model_object"
+    decisions_input_all_scenarios:
+      type: object
+      properties:
+        object_type:
+          description: Object type, as per the data model
+          type: string
+          example: transactions
+        trigger_object:
+          description: The object to execute the scenario on, as per the client data model
+          $ref: "#/components/schemas/data_model_object"
+    outcome:
+      type: string
+      enum:
+        - approve
+        - review
+        - block_and_review
+        - decline
+    decision:
+      type: object
+      properties:
+        app_link:
+          description: Link to the app to review the decision, and see its details
+          type: string
+          example: https://app.checkmarble.com/decisions/{decision_id}
+        created_at:
+          description: Date at which the decision was taken.
+          type: string
+          format: date-time
+        id:
+          description: ID of the returned decision.
+          type: string
+          format: uuid
+        outcome:
+          description: Outcome of the decision.
+          $ref: "#/components/schemas/outcome"
+        pivot_values:
+          description: Array (0 or 1 elements) containing the possible pivot value attached to the decision.
+          type: array
+          items:
+            $ref: "#/components/schemas/pivot_value"
+        review_status:
+          description: Review status of the decision (if outcome=block_and_review).
+          type: string
+          enum: [pending, approve, decline]
+        rules:
+          description: Rules executed to take the decision.
+          type: array
+          items:
+            $ref: "#/components/schemas/decision_rule"
+        scenario:
+          description: Scenario on which the decision was taken.
+          $ref: "#/components/schemas/scenario"
+        scheduled_execution_id:
+          description: Id of the scheduled execution (only in the case of scheduled executions or manual batches).
+          type: string
+          format: uuid
+        score:
+          description: Score of the decision.
+          type: integer
+        trigger_object:
+          description: Raw object used to take a decision.
+          $ref: "#/components/schemas/data_model_object"
+        trigger_object_type:
+          description: Object type used to take a decision.
+          type: string
+        sanction_check:
+          type: object
+          properties:
+            id:
+              type: string
+            status:
+              type: string
+              enum: [in_review, no_hit, confirmed_hit, error]
+            partial:
+              type: boolean
+            count:
+              type: integer
+    pivot_value:
+      type: object
+      required:
+        - pivot_id
+      properties:
+        pivot_id:
+          type: string
+          description: Id of the pivot definition
+          format: uuid
+        pivot_value:
+          type: string
+          description: Actual value of the pivot value (can be null)
+    scenario:
+      type: object
+      properties:
+        description:
+          type: string
+          description: Description of the scenario.
+        id:
+          type: string
+          format: uuid
+          description: Id of the scenario.
+        scenario_iteration_id:
+          type: string
+          format: uuid
+          description: Id of the scenario iteration.
+        name:
+          type: string
+          description: Name of the scenario.
+        version:
+          type: integer
+          description: Version of the scenario used for this decision.
+    decision_rule:
+      type: object
+      properties:
+        description:
+          type: string
+          description: Description of the rule.
+        error:
+          $ref: "#/components/schemas/error"
+        name:
+          type: string
+          description: Name of the rule.
+        outcome:
+          type: string
+          description: Outcome of the rule (detail result)
+          enum: [hit, no_hit, snoozed, error]
+        result:
+          type: boolean
+          description: Execution result of the rule (true or false).
+        rule_id:
+          type: string
+          format: uuid
+          description: Id of the rule in the iteration
+        score_modifier:
+          type: integer
+          description: Score modifier applied to the decision.
+    decisions_count_metadata:
+      description: decisions count metadata
+      type: object
+      properties:
+        total:
+          type: integer
+          description: total number of decisions created (approve+review+block_and_review+reject)
+          example: 2
+        approve:
+          type: integer
+          description: number of decisions created in 'approve' status
+          example: 1
+        review:
+          type: integer
+          description: number of decisions created in 'review' status
+          example: 0
+        block_and_review:
+          type: integer
+          description: number of decisions created in 'block_and_review' status
+          example: 0
+        decline:
+          type: integer
+          description: number of decisions created in 'decline' status
+          example: 1
+        skipped:
+          type: integer
+          description: number of decisions skipped because the payload object did not match the trigger condition
+          example: 3
+    scheduled_execution:
+      type: object
+      required:
+        - finished_at
+        - id
+        - manual
+        - number_of_created_decisions
+        - scenario_id
+        - scenario_iteration_id
+        - scenario_name
+        - scenario_trigger_object_type
+        - started_at
+        - status
+      properties:
+        finished_at:
+          format: date-time
+          nullable: true
+          type: string
+        id:
+          format: uuid
+          type: string
+        manual:
+          description: Whether the execution was manual or not
+          type: boolean
+        number_of_created_decisions:
+          type: number
+        scenario_id:
+          format: uuid
+          type: string
+        scenario_iteration_id:
+          format: uuid
+          type: string
+        scenario_name:
+          type: string
+        scenario_trigger_object_type:
+          type: string
+        started_at:
+          type: string
+        status:
+          type: string
+    error:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        details: {}
+    ErrorDto:
+      type: object
+      properties:
+        error_code:
+          type: integer
+        message:
+          type: string
+        details: {}
+    pagination:
+      type: object
+      required:
+        - has_next_page
+      properties:
+        has_next_page:
+          type: boolean
+    

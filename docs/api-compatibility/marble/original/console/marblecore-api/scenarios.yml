@@ -1,0 +1,517 @@
+/scenarios:
+  get:
+    tags:
+      - Scenarios
+    summary: List scenarios
+    operationId: listScenarios
+    security:
+      - bearerAuth: []
+    responses:
+      "200":
+        description: List of corresponding scenario
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: "components.yml#/schemas/ScenarioDto"
+      "401":
+        $ref: "components.yml#/responses/401"
+      "403":
+        $ref: "components.yml#/responses/403"
+  post:
+    tags:
+      - Scenarios
+    summary: Create a scenario
+    operationId: createScenario
+    security:
+      - bearerAuth: []
+    requestBody:
+      description: "Scenario object that needs to be added to the database"
+      content:
+        application/json:
+          schema:
+            $ref: "components.yml#/schemas/ScenarioCreateInputDto"
+      required: true
+    responses:
+      "200":
+        description: Created scenario
+        content:
+          application/json:
+            schema:
+              $ref: "components.yml#/schemas/ScenarioDto"
+      "401":
+        $ref: "components.yml#/responses/401"
+      "403":
+        $ref: "components.yml#/responses/403"
+      "422":
+        $ref: "components.yml#/responses/422"
+/scenarios/catalog:
+  get:
+    tags:
+      - Scenarios
+    summary: Get the rule catalog
+    operationId: getRuleCatalog
+    security:
+      - bearerAuth: []
+    responses:
+      "200":
+        description: Rule catalog prompts and localized metadata
+        content:
+          application/json:
+            schema:
+              $ref: "components.yml#/schemas/RuleCatalogDto"
+      "401":
+        $ref: "components.yml#/responses/401"
+      "403":
+        $ref: "components.yml#/responses/403"
+/scenarios/{scenarioId}:
+  get:
+    tags:
+      - Scenarios
+    summary: Get a scenario by id
+    operationId: getScenario
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: scenarioId
+        description: ID of the scenario that need to be fetched
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    responses:
+      "200":
+        description: The scenario corresponding to the provided `scenarioId`
+        content:
+          application/json:
+            schema:
+              $ref: "components.yml#/schemas/ScenarioDto"
+      "401":
+        $ref: "components.yml#/responses/401"
+      "403":
+        $ref: "components.yml#/responses/403"
+      "404":
+        $ref: "components.yml#/responses/404"
+  patch:
+    tags:
+      - Scenarios
+    summary: Update a scenario
+    operationId: updateScenario
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: scenarioId
+        description: ID of the scenario that need to be updated
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    requestBody:
+      description: "Updated scenario object"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ScenarioUpdateInputDto"
+      required: true
+    responses:
+      "200":
+        description: The updated scenario corresponding to the provided `scenarioId`
+        content:
+          application/json:
+            schema:
+              $ref: "components.yml#/schemas/ScenarioDto"
+      "401":
+        $ref: "components.yml#/responses/401"
+      "403":
+        $ref: "components.yml#/responses/403"
+      "404":
+        $ref: "components.yml#/responses/404"
+/scenarios/{scenarioId}/copy:
+  post:
+    tags:
+      - Scenarios
+    summary: Copy a scenario
+    operationId: copyScenario
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: scenarioId
+        description: ID of the scenario to copy
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    requestBody:
+      description: "Optional name for the copied scenario"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ScenarioCopyInputDto"
+      required: true
+    responses:
+      "200":
+        description: The copied scenario
+        content:
+          application/json:
+            schema:
+              $ref: "components.yml#/schemas/ScenarioDto"
+      "401":
+        $ref: "components.yml#/responses/401"
+      "403":
+        $ref: "components.yml#/responses/403"
+      "404":
+        $ref: "components.yml#/responses/404"
+/scenarios/{scenarioId}/validate-ast:
+  post:
+    tags:
+      - Scenarios
+    summary: Validate an AST
+    operationId: validateAstNode
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: scenarioId
+        description: ID of the scenario for which you need to validate the AST
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    requestBody:
+      description: The AST to validate
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ScenarioAstValidateInputDto"
+    responses:
+      "200":
+        description: The evaluation corresponding to the specified node
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - ast_validation
+              properties:
+                ast_validation:
+                  $ref: "#/components/schemas/AstValidationDto"
+      "401":
+        $ref: "components.yml#/responses/401"
+      "403":
+        $ref: "components.yml#/responses/403"
+      "404":
+        $ref: "components.yml#/responses/404"
+/scenarios/{scenarioId}/ast-ai-description:
+  post:
+    tags:
+      - Scenarios
+    summary: Generate AI description for an AST expression
+    operationId: GenerateAiDescriptionForAstExpression
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: scenarioId
+        description: ID of the scenario for which you need to generate the AI description for the AST expression
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    requestBody:
+      description: 'AST expression to generate AI description for'
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              ast_expression
+            properties:
+              ast_expression:
+                $ref: 'ast.yml#/components/schemas/NodeDto'
+    responses:
+      '200':
+        description: The AI description for an AST expression
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScenarioASTAiDescriptionDto'
+/scenarios/{scenarioId}/rules/latest:
+  get:
+    tags:
+      - Scenarios
+    summary: Get latest rules references for a scenario
+    operationId: scenarioRuleLatestVersions
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: scenarioId
+        description: ID of the scenario for which to list rules
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uiud
+    responses:
+      "200":
+        description: List of rules references in their latest iterations
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: "#/components/schemas/ScenarioRuleLatestVersionDto"
+      "401":
+        $ref: "components.yml#/responses/401"
+      "403":
+        $ref: "components.yml#/responses/403"
+      "404":
+        $ref: "components.yml#/responses/404"
+
+/scenarios/{scenarioId}/generate-ast:
+  post:
+    tags:
+      - Scenarios
+    summary: Generate a rule formula using AI
+    description: Generate a rule formula from a natural language instruction using AI. The rule is updated in-place on the server.
+    operationId: generateRuleAst
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: scenarioId
+        description: ID of the scenario containing the rule
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    requestBody:
+      description: Rule ID and natural language instruction for generating the rule formula
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - rule_id
+              - instruction
+            properties:
+              rule_id:
+                type: string
+                format: uuid
+                description: ID of the rule to generate formula for
+              instruction:
+                type: string
+                description: Natural language description of the rule to generate
+      required: true
+    responses:
+      '200':
+        description: Rule formula generated and saved successfully
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateRuleResponseDto'
+      '401':
+        $ref: 'components.yml#/responses/401'
+      '403':
+        $ref: 'components.yml#/responses/403'
+      '404':
+        $ref: 'components.yml#/responses/404'
+
+components:
+  schemas:
+    GenerateRuleResponseDto:
+      type: object
+      properties:
+        rule_ast:
+          $ref: 'ast.yml#/components/schemas/NodeDto'
+        validation:
+          type: object
+          properties:
+            is_valid:
+              type: boolean
+            errors:
+              type: array
+              items:
+                type: string
+            warnings:
+              type: array
+              items:
+                type: string
+          required:
+            - is_valid
+            - errors
+            - warnings
+      required:
+        - rule_ast
+        - validation
+    ScenarioDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        archived:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        deduplicate_batch_objects:
+          type: boolean
+        description:
+          type: string
+        live_version_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        organization_id:
+          type: string
+          format: uuid
+        trigger_object_type:
+          type: string
+      required:
+        - id
+        - archived
+        - created_at
+        - deduplicate_batch_objects
+        - description
+        - name
+        - organization_id
+        - trigger_object_type
+    ScenarioCreateInputDto:
+      type: object
+      properties:
+        description:
+          type: string
+        name:
+          type: string
+        trigger_object_type:
+          type: string
+      required:
+        - description
+        - name
+        - trigger_object_type
+    ScenarioAstValidateInputDto:
+      type: object
+      properties:
+        node:
+          type: object
+          allOf:
+            - $ref: "ast.yml#/components/schemas/NodeDto"
+        expected_return_type:
+          type: string
+          enum: ["string", "int", "float", "bool"]
+    AstValidationDto:
+      type: object
+      required:
+        - errors
+        - evaluation
+      properties:
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScenarioValidationErrorDto"
+        evaluation:
+          $ref: "ast.yml#/components/schemas/NodeEvaluationDto"
+    ScenarioCopyInputDto:
+      type: object
+      properties:
+        name:
+          type: string
+    ScenarioUpdateInputDto:
+      type: object
+      properties:
+        archived:
+          type: boolean
+        deduplicate_batch_objects:
+          type: boolean
+        description:
+          type: string
+        name:
+          type: string
+    ScenarioValidationErrorDto:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          $ref: "#/components/schemas/ScenarioValidationErrorCodeDto"
+        message:
+          type: string
+    ScenarioValidationErrorCodeDto:
+      type: string
+      enum:
+        - DATA_MODEL_NOT_FOUND
+        - TRIGGER_OBJECT_NOT_FOUND
+        - TRIGGER_CONDITION_REQUIRED
+        - RULE_FORMULA_REQUIRED
+        - FORMULA_MUST_RETURN_BOOLEAN
+        - FORMULA_INCORRECT_RETURN_TYPE
+        - SCORE_THRESHOLD_MISSING
+        - SCORE_THRESHOLDS_MISMATCH
+    ScenarioRuleLatestVersionDto:
+      type: object
+      required: [type, stable_id, name, latest_version]
+      properties:
+        type:
+          type: string
+          enum: [rule, screening]
+        stable_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        latest_version:
+          type: string
+    ScenarioASTAiDescriptionDto:
+      type: object
+      properties:
+        description:
+          description: The AI description for the AST expression
+          type: string
+        is_rule_valid:
+          description: Whether the rule is valid, if not, no description will be generated
+          type: boolean
+      required:
+        - description
+        - is_rule_valid
+    RuleCatalogDto:
+      type: object
+      required:
+        - rules
+      properties:
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/RuleCatalogRuleDto"
+    RuleCatalogRuleDto:
+      type: object
+      required:
+        - prompt
+        - name
+        - description
+      properties:
+        prompt:
+          type: string
+        name:
+          $ref: "#/components/schemas/RuleCatalogLocalizedTextDto"
+        description:
+          $ref: "#/components/schemas/RuleCatalogLocalizedTextDto"
+    RuleCatalogLocalizedTextDto:
+      type: object
+      required:
+        - ar
+        - en
+        - fr
+      properties:
+        ar:
+          type: string
+        en:
+          type: string
+        fr:
+          type: string

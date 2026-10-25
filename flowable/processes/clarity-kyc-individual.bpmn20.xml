@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xmlns:flowable="http://flowable.org/bpmn"
+             targetNamespace="http://clarity.bank/workflows">
+  <process id="clarityKycIndividual" name="Entrée en relation personne physique" isExecutable="true">
+    <startEvent id="start"/>
+    <userTask id="collect" name="Collecte des informations"/>
+    <userTask id="verify" name="Enregistrement de la vérification"/>
+    <userTask id="screen" name="Criblage"/>
+    <userTask id="score" name="Évaluation du risque"/>
+    <userTask id="analystReview" name="Revue analyste"/>
+    <exclusiveGateway id="afterAnalyst"/>
+    <userTask id="checkerReview" name="Approbation checker"/>
+    <exclusiveGateway id="afterChecker"/>
+    <userTask id="remediate" name="Demande de complément"/>
+    <endEvent id="approvedEnd"/>
+    <endEvent id="rejectedEnd"/>
+    <sequenceFlow id="f1" sourceRef="start" targetRef="collect"/>
+    <sequenceFlow id="f2" sourceRef="collect" targetRef="verify"/>
+    <sequenceFlow id="f3" sourceRef="verify" targetRef="screen"/>
+    <sequenceFlow id="f4" sourceRef="screen" targetRef="score"/>
+    <sequenceFlow id="f5" sourceRef="score" targetRef="analystReview"/>
+    <sequenceFlow id="f6" sourceRef="analystReview" targetRef="afterAnalyst"/>
+    <sequenceFlow id="f7" sourceRef="afterAnalyst" targetRef="checkerReview">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${action == 'approve'}]]></conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="f8" sourceRef="afterAnalyst" targetRef="rejectedEnd">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${action == 'reject'}]]></conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="f9" sourceRef="afterAnalyst" targetRef="remediate">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${action == 'remediate'}]]></conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="f10" sourceRef="remediate" targetRef="collect"/>
+    <sequenceFlow id="f11" sourceRef="checkerReview" targetRef="afterChecker"/>
+    <sequenceFlow id="f12" sourceRef="afterChecker" targetRef="approvedEnd">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${action == 'approve'}]]></conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="f13" sourceRef="afterChecker" targetRef="rejectedEnd">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${action == 'reject'}]]></conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="f14" sourceRef="afterChecker" targetRef="analystReview">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${action == 'return'}]]></conditionExpression>
+    </sequenceFlow>
+  </process>
+</definitions>

@@ -1,0 +1,547 @@
+openapi: 3.0.3
+info:
+  version: 1.0.0
+  title: "Marble Core API"
+  description: "Consume Marble internal endpoints"
+tags:
+  - name: Admin
+    description: Admin operations.
+  - name: Data Model
+    description: Operations about data model.
+  - name: Authorization
+    description: Operations about authorization.
+  - name: Analytics
+    description: Operations about analytics.
+  - name: Continuous Screenings
+    description: Operations about continuous screenings.
+  - name: ApiKeys
+    description: Operations about api keys.
+  - name: Users
+    description: Operations about users.
+  - name: Organizations
+    description: Operations about organizations.
+  - name: Decisions
+    description: Operations about decisions.
+  - name: Cases
+    description: Operations about cases.
+  - name: Ingestions
+    description: Operations about data ingestion.
+  - name: Scenarios
+    description: Operations about scenarios.
+  - name: Scenario Iterations
+    description: Operations about scenario iterations.
+  - name: Scenario Iteration Rules
+    description: Operations about scenario iteration rules.
+  - name: Scenario Publications
+    description: Operations about scenario publications.
+  - name: CustomLists
+    description: Operations about custom lists.
+  - name: Editor
+    description: Operations about editor.
+  - name: Tags
+    description: Operations about tags.
+  - name: Webhooks
+    description: Operations about webhooks.
+  - name: RuleSnoozes
+    description: Operations about rule snoozes.
+  - name: TestRun
+    description: Operations about testrun.
+  - name: Workflows
+    description: Scenario workflow management.
+  - name: OrgImport
+    description: Operations about organization import and archetypes.
+  - name: Customer Aggregates
+    description: Customer aggregate configuration and evaluation.
+servers:
+  - url: "http://localhost:8080"
+    description: Local devlopment server
+paths:
+  # CLIENT 360
+  /client360/tables:
+    $ref: ./marblecore-api/client-360.yml#/~1client360~1tables
+  /client360/search:
+    $ref: ./marblecore-api/client-360.yml#/~1client360~1search
+  /client360/{recordType}/aggregates:
+    $ref: ./marblecore-api/customer-aggregates.yml#/~1client360~1{recordType}~1aggregates
+  /client360/{recordType}/aggregates/{id}:
+    $ref: ./marblecore-api/customer-aggregates.yml#/~1client360~1{recordType}~1aggregates~1{id}
+  /client360/{recordType}/aggregates/{customerId}/compute:
+    $ref: ./marblecore-api/customer-aggregates.yml#/~1client360~1{recordType}~1aggregates~1{customerId}~1compute
+
+  # AUTHORIZATION
+
+  /token:
+    $ref: ./marblecore-api/authorization.yml#/~1token
+  /credentials:
+    $ref: ./marblecore-api/authorization.yml#/~1credentials
+
+  /me/organizations:
+    $ref: ./marblecore-api/users.yml#/~1me~1organizations
+
+  /decisions: # For ordering, should go down within decisions
+    $ref: ./marblecore-api/decisions.yml#/~1decisions
+
+  # ANNOTATIONS
+
+  /annotations/{annotationId}:
+    $ref: ./marblecore-api/ingestion.yml#/~1annotations~1{annotationId}
+  /annotations/file/{annotationId}/{fileId}:
+    $ref: ./marblecore-api/annotations.yml#/~1annotations~1file~1{annotationId}~1{fileId}
+  /client_data/annotations/{annotationId}:
+    $ref: ./marblecore-api/annotations.yml#/~1client_data~1annotations~1{annotationId}
+  /client_data/{tableName}/{objectId}/annotations:
+    $ref: ./marblecore-api/annotations.yml#/~1client_data~1{tableName}~1{objectId}~1annotations
+
+  # CASES
+
+  /cases:
+    $ref: ./marblecore-api/cases.yml#/~1cases
+  /cases/{caseId}:
+    $ref: ./marblecore-api/cases.yml#/~1cases~1{caseId}
+  /cases/{caseId}/assignee:
+    $ref: ./marblecore-api/cases.yml#/~1cases~1{caseId}~1assignee
+  /cases/{caseId}/decisions:
+    $ref: ./marblecore-api/cases.yml#/~1cases~1{caseId}~1decisions
+  /cases/{caseId}/entities:
+    $ref: ./marblecore-api/cases.yml#/~1cases~1{caseId}~1entities
+  /cases/{caseId}/comments:
+    $ref: ./marblecore-api/cases.yml#/~1cases~1{caseId}~1comments
+  /cases/{caseId}/snooze:
+    $ref: ./marblecore-api/cases.yml#/~1cases~1{caseId}~1snooze
+  /cases/{caseId}/case_tags:
+    $ref: ./marblecore-api/cases.yml#/~1cases~1{caseId}~1case_tags
+  /cases/files/{caseFileId}/download_link:
+    $ref: ./marblecore-api/cases.yml#/~1cases~1files~1{caseFileId}~1download_link
+  /cases/review_decision:
+    $ref: ./marblecore-api/cases.yml#/~1cases~1review_decision
+  /cases/{caseId}/pivot_objects:
+    $ref: ./marblecore-api/cases.yml#/~1cases~1{caseId}~1pivot_objects
+  /cases/related/pivot/{pivotValue}:
+    $ref: ./marblecore-api/cases.yml#/~1cases~1related~1pivot~1{pivotValue}
+  /cases/related/object_type/{objectType}/object_id/{objectId}:
+    $ref: ./marblecore-api/cases.yml#/~1cases~1related~1object_type~1{objectType}~1object_id~1{objectId}
+  /cases/{caseId}/next:
+    $ref: ./marblecore-api/cases.yml#/~1cases~1{caseId}~1next
+  /cases/{caseId}/escalate:
+    $ref: ./marblecore-api/cases.yml#/~1cases~1{caseId}~1escalate
+  /cases/{caseId}/review:
+    $ref: ./marblecore-api/cases.yml#/~1cases~1{caseId}~1review
+  /cases/{caseId}/review/enqueue:
+    $ref: ./marblecore-api/cases.yml#/~1cases~1{caseId}~1review~1enqueue
+  /cases/{caseId}/review/{reviewId}:
+    $ref: ./marblecore-api/cases.yml#/~1cases~1{caseId}~1review~1{reviewId}
+  /cases/{caseId}/review/{reviewId}/feedback:
+    $ref: ./marblecore-api/cases.yml#/~1cases~1{caseId}~1review~1{reviewId}~1feedback
+  /cases/{caseId}/reviews:
+    $ref: ./marblecore-api/cases.yml#/~1cases~1{caseId}~1reviews
+  /cases/{caseId}/data_for_investigation:
+    $ref: ./marblecore-api/cases.yml#/~1cases~1{caseId}~1data_for_investigation
+  /cases/{caseId}/enrich_kyc:
+    $ref: ./marblecore-api/cases.yml#/~1cases~1{caseId}~1enrich_kyc
+  /cases/mass-update:
+    $ref: ./marblecore-api/cases.yml#/~1cases~1mass-update
+
+  # SUSPICIOUS ACTIVITY REPORTS
+
+  /cases/{caseId}/sar:
+    $ref: ./marblecore-api/sar.yml#/~1cases~1{caseId}~1sar
+  /cases/{caseId}/sar/{reportId}:
+    $ref: ./marblecore-api/sar.yml#/~1cases~1{caseId}~1sar~1{reportId}
+  /cases/{caseId}/sar/{reportId}/download:
+    $ref: ./marblecore-api/sar.yml#/~1cases~1{caseId}~1sar~1{reportId}~1download
+
+  # TAGS
+
+  /tags:
+    $ref: ./marblecore-api/tags.yml#/~1tags
+  /tags/{tagId}:
+    $ref: ./marblecore-api/tags.yml#/~1tags~1{tagId}
+
+  # DECISIONS
+
+  /scheduled-executions: # For ordering, should go down
+    $ref: ./marblecore-api/decisions.yml#/~1scheduled-executions
+  /decisions/{decisionId}:
+    $ref: ./marblecore-api/decisions.yml#/~1decisions~1{decisionId}
+  /decisions/{decisionId}/active-snoozes:
+    $ref: ./marblecore-api/decisions.yml#/~1decisions~1{decisionId}~1active-snoozes
+  /decisions/{decisionId}/snooze:
+    $ref: ./marblecore-api/decisions.yml#/~1decisions~1{decisionId}~1snooze
+
+  # INGESTION
+
+  /ingestion/{objectType}:
+    $ref: ./marblecore-api/ingestion.yml#/~1ingestion~1{objectType}
+  /ingestion/{objectType}/upload-logs:
+    $ref: ./marblecore-api/ingestion.yml#/~1ingestion~1{objectType}~1upload-logs
+  /client_data/{tableName}/{objectId}:
+    $ref: ./marblecore-api/ingestion.yml#/~1client_data~1{tableName}~1{objectId}
+  /client_data/{object_type}/{object_id}/cases:
+    $ref: ./marblecore-api/ingestion.yml#/~1client_data~1{objectType}~1{objectId}~1cases
+  /client_data/{tableName}/list:
+    $ref: ./marblecore-api/ingestion.yml#/~1client_data~1{tableName}~1list
+
+  # CUSTOM LISTS
+
+  /custom-lists:
+    $ref: ./marblecore-api/custom-lists.yml#/~1custom-lists
+  /custom-lists/{customListId}:
+    $ref: ./marblecore-api/custom-lists.yml#/~1custom-lists~1{customListId}
+  /custom-lists/{customListId}/values:
+    $ref: ./marblecore-api/custom-lists.yml#/~1custom-lists~1{customListId}~1values
+  /custom-lists/{customListId}/values/{customListValueId}:
+    $ref: ./marblecore-api/custom-lists.yml#/~1custom-lists~1{customListId}~1values~1{customListValueId}
+
+  # SCENARIOS
+
+  /scenarios:
+    $ref: ./marblecore-api/scenarios.yml#/~1scenarios
+  /scenarios/catalog:
+    $ref: ./marblecore-api/scenarios.yml#/~1scenarios~1catalog
+  /scenarios/{scenarioId}:
+    $ref: ./marblecore-api/scenarios.yml#/~1scenarios~1{scenarioId}
+  /scenarios/{scenarioId}/copy:
+    $ref: ./marblecore-api/scenarios.yml#/~1scenarios~1{scenarioId}~1copy
+  /scenarios/{scenarioId}/validate-ast:
+    $ref: ./marblecore-api/scenarios.yml#/~1scenarios~1{scenarioId}~1validate-ast
+  /scenarios/{scenarioId}/rules/latest:
+    $ref: ./marblecore-api/scenarios.yml#/~1scenarios~1{scenarioId}~1rules~1latest
+  /scenarios/{scenarioId}/ast-ai-description:
+    $ref: ./marblecore-api/scenarios.yml#/~1scenarios~1{scenarioId}~1ast-ai-description
+  /scenarios/{scenarioId}/generate-ast:
+    $ref: ./marblecore-api/scenarios.yml#/~1scenarios~1{scenarioId}~1generate-ast
+
+  # SCENARIO ITERATIONS
+
+  /scenario-iterations:
+    $ref: ./marblecore-api/scenario-iterations.yml#/~1scenario-iterations
+  /scenario-iterations/metadata:
+    $ref: ./marblecore-api/scenario-iterations.yml#/~1scenario-iterations~1metadata
+  /scenario-iterations/{scenarioIterationId}:
+    $ref: ./marblecore-api/scenario-iterations.yml#/~1scenario-iterations~1{scenarioIterationId}
+  /scenario-iterations/{scenarioIterationId}/schedule-execution:
+    $ref: ./marblecore-api/scenario-iterations.yml#/~1scenario-iterations~1{scenarioIterationId}~1schedule-execution
+  /scenario-iterations/{scenarioIterationId}/validate:
+    $ref: ./marblecore-api/scenario-iterations.yml#/~1scenario-iterations~1{scenarioIterationId}~1validate
+  /scenario-iterations/{scenarioIterationId}/active-snoozes:
+    $ref: ./marblecore-api/scenario-iterations.yml#/~1scenario-iterations~1{scenarioIterationId}~1active-snoozes
+  /scenario-iterations/{scenarioIterationId}/commit:
+    $ref: ./marblecore-api/scenario-iterations.yml#/~1scenario-iterations~1{scenarioIterationId}~1commit
+  /scenario-iterations/{scenarioIterationId}/screening:
+    $ref: ./marblecore-api/scenario-iterations.yml#/~1scenario-iterations~1{scenarioIterationId}~1screening
+  /scenario-iterations/{scenarioIterationId}/screening/{screeningConfigId}:
+    $ref: ./marblecore-api/scenario-iterations.yml#/~1scenario-iterations~1{scenarioIterationId}~1screening~1{screeningConfigId}
+
+  # SCREENINGS
+
+  /screenings:
+    $ref: ./marblecore-api/screenings.yml#/~1screenings
+  /screenings/datasets:
+    $ref: ./marblecore-api/screenings.yml#/~1screenings~1datasets
+  /screenings/available-filters:
+    $ref: ./marblecore-api/screenings.yml#/~1screenings~1available-filters
+  /screenings/{screeningId}/files:
+    $ref: ./marblecore-api/screenings.yml#/~1screenings~1{screeningId}~1files
+  /screenings/{screeningId}/files/{fileId}:
+    $ref: ./marblecore-api/screenings.yml#/~1screenings~1{screeningId}~1files~1{fileId}
+  /screenings/{screeningId}/ai-suggestions:
+    $ref: ./marblecore-api/screenings.yml#/~1screenings~1{screeningId}~1ai-suggestions
+  /screenings/{screeningId}/ai-suggestions/enqueue:
+    $ref: ./marblecore-api/screenings.yml#/~1screenings~1{screeningId}~1ai-suggestions~1enqueue
+  /screenings/matches/{matchId}:
+    $ref: ./marblecore-api/screenings.yml#/~1screenings~1matches~1{matchId}
+  /screenings/matches/{matchId}/enrich:
+    $ref: ./marblecore-api/screenings.yml#/~1screenings~1matches~1{matchId}~1enrich
+  /screenings/search:
+    $ref: ./marblecore-api/screenings.yml#/~1screenings~1search
+  /screenings/refine:
+    $ref: ./marblecore-api/screenings.yml#/~1screenings~1refine
+  /screenings/freeform-search:
+    $ref: ./marblecore-api/screenings.yml#/~1screenings~1freeform-search
+  /screenings/freeform-search/{id}:
+    $ref: ./marblecore-api/screenings.yml#/~1screenings~1freeform-search~1{id}
+  /screenings/freeform-search/{id}/save:
+    $ref: ./marblecore-api/screenings.yml#/~1screenings~1freeform-search~1{id}~1save
+  /screenings/freshness:
+    $ref: ./marblecore-api/screenings.yml#/~1screenings~1freshness
+  /screenings/entities/{entityId}:
+    $ref: ./marblecore-api/screenings.yml#/~1screenings~1entities~1{entityId}
+  /screenings/searches:
+    $ref: ./marblecore-api/screenings.yml#/~1screenings~1searches
+  /screenings/searches/{id}:
+    $ref: ./marblecore-api/screenings.yml#/~1screenings~1searches~1{id}
+
+  # RULES
+
+  /scenario-iteration-rules:
+    $ref: ./marblecore-api/scenario-iteration-rules.yml#/~1scenario-iteration-rules
+  /scenario-iteration-rules/metadata:
+    $ref: ./marblecore-api/scenario-iteration-rules.yml#/~1scenario-iteration-rules~1metadata
+  /scenario-iteration-rules/{ruleId}:
+    $ref: ./marblecore-api/scenario-iteration-rules.yml#/~1scenario-iteration-rules~1{ruleId}
+
+  # CONTINUOUS SCREENINGS
+
+  /continuous-screenings/configs:
+    $ref: ./marblecore-api/continuous-screenings.yml#/~1continuous-screenings~1configs
+  /continuous-screenings/configs/{stable_id}:
+    $ref: ./marblecore-api/continuous-screenings.yml#/~1continuous-screenings~1configs~1{stable_id}
+  /continuous-screenings/objects:
+    $ref: ./marblecore-api/continuous-screenings.yml#/~1continuous-screenings~1objects
+  /continuous-screenings/dataset-updates:
+    $ref: ./marblecore-api/continuous-screenings.yml#/~1continuous-screenings~1dataset-updates
+  /continuous-screenings/update-jobs:
+    $ref: ./marblecore-api/continuous-screenings.yml#/~1continuous-screenings~1update-jobs
+  /continuous-screenings/client-data-indexing:
+    $ref: ./marblecore-api/continuous-screenings.yml#/~1continuous-screenings~1client-data-indexing
+  /continuous-screenings/matches/{id}:
+    $ref: ./marblecore-api/continuous-screenings.yml#/~1continuous-screenings~1matches~1{id}
+  /continuous-screenings:
+    $ref: ./marblecore-api/continuous-screenings.yml#/~1continuous-screenings
+  /continuous-screenings/{id}/dismiss:
+    $ref: ./marblecore-api/continuous-screenings.yml#/~1continuous-screenings~1{id}~1dismiss
+  /continuous-screenings/{id}/load-more:
+    $ref: ./marblecore-api/continuous-screenings.yml#/~1continuous-screenings~1{id}~1load-more
+
+  # SCENARIO PUBLICATIONS
+
+  /scenario-publications:
+    $ref: ./marblecore-api/scenario-publications.yml#/~1scenario-publications
+  /scenario-publications/preparation:
+    $ref: ./marblecore-api/scenario-publications.yml#/~1scenario-publications~1preparation
+  /scenario-publications/{scenarioPublicationId}:
+    $ref: ./marblecore-api/scenario-publications.yml#/~1scenario-publications~1{scenarioPublicationId}
+
+  # DATA MODEL
+
+  /data-model:
+    $ref: ./marblecore-api/data-model.yml#/~1data-model
+  /data-model/tables:
+    $ref: ./marblecore-api/data-model.yml#/~1data-model~1tables
+  /data-model/tables/{tableId}:
+    $ref: ./marblecore-api/data-model.yml#/~1data-model~1tables~1{tableId}
+  /data-model/tables/{tableId}/fields:
+    $ref: ./marblecore-api/data-model.yml#/~1data-model~1tables~1{tableId}~1fields
+  /data-model/fields/{fieldId}:
+    $ref: ./marblecore-api/data-model.yml#/~1data-model~1fields~1{fieldId}
+  /data-model/links:
+    $ref: ./marblecore-api/data-model.yml#/~1data-model~1links
+  /data-model/links/{linkId}:
+    $ref: ./marblecore-api/data-model.yml#/~1data-model~1links~1{linkId}
+  /data-model/openapi:
+    $ref: ./marblecore-api/data-model.yml#/~1data-model~1openapi
+  /data-model/openapi/{version}:
+    $ref: ./marblecore-api/data-model.yml#/~1data-model~1openapi~1{version}
+  /data-model/pivots:
+    $ref: ./marblecore-api/data-model.yml#/~1data-model~1pivots
+  /data-model/pivots/{pivotId}:
+    $ref: ./marblecore-api/data-model.yml#/~1data-model~1pivots~1{pivotId}
+  /data-model/tables/{tableId}/navigation_options:
+    $ref: ./marblecore-api/data-model.yml#/~1data-model~1tables~1{tableId}~1navigation_options
+  /data-model/tables/{tableId}/exported-fields:
+    $ref: ./marblecore-api/data-model.yml#/~1data-model~1tables~1{tableId}~1exported-fields
+
+  # MISC
+
+  /analytics:
+    $ref: ./marblecore-api/misc.yml#/~1analytics
+  /config:
+    $ref: ./marblecore-api/misc.yml#/~1config
+
+  # ORG IMPORT
+
+  /org-export:
+    $ref: ./marblecore-api/org-import.yml#/~1org-export
+  /org-import:
+    $ref: ./marblecore-api/org-import.yml#/~1org-import
+  /org-import/file:
+    $ref: ./marblecore-api/org-import.yml#/~1org-import~1file
+  /org-import/archetypes:
+    $ref: ./marblecore-api/org-import.yml#/~1org-import~1archetypes
+  /org-import/archetypes/apply:
+    $ref: ./marblecore-api/org-import.yml#/~1org-import~1archetypes~1apply
+
+  # ADMINISTRATION
+
+  /admin/onboard:
+    $ref: ./marblecore-api/admin.yml#/~1admin~1onboard
+  /apikeys:
+    $ref: ./marblecore-api/admin.yml#/~1apikeys
+  /apikeys/{apiKeyId}:
+    $ref: ./marblecore-api/admin.yml#/~1apikeys~1{apiKeyId}
+  /users:
+    $ref: ./marblecore-api/admin.yml#/~1users
+  /users/{userId}:
+    $ref: ./marblecore-api/admin.yml#/~1users~1{userId}
+  /users/{userId}/grants:
+    $ref: ./marblecore-api/admin.yml#/~1users~1{userId}~1grants
+  /tenants:
+    $ref: ./marblecore-api/admin.yml#/~1tenants
+  /tenants/{tenantId}:
+    $ref: ./marblecore-api/admin.yml#/~1tenants~1{tenantId}
+  /tenants/{tenantId}/merge:
+    $ref: ./marblecore-api/admin.yml#/~1tenants~1{tenantId}~1merge
+  /tenants/{tenantId}/users/{userId}/grants:
+    $ref: ./marblecore-api/admin.yml#/~1tenants~1{tenantId}~1users~1{userId}~1grants
+  /organizations:
+    $ref: ./marblecore-api/admin.yml#/~1organizations
+  /organizations/{organizationId}:
+    $ref: ./marblecore-api/admin.yml#/~1organizations~1{organizationId}
+  /organizations/{organizationId}/subnets:
+    $ref: ./marblecore-api/admin.yml#/~1organizations~1{organizationId}~1subnets
+  /organizations/{organizationId}/users:
+    $ref: ./marblecore-api/admin.yml#/~1organizations~1{organizationId}~1users
+  /admin/audit-events:
+    $ref: ./marblecore-api/admin.yml#/~1admin~1audit-events
+
+  # INBOXES
+
+  /inboxes:
+    $ref: ./marblecore-api/inboxes.yml#/~1inboxes
+  /inboxes/metadata:
+    $ref: ./marblecore-api/inboxes.yml#/~1inboxes~1metadata
+  /inboxes/{inboxId}:
+    $ref: ./marblecore-api/inboxes.yml#/~1inboxes~1{inboxId}
+  /inboxes/{inboxId}/metadata:
+    $ref: ./marblecore-api/inboxes.yml#/~1inboxes~1{inboxId}~1metadata
+  /inboxes/{inboxId}/users:
+    $ref: ./marblecore-api/inboxes.yml#/~1inboxes~1{inboxId}~1users
+  /inbox_users:
+    $ref: ./marblecore-api/inboxes.yml#/~1inbox_users
+  /inbox_users/{inboxUserId}:
+    $ref: ./marblecore-api/inboxes.yml#/~1inbox_users~1{inboxUserId}
+
+  # WEBHOOKS
+
+  /webhooks:
+    $ref: ./marblecore-api/webhooks.yml#/~1webhooks
+  /webhooks/{webhookId}:
+    $ref: ./marblecore-api/webhooks.yml#/~1webhooks~1{webhookId}
+  /webhooks/{webhookId}/secrets:
+    $ref: ./marblecore-api/webhooks.yml#/~1webhooks~1{webhookId}~1secrets
+  /webhooks/{webhookId}/secrets/{secretId}:
+    $ref: ./marblecore-api/webhooks.yml#/~1webhooks~1{webhookId}~1secrets~1{secretId}
+
+  # RULE SNOOZES
+
+  /rule-snoozes/{rule_snooze_id}:
+    $ref: ./marblecore-api/rule-snoozes.yml#/~1rule-snoozes~1{rule_snooze_id}
+
+  # TEST RUNS
+
+  /scenario-testrun:
+    $ref: ./marblecore-api/scenario-testrun.yml#/~1scenario-testrun
+  /scenario-testruns/{test_run_id}:
+    $ref: ./marblecore-api/scenario-testrun.yml#/~1scenario-testruns~1{test_run_id}
+  /scenario-testruns/{test_run_id}/cancel:
+    $ref: ./marblecore-api/scenario-testrun.yml#/~1scenario-testruns~1{test_run_id}~1cancel
+  /scenario-testruns/{test_run_id}/decision_data_by_score:
+    $ref: ./marblecore-api/scenario-testrun.yml#/~1scenario-testruns~1{test_run_id}~1decision_data_by_score
+  /scenario-testruns/{test_run_id}/data_by_rule_execution:
+    $ref: ./marblecore-api/scenario-testrun.yml#/~1scenario-testruns~1{test_run_id}~1data_by_rule_execution
+
+  # WORKFLOWS
+
+  /workflows/{scenarioId}:
+    $ref: ./marblecore-api/workflow.yml#/~1workflows~1{scenarioId}
+  /workflows/{scenarioId}/reorder:
+    $ref: ./marblecore-api/workflow.yml#/~1workflows~1{scenarioId}~1reorder
+  /workflows/rule:
+    $ref: ./marblecore-api/workflow.yml#/~1workflows~1rule
+  /workflows/rule/{ruleId}:
+    $ref: ./marblecore-api/workflow.yml#/~1workflows~1rule~1{ruleId}
+  /workflows/rule/{ruleId}/condition:
+    $ref: ./marblecore-api/workflow.yml#/~1workflows~1rule~1{ruleId}~1condition
+  /workflows/rule/{ruleId}/condition/{conditionId}:
+    $ref: ./marblecore-api/workflow.yml#/~1workflows~1rule~1{ruleId}~1condition~1{conditionId}
+  /workflows/rule/{ruleId}/action:
+    $ref: ./marblecore-api/workflow.yml#/~1workflows~1rule~1{ruleId}~1action
+  /workflows/rule/{ruleId}/action/{actionId}:
+    $ref: ./marblecore-api/workflow.yml#/~1workflows~1rule~1{ruleId}~1action~1{actionId}
+
+  # PERSONAL SETTINGS
+
+  /settings/me/unavailable:
+    $ref: ./marblecore-api/users.yml#/~1settings~1me~1unavailable
+
+  # AI
+
+  /settings/ai:
+    $ref: ./marblecore-api/ai.yml#/~1settings~1ai
+
+  # ANALYTICS
+
+  /analytics/query/decision_outcomes_per_day:
+    $ref: ./marblecore-api/analytics.yml#/~1analytics~1query~1decision_outcomes_per_day
+  /analytics/query/rule_hit_table:
+    $ref: ./marblecore-api/analytics.yml#/~1analytics~1query~1rule_hit_table
+  /analytics/query/screening_hits:
+    $ref: ./marblecore-api/analytics.yml#/~1analytics~1query~1screening_hits
+  /analytics/query/decisions_score_distribution:
+    $ref: ./marblecore-api/analytics.yml#/~1analytics~1query~1decisions_score_distribution
+  /analytics/query/rule_vs_decision_outcome:
+    $ref: ./marblecore-api/analytics.yml#/~1analytics~1query~1rule_vs_decision_outcome
+  /analytics/cases/case_status_by_date:
+    $ref: ./marblecore-api/analytics.yml#/~1analytics~1cases~1case_status_by_date
+  /analytics/cases/case_status_by_inbox:
+    $ref: ./marblecore-api/analytics.yml#/~1analytics~1cases~1case_status_by_inbox
+  /analytics/cases/sar_completed:
+    $ref: ./marblecore-api/analytics.yml#/~1analytics~1cases~1sar_completed
+  /analytics/cases/sar_delay:
+    $ref: ./marblecore-api/analytics.yml#/~1analytics~1cases~1sar_delay
+  /analytics/cases/sar_delay_distribution:
+    $ref: ./marblecore-api/analytics.yml#/~1analytics~1cases~1sar_delay_distribution
+  /analytics/cases/cases_created:
+    $ref: ./marblecore-api/analytics.yml#/~1analytics~1cases~1cases_created
+  /analytics/cases/cases_false_positive_rate:
+    $ref: ./marblecore-api/analytics.yml#/~1analytics~1cases~1cases_false_positive_rate
+  /analytics/cases/cases_duration:
+    $ref: ./marblecore-api/analytics.yml#/~1analytics~1cases~1cases_duration
+  /analytics/cases/open_cases_by_age:
+    $ref: ./marblecore-api/analytics.yml#/~1analytics~1cases~1open_cases_by_age
+  /analytics/cases/case_sla_status_by_date:
+    $ref: ./marblecore-api/analytics.yml#/~1analytics~1cases~1case_sla_status_by_date
+  /analytics/available-filters:
+    $ref: ./marblecore-api/analytics.yml#/~1analytics~1available-filters
+
+# SCORING
+
+  /scoring/settings:
+    $ref: ./marblecore-api/scoring.yml#/~1scoring~1settings
+  /scoring/rulesets:
+    $ref: ./marblecore-api/scoring.yml#/~1scoring~1rulesets
+  /scoring/rulesets/{recordType}:
+    $ref: ./marblecore-api/scoring.yml#/~1scoring~1rulesets~1{recordType}
+  /scoring/rulesets/{recordType}/versions:
+    $ref: ./marblecore-api/scoring.yml#/~1scoring~1rulesets~1{recordType}~1versions
+  /scoring/rulesets/{recordType}/prepare:
+    $ref: ./marblecore-api/scoring.yml#/~1scoring~1rulesets~1{recordType}~1prepare
+  /scoring/rulesets/{recordType}/commit:
+    $ref: ./marblecore-api/scoring.yml#/~1scoring~1rulesets~1{recordType}~1commit
+  /scoring/rulesets/{recordType}/dry-run:
+    $ref: ./marblecore-api/scoring.yml#/~1scoring~1rulesets~1{recordType}~1dry-run
+  /scoring/risk-levels/{recordType}/{recordId}:
+    $ref: ./marblecore-api/scoring.yml#/~1scoring~1risk-levels~1{recordType}~1{recordId}
+  /scoring/risk-levels/{recordType}/{recordId}/history:
+    $ref: ./marblecore-api/scoring.yml#/~1scoring~1risk-levels~1{recordType}~1{recordId}~1history
+  /scoring/distribution/{recordType}:
+    $ref: ./marblecore-api/scoring.yml#/~1scoring~1distribution~1{recordType}
+
+# GRAPH EXPLORATION
+
+  /graph/relations:
+    $ref: ./marblecore-api/graph.yml#/~1graph~1relations
+  /graph/relations/{relationId}:
+    $ref: ./marblecore-api/graph.yml#/~1graph~1relations~1{relationId}
+  /graph/{recordType}/{recordId}:
+    $ref: ./marblecore-api/graph.yml#/~1graph~1{recordType}~1{recordId}
+
+components:
+  securitySchemes:
+    $ref: marblecore-api/_common.yml#/securitySchemes
+  parameters:
+    $ref: marblecore-api/_common.yml#/parameters
+  responses:
+    $ref: marblecore-api/_common.yml#/responses
+  schemas:
+    $ref: marblecore-api/_schemas.yml
