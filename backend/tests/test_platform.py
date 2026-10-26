@@ -715,6 +715,16 @@ def test_document_ocr_reads_labels_and_mrz():
     assert garbage["mrz"] is False
 
 
+def test_paddle_lines_follow_the_page_from_top_to_bottom():
+    from app.ocr import _paddle_lines
+
+    class Page:
+        rec_texts = ["02 06 1983", "MILADI", "Mohamed Amine"]
+        dt_polys = [[[0, 80], [10, 80]], [[0, 10], [10, 10]], [[0, 40], [10, 40]]]
+
+    assert _paddle_lines([Page()]) == "MILADI\nMohamed Amine\n02 06 1983"
+
+
 def test_paddleocr_text_is_parsed_and_noise_is_rejected(monkeypatch):
     from app import ocr
 

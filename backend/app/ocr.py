@@ -1,24 +1,21 @@
 """Read identity fields from a stored document.
 
-Pictures are sent to the PaddleOCR model when CLARITY_OCR_URL is set. The text
-embedded in the file, then Tesseract, are used only when that model is not
-available. The reader never copies the name the customer typed. A local read
-is not a production identity check.
+Photos are read by the PP-OCRv5 models shipped in the image. The text embedded
+in the file, then Tesseract, are used only when those models are not installed.
+The reader never copies the name the customer typed. A local read is not a
+production identity check.
 """
 
-import base64
+import os
 import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import unicodedata
 import xml.etree.ElementTree as ET
 from datetime import date
 from pathlib import Path
-
-import httpx
-
-from app.config import get_settings
 
 _ACCOUNT = ("firstName", "lastName", "dateOfBirth", "nationality", "documentNumber", "expiry", "gender", "address")
 _LABELS = (
@@ -61,30 +58,113 @@ def read_identity(content: bytes) -> dict:
     return parsed
 
 
+_PADDLE_LOCK = threading.Lock()
+_PADDLE_ENGINE = None
+
+
+def _paddle_dir(name: str, fallback: str) -> Path:
+    return Path(os.environ.get(name, fallback))
+
+
+def _paddle_ready() -> bool:
+    det = _paddle_dir("CLARITY_PADDLE_DET", "/opt/paddleocr/det")
+    rec = _paddle_dir("CLARITY_PADDLE_REC", "/opt/paddleocr/rec")
+    return (det / "inference.pdiparams").is_file() and (rec / "inference.pdiparams").is_file()
+
+
+def _local_paddle():
+    """Load the models shipped in the image. Missing files mean this environment has no model."""
+    global _PADDLE_ENGINE
+    if _PADDLE_ENGINE is not None:
+        return _PADDLE_ENGINE or None
+    with _PADDLE_LOCK:
+        if _PADDLE_ENGINE is not None:
+            return _PADDLE_ENGINE or None
+        if not _paddle_ready():
+            _PADDLE_ENGINE = False
+            return None
+        os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
+        os.environ.setdefault("OMP_NUM_THREADS", "1")
+        det = _paddle_dir("CLARITY_PADDLE_DET", "/opt/paddleocr/det")
+        rec = _paddle_dir("CLARITY_PADDLE_REC", "/opt/paddleocr/rec")
+        try:
+            from paddleocr import PaddleOCR
+
+            _PADDLE_ENGINE = PaddleOCR(
+                text_detection_model_name="PP-OCRv5_mobile_det",
+                text_detection_model_dir=str(det),
+                text_recognition_model_name="latin_PP-OCRv5_mobile_rec",
+                text_recognition_model_dir=str(rec),
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
+                use_textline_orientation=False,
+            )
+        except Exception:
+            _PADDLE_ENGINE = False
+            return None
+    return _PADDLE_ENGINE or None
+
+
+def _paddle_lines(result) -> str:
+    rows: list[tuple[float, str]] = []
+    items = result if isinstance(result, list) else [result]
+    for item in items:
+        texts = None
+        polys = None
+        if hasattr(item, "rec_texts"):
+            texts = list(item.rec_texts or [])
+            polys = list(getattr(item, "dt_polys", None) or [])
+        elif isinstance(item, dict):
+            payload = item.get("res") if isinstance(item.get("res"), dict) else item
+            texts = list(payload.get("rec_texts") or [])
+            polys = list(payload.get("dt_polys") or [])
+        elif isinstance(item, list):
+            for block in item:
+                if not isinstance(block, (list, tuple)) or len(block) < 2:
+                    continue
+                box, recognized = block[0], block[1]
+                text = recognized[0] if isinstance(recognized, (list, tuple)) else recognized
+                if not str(text).strip():
+                    continue
+                try:
+                    y = min(float(point[1]) for point in box)
+                except (TypeError, ValueError, IndexError):
+                    y = 0.0
+                rows.append((y, str(text).strip()))
+            continue
+        if not texts:
+            continue
+        for index, text in enumerate(texts):
+            if not str(text).strip():
+                continue
+            y = float(index)
+            if index < len(polys) and polys[index] is not None:
+                try:
+                    y = min(float(point[1]) for point in polys[index])
+                except (TypeError, ValueError, IndexError):
+                    y = float(index)
+            rows.append((y, str(text).strip()))
+    rows.sort(key=lambda row: row[0])
+    return "\n".join(text for _, text in rows)
+
+
 def _paddle_read(content: bytes) -> tuple[str, dict, bool]:
-    """Ask the PaddleOCR service for the text on a photo. SVG text stays local."""
+    """Read a photo with the local PP-OCRv5 models. SVG text stays in the file parser."""
     if not _image_suffix(content):
         return "", {}, False
-    base = get_settings().ocr_url.strip().rstrip("/")
-    if not base:
+    engine = _local_paddle()
+    if engine is None:
         return "", {}, False
+    suffix = _image_suffix(content)
     try:
-        response = httpx.post(
-            f"{base}/api/v1/kyc/ocr",
-            json={"document": base64.b64encode(content).decode("ascii")},
-            timeout=90,
-        )
-    except httpx.HTTPError:
+        with tempfile.NamedTemporaryFile(suffix=suffix) as handle:
+            handle.write(content)
+            handle.flush()
+            predict = getattr(engine, "predict", None) or engine.ocr
+            result = predict(handle.name)
+    except Exception:
         return "", {}, False
-    if response.status_code != 200:
-        return "", {}, False
-    body = response.json()
-    ocr_data = body.get("ocr_data") if isinstance(body, dict) else None
-    if not isinstance(ocr_data, dict):
-        return "", {}, True
-    raw = str(ocr_data.get("extracted_text") or "").replace(" | ", "\n")
-    fields = ocr_data.get("fields") if isinstance(ocr_data.get("fields"), dict) else {}
-    return raw, fields, True
+    return _paddle_lines(result), {}, True
 
 
 def _merge_paddle_fields(parsed: dict, fields: dict) -> None:
