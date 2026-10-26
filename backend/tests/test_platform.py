@@ -836,6 +836,13 @@ def test_photo_check_accepts_documents_without_claiming_a_match(tmp_path: Path):
         assert live.status_code == 200, live.text
         assert live.json()["status"] == "pass"
         assert live.json()["production"] is False
+        scanned = client.post("/api/v1/kyc/ocr", json={"document": "data:image/jpeg;base64,AA=="})
+        assert scanned.status_code == 200, scanned.text
+        ocr = scanned.json()["ocr_data"]
+        assert ocr["document_type"] is None
+        assert ocr["extracted_text"] == ""
+        assert ocr["confidence"] >= 0.25
+        assert ocr["production"] is False
 
 
 def normalize_template(path: str) -> str:

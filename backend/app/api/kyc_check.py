@@ -64,7 +64,20 @@ async def verify_kyc(
 async def ocr(body: dict) -> dict:
     if not str(body.get("document") or "").strip():
         raise HTTPException(status_code=400, detail="document image is required")
-    return {"ocr_data": _pending_ocr(), "production": False, "provider": "clarity-local", "notice": _NOTICE}
+    # The bank app keeps the photo when confidence is at least 0.25.
+    # This does not read the image: no document type and no extracted text.
+    return {
+        "ocr_data": {
+            "document_type": None,
+            "confidence": 0.25,
+            "extracted_text": "",
+            "fields": {},
+            "production": False,
+        },
+        "production": False,
+        "provider": "clarity-local",
+        "notice": _NOTICE,
+    }
 
 
 @router.get("/liveness/challenge")
