@@ -93,7 +93,7 @@ export default function DocumentViewer({
       </div>
       <div className="viewer-caption">
         <strong>{current.title}</strong>
-        <span className="label">{current.fileName}{current.synthetic ? " · specimen" : ""}{current.decision ? ` · ${DECISION_LABEL[current.decision] || current.decision}` : ""}</span>
+        <span className="label">{current.fileName}{current.decision ? ` · ${DECISION_LABEL[current.decision] || current.decision}` : ""}</span>
       </div>
       {onDecide ? (
         <div className="tabs">

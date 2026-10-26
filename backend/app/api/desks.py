@@ -73,6 +73,103 @@ def _case(db: Session, principal: Principal, case_id: str) -> CaseRecord:
     return row
 
 
+_FILE_KEYS = {"fileName", "mime", "title", "synthetic", "uri", "workflowRuntimeId", "side", "extracted"}
+_COLUMN_FIELDS = (
+    ("type", "doc_type"),
+    ("category", "category"),
+    ("issuingCountry", "issuing_country"),
+    ("expiry", "expiry"),
+    ("issuingVersion", "issuing_version"),
+)
+_FIELD_LABELS = {
+    "firstName": "Prénom",
+    "lastName": "Nom",
+    "dateOfBirth": "Date de naissance",
+    "date_of_birth": "Date de naissance",
+    "nationality": "Nationalité",
+    "residence_country": "Pays de résidence",
+    "email": "E-mail",
+    "phone": "Téléphone",
+    "address": "Adresse",
+    "country": "Pays",
+    "legal_name": "Nom",
+    "type": "Type",
+    "category": "Catégorie",
+    "issuingCountry": "Pays émetteur",
+    "expiry": "Expiration",
+    "issuingVersion": "Version du document",
+    "documentNumber": "Numéro du document",
+    "fullName": "Nom complet",
+    "trading_name": "Nom commercial",
+    "registration_number": "Immatriculation",
+    "jurisdiction": "Juridiction",
+    "legal_form": "Forme juridique",
+    "registered_address": "Adresse du siège",
+    "industry": "Secteur",
+}
+
+
+def _label(key: str) -> str:
+    if key in _FIELD_LABELS:
+        return _FIELD_LABELS[key]
+    spaced = key.replace("_", " ")
+    return spaced[:1].upper() + spaced[1:] if spaced else key
+
+
+def _scalar_fields(source: dict) -> list[dict]:
+    rows = []
+    for key, value in source.items():
+        if isinstance(value, (dict, list)) or value in (None, ""):
+            continue
+        rows.append({"key": key, "label": _label(key), "value": str(value)})
+    return rows
+
+
+def _submitted_fields(workflow: WorkflowInstance, customer: Customer | None) -> list[dict]:
+    context = workflow.context or {}
+    entity = context.get("entity") if isinstance(context.get("entity"), dict) else {}
+    data = entity.get("data") if isinstance(entity.get("data"), dict) else {}
+    rows = _scalar_fields(data)
+    seen = {row["key"] for row in rows}
+    profile = {}
+    if customer and customer.individual:
+        profile = {
+            "legal_name": customer.individual.legal_name,
+            "date_of_birth": customer.individual.date_of_birth,
+            "nationality": customer.individual.nationality,
+            "residence_country": customer.individual.residence_country,
+            "address": customer.individual.address,
+            "email": customer.individual.email,
+            "phone": customer.individual.phone,
+        }
+    elif customer and customer.business:
+        profile = {
+            "legal_name": customer.business.legal_name,
+            "trading_name": customer.business.trading_name,
+            "registration_number": customer.business.registration_number,
+            "jurisdiction": customer.business.jurisdiction,
+            "legal_form": customer.business.legal_form,
+            "registered_address": customer.business.registered_address,
+            "industry": customer.business.industry,
+        }
+    for row in _scalar_fields(profile):
+        if row["key"] not in seen:
+            rows.append(row)
+    return rows
+
+
+def _extracted_fields(document: IdentityDocument) -> list[dict]:
+    properties = document.properties or {}
+    stored = properties.get("extracted") if isinstance(properties.get("extracted"), dict) else {}
+    values = {key: getattr(document, column) for key, column in _COLUMN_FIELDS}
+    for key, value in properties.items():
+        if key in _FILE_KEYS or isinstance(value, (dict, list)):
+            continue
+        values[key] = value
+    values.update(stored)
+    return [{"key": key, "label": _label(key), "value": "" if value is None else str(value)} for key, value in values.items()]
+
+
 def _document_view(document: IdentityDocument) -> dict:
     payload = document_record(document)
     title = (document.properties or {}).get("title") or document.doc_type
@@ -83,6 +180,7 @@ def _document_view(document: IdentityDocument) -> dict:
             "mime": (document.properties or {}).get("mime") or "application/octet-stream",
             "synthetic": bool((document.properties or {}).get("synthetic")),
             "url": f"/api/clarity/v1/desks/documents/{document.id}/content",
+            "extracted": _extracted_fields(document),
         }
     )
     return payload
@@ -127,9 +225,9 @@ def kyc_case(runtime_id: str, principal: Principal = Depends(clarity_principal),
         "case": _kyc_card(db, workflow),
         "task": None if not task else {"key": task.task_key, "name": task.name},
         "customer": None if not customer else customer_view(db, customer),
+        "submitted": _submitted_fields(workflow, customer),
         "documents": [_document_view(document) for document in documents],
         "tracker": _document_tracker(db, principal, workflow, documents),
-        "notice": "Les pièces affichées sont des specimens. Une décision sur une pièce n'est pas une vérification d'identité.",
     }
 
 
@@ -183,6 +281,35 @@ def decide_kyc(runtime_id: str, body: dict, request: Request, principal: Princip
     workflow = _workflow(db, principal, runtime_id)
     advance_workflow(db, request.app.state.engine, _tenant(db, principal), principal, workflow, action, str(body.get("rationale") or ""))
     return kyc_case(runtime_id, principal, db)
+
+
+@router.patch("/kyc/{runtime_id}/documents/{document_id}")
+def update_document_fields(runtime_id: str, document_id: str, body: dict, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    from sqlalchemy.orm.attributes import flag_modified
+
+    workflow = _workflow(db, principal, runtime_id)
+    document = db.get(IdentityDocument, document_id)
+    if not document or document.tenant_id != principal.tenant_id:
+        raise clarity_error(404, "not_found", "Document introuvable.")
+    if document.workflow_id not in {None, workflow.id} and document.customer_id != workflow.customer_id:
+        raise clarity_error(404, "not_found", "Document introuvable sur ce dossier.")
+    fields = body.get("fields")
+    if not isinstance(fields, dict) or not fields:
+        raise clarity_error(400, "invalid", "Les champs du document sont requis.")
+    columns = dict(_COLUMN_FIELDS)
+    properties = dict(document.properties or {})
+    extracted = dict(properties.get("extracted") or {})
+    for key, value in fields.items():
+        name = str(key)
+        text = "" if value is None else str(value).strip()
+        if name in columns:
+            setattr(document, columns[name], text or None)
+        extracted[name] = text
+    properties["extracted"] = extracted
+    document.properties = properties
+    flag_modified(document, "properties")
+    audit(db, principal.tenant_id, actor_label(principal), "document.fields", "document", document.id, {"fields": list(extracted)})
+    return _document_view(document)
 
 
 @router.post("/documents/{document_id}/decision")

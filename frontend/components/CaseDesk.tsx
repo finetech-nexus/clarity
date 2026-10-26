@@ -286,7 +286,6 @@ export default function CaseDesk() {
               <aside className="info-pane">
                 <h3>Pièces du dossier</h3>
                 {detail.files.map((file) => <p key={file.id}>{file.fileName}</p>)}
-                <p className="label">Le visualiseur reprend les pièces d'identité du client. Ce sont des specimens lorsqu'elles sont marquées comme telles.</p>
               </aside>
               <DocumentViewer
                 documents={[

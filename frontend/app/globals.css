@@ -165,7 +165,9 @@ button.active, button.active:hover {
 .queue, .info-pane { display: grid; gap: 0.45rem; align-content: start; }
 .queue button, .thumbs button { display: grid; text-align: left; border-radius: 12px; }
 .case-sheet { display: grid; gap: 0.8rem; }
-.case-bar, .viewer-caption, .file-row { display: flex; justify-content: space-between; gap: 1rem; align-items: center; flex-wrap: wrap; }
+.case-bar, .viewer-caption, .file-row, .actions { display: flex; justify-content: space-between; gap: 1rem; align-items: center; flex-wrap: wrap; }
+.kv span { display: contents; }
+.form label { display: grid; gap: 0.25rem; color: var(--muted); font-size: 0.85rem; }
 .case-bar h2, .info-pane h3, .card h3 { margin: 0.2rem 0 0.4rem; font-size: 1.15rem; }
 .kyc-body, .manager-grid { display: grid; grid-template-columns: 320px 1fr; gap: 1rem; align-items: start; }
 .viewer { background: #fafafb; border: 1.5px solid var(--line); border-radius: 10px; padding: 0.8rem; }

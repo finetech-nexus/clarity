@@ -525,8 +525,21 @@ def test_kyc_and_case_desks_show_documents(tmp_path):
         amina = next(row for row in queue.json() if row["name"] == "Amina El Fassi")
         detail = client.get(f"/api/clarity/v1/desks/kyc/{amina['id']}", headers=headers)
         assert detail.status_code == 200, detail.text
-        documents = detail.json()["documents"]
+        body = detail.json()
+        assert "Les pièces affichées" not in detail.text
+        assert any(field["key"] == "firstName" for field in body["submitted"])
+        documents = body["documents"]
         assert len(documents) >= 2
+        assert documents[0]["extracted"]
+        edited = client.patch(
+            f"/api/clarity/v1/desks/kyc/{amina['id']}/documents/{documents[0]['id']}",
+            headers=headers,
+            json={"fields": {"expiry": "2030-01-01", "documentNumber": "SPEC-1"}},
+        )
+        assert edited.status_code == 200, edited.text
+        saved = {field["key"]: field["value"] for field in edited.json()["extracted"]}
+        assert saved["expiry"] == "2030-01-01"
+        assert saved["documentNumber"] == "SPEC-1"
         content = client.get(documents[0]["url"], headers=headers)
         assert content.status_code == 200, content.text
         assert b"SPECIMEN" in content.content
