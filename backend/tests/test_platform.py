@@ -645,7 +645,7 @@ def test_document_ocr_reads_labels_and_mrz():
     assert labeled["parsedData"]["dateOfBirth"] == "1988-04-18"
     assert labeled["production"] is False
     line_one = "P<FRADUMONT<<CLAIRE" + "<" * 25
-    line_two = "12AB345678FRA8804186F3001012" + "<" * 15 + "4"
+    line_two = "12AB345673FRA8804189F3001019<<<<<<<<<<<<<<08"
     assert len(line_one) == 44 and len(line_two) == 44
     from xml.sax.saxutils import escape
 
@@ -689,6 +689,30 @@ def test_document_ocr_reads_labels_and_mrz():
     )
     assert noise["parsedData"]["firstName"] == ""
     assert noise["parsedData"]["lastName"] == ""
+    card_mrz = read_identity(
+        """<svg xmlns="http://www.w3.org/2000/svg">
+        <text>IDFRAX4RTBPFW46&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</text>
+        <text>8306029M3106017FRA&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;0</text>
+        <text>MILADI&lt;&lt;MOHAMED&lt;AMINE&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</text>
+        </svg>""".encode()
+    )
+    assert card_mrz["parsedData"]["firstName"] == "Mohamed Amine"
+    assert card_mrz["parsedData"]["lastName"] == "Miladi"
+    assert card_mrz["parsedData"]["dateOfBirth"] == "1983-06-02"
+    assert card_mrz["parsedData"]["nationality"] == "FRA"
+    assert card_mrz["parsedData"]["documentNumber"] == "X4RTBPFW4"
+    assert card_mrz["mrz"] is True
+    garbage = read_identity(
+        """<svg xmlns="http://www.w3.org/2000/svg">
+        <text>Prénoms</text><text>PARA</text>
+        <text>Nom</text><text>RM RARES Cd</text>
+        <text>0002029M2501019FRA&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</text>
+        </svg>""".encode()
+    )
+    assert garbage["parsedData"]["firstName"] == ""
+    assert garbage["parsedData"]["lastName"] == ""
+    assert garbage["parsedData"]["dateOfBirth"] == ""
+    assert garbage["mrz"] is False
 
 
 def test_scenario_editor_and_document_types(tmp_path):

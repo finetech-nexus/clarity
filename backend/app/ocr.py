@@ -44,10 +44,9 @@ _IMAGE_SUFFIX = {
 def read_identity(content: bytes) -> dict:
     text, engine = _extract_text(content, "6")
     parsed = _parse(text, engine)
-    names = parsed["parsedData"]
-    if engine == "tesseract" and not names["firstName"] and not names["lastName"]:
+    if engine == "tesseract" and not _trusted(parsed):
         alternative, alternative_engine = _extract_text(content, "4")
-        _merge_missing(parsed, _parse(alternative, alternative_engine))
+        parsed = _choose(parsed, _parse(alternative, alternative_engine))
     return parsed
 
 
@@ -67,15 +66,19 @@ def _merge_missing(primary: dict, secondary: dict) -> dict:
 
 def _parse(text: str, engine: str) -> dict:
     fields = _blank()
-    _fill_mrz(text, fields)
+    mrz = _fill_mrz(text, fields)
     _fill_labels(text, fields)
     if not fields["firstName"] and not fields["lastName"]:
         guessed = _guess_name(text)
         fields["firstName"] = guessed[0]
         fields["lastName"] = guessed[1]
+    if not mrz:
+        _drop_fragments(fields)
     filled = sum(1 for key in ("firstName", "lastName", "dateOfBirth") if fields[key])
     if engine == "unavailable":
         confidence = 0.0
+    elif mrz and filled >= 2:
+        confidence = 0.9
     elif filled >= 2:
         confidence = 0.85
     elif filled == 1:
@@ -89,8 +92,32 @@ def _parse(text: str, engine: str) -> dict:
         "extracted_text": text.strip(),
         "confidence": confidence,
         "engine": engine,
+        "mrz": mrz,
         "production": False,
     }
+
+
+def _drop_fragments(fields: dict[str, str]) -> None:
+    """A short all-caps token left without its pair is OCR noise, not a name."""
+    for key, other in (("firstName", "lastName"), ("lastName", "firstName")):
+        value = fields[key]
+        if value.isupper() and " " not in value and len(value) <= 4 and not fields[other]:
+            fields[key] = ""
+
+
+def _trusted(parsed: dict) -> bool:
+    data = parsed["parsedData"]
+    if parsed.get("mrz"):
+        return bool(data["dateOfBirth"] and (data["firstName"] or data["lastName"]))
+    return bool(data["firstName"] and data["lastName"] and data["dateOfBirth"])
+
+
+def _choose(primary: dict, secondary: dict) -> dict:
+    if secondary.get("mrz") and not primary.get("mrz"):
+        _merge_missing(secondary, primary)
+        return secondary
+    _merge_missing(primary, secondary)
+    return primary
 
 
 def apply_read(document, result: dict) -> None:
@@ -99,19 +126,16 @@ def apply_read(document, result: dict) -> None:
 
     properties = dict(document.properties or {})
     extracted = dict(properties.get("extracted") or {})
-    for key, value in result["parsedData"].items():
-        previous = "" if extracted.get(key) is None else str(extracted.get(key))
+    for key in _ACCOUNT:
+        value = str(result["parsedData"].get(key) or "").strip()
         if value:
             extracted[key] = value
             properties[key] = value
             if key == "expiry":
                 document.expiry = value
             continue
-        stored = previous or str(properties.get(key) or "")
-        if key in {"firstName", "lastName"} and _rejected_name(stored):
-            if _rejected_name(str(properties.get(key) or "")):
-                properties.pop(key, None)
-            extracted.pop(key, None)
+        extracted[key] = ""
+        properties.pop(key, None)
     properties["extracted"] = extracted
     properties["ocr"] = {
         "engine": result["engine"],
@@ -207,7 +231,38 @@ def _mrz_date(value: str, birth: bool) -> str:
     full = 1900 + year if birth and year > current else 2000 + year
     if not birth and year > current + 20 and full > date.today().year:
         full -= 100
-    return _iso_date(f"{full:04d}-{value[2:4]}-{value[4:6]}")
+    iso = _iso_date(f"{full:04d}-{value[2:4]}-{value[4:6]}")
+    if birth and iso and not _past_birth(iso):
+        return ""
+    return iso
+
+
+def _past_birth(iso: str) -> bool:
+    try:
+        born = date.fromisoformat(iso)
+    except ValueError:
+        return False
+    return date(1900, 1, 1) <= born <= date.today()
+
+
+def _mrz_check_digit(data: str) -> str:
+    total = 0
+    for index, char in enumerate(data):
+        if char == "<":
+            value = 0
+        elif char.isdigit():
+            value = int(char)
+        elif "A" <= char <= "Z":
+            value = ord(char) - 55
+        else:
+            return ""
+        total += value * (7, 3, 1)[index % 3]
+    return str(total % 10)
+
+
+def _check_matches(data: str, digit: str) -> bool:
+    expected = _mrz_check_digit(data)
+    return bool(expected) and digit == expected
 
 
 def _mrz_name(field: str) -> tuple[str, str]:
@@ -217,64 +272,71 @@ def _mrz_name(field: str) -> tuple[str, str]:
     return first, last
 
 
-def _fill_mrz(text: str, fields: dict[str, str]) -> None:
-    lines = []
+def _mrz_lines(text: str) -> list[str]:
+    found = []
     for raw in text.splitlines():
         compact = re.sub(r"\s+", "", raw.upper())
-        if re.fullmatch(r"[A-Z0-9<]{30,44}", compact):
-            lines.append(compact)
-    if len(lines) >= 2 and len(lines[0]) >= 44 and lines[0].startswith("P"):
-        first, last = _mrz_name(lines[0][5:])
-        fields["firstName"] = first
-        fields["lastName"] = last
-        fields["documentNumber"] = lines[1][0:9].replace("<", "")
-        fields["nationality"] = lines[1][10:13].replace("<", "")
-        fields["dateOfBirth"] = _mrz_date(lines[1][13:19], True)
-        fields["gender"] = lines[1][20] if lines[1][20] in {"M", "F"} else ""
-        fields["expiry"] = _mrz_date(lines[1][21:27], False)
-    elif len(lines) >= 3 and all(len(line) >= 30 for line in lines[:3]):
-        fields["documentNumber"] = lines[0][5:14].replace("<", "")
-        fields["dateOfBirth"] = _mrz_date(lines[1][0:6], True)
-        fields["gender"] = lines[1][7] if lines[1][7] in {"M", "F"} else ""
-        fields["expiry"] = _mrz_date(lines[1][8:14], False)
-        fields["nationality"] = lines[1][15:18].replace("<", "")
-        first, last = _mrz_name(lines[2])
-        fields["firstName"] = first
-        fields["lastName"] = last
-    for line in lines:
-        _salvage_mrz_line(line, fields)
+        if re.fullmatch(r"[A-Z0-9<]{30}", compact) or re.fullmatch(r"[A-Z0-9<]{44}", compact):
+            found.append(compact)
+    return found
 
 
-def _salvage_mrz_line(line: str, fields: dict[str, str]) -> None:
-    """Fill only the gaps left when a passport or identity-card line was read alone."""
-    if line.startswith("P") and "<<" in line and not (fields["firstName"] and fields["lastName"]):
-        first, last = _mrz_name(line[5:])
-        fields["firstName"] = fields["firstName"] or first
-        fields["lastName"] = fields["lastName"] or last
-    elif line.startswith("IDFRA"):
-        body = line[5:]
-        if "<<" in body:
-            last, _, given = body.partition("<<")
-            last = re.sub(r"<+", " ", last).strip().title()
-            given = re.sub(r"<+", " ", given).strip().title()
-            fields["lastName"] = fields["lastName"] or last
-            fields["firstName"] = fields["firstName"] or given
-        elif not fields["lastName"]:
-            last = body.split("<", 1)[0].strip()
-            if last.isalpha():
-                fields["lastName"] = last.title()
-    elif "<<" in line and line[:1].isalpha() and not (fields["firstName"] and fields["lastName"]):
-        first, last = _mrz_name(line)
-        fields["firstName"] = fields["firstName"] or first
-        fields["lastName"] = fields["lastName"] or last
-    if re.match(r"\d{6}", line):
-        fields["dateOfBirth"] = fields["dateOfBirth"] or _mrz_date(line[0:6], True)
-        if len(line) > 7 and line[7] in {"M", "F"}:
-            fields["gender"] = fields["gender"] or line[7]
-        if len(line) >= 14:
-            fields["expiry"] = fields["expiry"] or _mrz_date(line[8:14], False)
-        if len(line) >= 18:
-            fields["nationality"] = fields["nationality"] or line[15:18].replace("<", "")
+def _assign_name(fields: dict[str, str], first: str, last: str) -> None:
+    if _plausible_name(first):
+        fields["firstName"] = first
+    if _plausible_name(last):
+        fields["lastName"] = last
+
+
+def _apply_td3(line_one: str, line_two: str, fields: dict[str, str]) -> bool:
+    if len(line_one) != 44 or len(line_two) != 44 or not line_one.startswith("P"):
+        return False
+    if not (
+        _check_matches(line_two[0:9], line_two[9])
+        and _check_matches(line_two[13:19], line_two[19])
+        and _check_matches(line_two[21:27], line_two[27])
+    ):
+        return False
+    first, last = _mrz_name(line_one[5:])
+    _assign_name(fields, first, last)
+    fields["documentNumber"] = line_two[0:9].replace("<", "")
+    nationality = line_two[10:13].replace("<", "")
+    if re.fullmatch(r"[A-Z]{3}", nationality):
+        fields["nationality"] = nationality
+    fields["dateOfBirth"] = _mrz_date(line_two[13:19], True)
+    fields["gender"] = line_two[20] if line_two[20] in {"M", "F"} else ""
+    fields["expiry"] = _mrz_date(line_two[21:27], False)
+    return True
+
+
+def _apply_td1(line_one: str, line_two: str, line_three: str, fields: dict[str, str]) -> bool:
+    if len(line_one) != 30 or len(line_two) != 30 or len(line_three) != 30:
+        return False
+    if not (_check_matches(line_two[0:6], line_two[6]) and _check_matches(line_two[8:14], line_two[14])):
+        return False
+    if _check_matches(line_one[5:14], line_one[14]):
+        fields["documentNumber"] = line_one[5:14].replace("<", "")
+    fields["dateOfBirth"] = _mrz_date(line_two[0:6], True)
+    fields["gender"] = line_two[7] if line_two[7] in {"M", "F"} else ""
+    fields["expiry"] = _mrz_date(line_two[8:14], False)
+    nationality = line_two[15:18].replace("<", "")
+    if re.fullmatch(r"[A-Z]{3}", nationality):
+        fields["nationality"] = nationality
+    first, last = _mrz_name(line_three)
+    _assign_name(fields, first, last)
+    return True
+
+
+def _fill_mrz(text: str, fields: dict[str, str]) -> bool:
+    """Accept a passport or identity-card MRZ only when its check digits match."""
+    lines = _mrz_lines(text)
+    for index in range(len(lines) - 1):
+        if _apply_td3(lines[index], lines[index + 1], fields):
+            return True
+    for index in range(len(lines) - 2):
+        if _apply_td1(lines[index], lines[index + 1], lines[index + 2], fields):
+            return True
+    return False
 
 
 _TRANSLATIONS = {
@@ -301,6 +363,30 @@ def _noise_word(word: str) -> bool:
 def _rejected_name(value: str) -> bool:
     words = [_fold(word) for word in re.split(r"\s+", value.strip()) if word]
     return not words or any(_noise_word(word) for word in words)
+
+
+def _plausible_piece(word: str) -> bool:
+    folded = _fold(word)
+    if folded in _PARTICLES:
+        return True
+    if not folded.isalpha() or not 3 <= len(folded) <= 30 or _noise_word(folded):
+        return False
+    if not any(char in "aeiouy" for char in folded):
+        return False
+    return re.search(r"[^aeiouy]{5,}", folded) is None
+
+
+def _plausible_name(value: str) -> bool:
+    words = [word for word in re.split(r"\s+", value.strip()) if word]
+    if not 1 <= len(words) <= 4 or _rejected_name(value):
+        return False
+    pieces_ok = []
+    for word in words:
+        parts = [part for part in re.split(r"[-'’]", word) if part]
+        if not parts or not all(_plausible_piece(part) for part in parts):
+            return False
+        pieces_ok.extend(parts)
+    return any(_fold(part) not in _PARTICLES for part in pieces_ok)
 
 
 def _match_label(line: str) -> tuple[str, int]:
@@ -337,7 +423,10 @@ def _normalize_field(key: str, value: str) -> str:
     if not text:
         return ""
     if key in {"dateOfBirth", "expiry"}:
-        return _iso_date(text)
+        iso = _iso_date(text)
+        if key == "dateOfBirth" and iso and not _past_birth(iso):
+            return ""
+        return iso
     if key == "gender":
         letter = text[:1].upper()
         return letter if letter in {"M", "F"} else ""
@@ -351,9 +440,10 @@ def _normalize_field(key: str, value: str) -> str:
             return text[:40]
         return ""
     if key in {"firstName", "lastName"}:
-        if _rejected_name(text) or len(text) > 80:
+        cleaned = re.sub(r"\s+", " ", text)
+        if not _plausible_name(cleaned):
             return ""
-        return re.sub(r"\s+", " ", text)
+        return cleaned
     if key == "address":
         return re.sub(r"\s+", " ", text)[:160]
     return text[:80]
@@ -397,25 +487,22 @@ def _guess_name(text: str) -> tuple[str, str]:
         words = raw.split()
         if len(words) != 1 or not words[0].isupper():
             continue
-        if not re.fullmatch(r"[A-ZÀ-Ý][A-ZÀ-Ý'’-]{1,}", words[0]):
+        if not _plausible_name(words[0]):
             continue
         if index + 1 >= len(lines):
             continue
         given = lines[index + 1]
-        given_words = given.split()
-        if not 1 <= len(given_words) <= 4 or _match_label(given)[0] or _rejected_name(given):
+        if _match_label(given)[0] or not _plausible_name(given):
             continue
-        if all(re.fullmatch(r"[A-ZÀ-Ý][A-Za-zÀ-ÿ'’-]*", word) for word in given_words):
-            return given, words[0]
+        return given, words[0]
     for raw in lines:
         words = [word for word in raw.split() if word]
-        if not 2 <= len(words) <= 4 or _rejected_name(raw):
+        if not 2 <= len(words) <= 4 or not any(character.islower() for character in raw):
             continue
-        if not any(character.islower() for character in raw):
-            continue
-        if not all(re.fullmatch(r"[A-ZÀ-Ý][A-Za-zÀ-ÿ'’-]*", word) or _fold(word) in _PARTICLES for word in words):
-            continue
-        return words[0], " ".join(words[1:])
+        first = words[0]
+        last = " ".join(words[1:])
+        if _plausible_name(first) and _plausible_name(last):
+            return first, last
     return "", ""
 
 

@@ -564,7 +564,7 @@ def read_identity_documents(runtime_id: str, principal: Principal = Depends(clar
         for key in _IDENTITY_FORM:
             if item.get(key) and not merged[key]:
                 merged[key] = item[key]
-    stored = {key: value for key, value in merged.items() if value}
+    stored = {key: merged.get(key, "") for key in _IDENTITY_FORM}
     for document in identity:
         _write_document_fields(document, stored)
     return kyc_case(runtime_id, principal, db)
