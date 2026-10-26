@@ -83,8 +83,8 @@ export default function KycDesk() {
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const [tab, setTab] = useState<(typeof TABS)[number]>("Informations saisies");
-  const [documentId, setDocumentId] = useState("");
-  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [drafts, setDrafts] = useState<Record<string, Record<string, string>>>({});
+  const [readingId, setReadingId] = useState("");
 
   async function loadQueue(prefer?: string, nextQuery = query, nextPage = page) {
     const body = await searchPage<QueueItem>("/api/clarity/v1/desks/kyc", nextQuery, nextPage);
@@ -118,43 +118,47 @@ export default function KycDesk() {
     }
   }
 
-  const activeDocument = detail?.documents.find((item) => item.id === documentId) || detail?.documents[0];
+  const documentKey = detail?.documents.map((item) => item.id).join(",") || "";
 
   useEffect(() => {
-    if (!activeDocument) return;
-    const next: Record<string, string> = {};
-    for (const field of activeDocument.extracted || []) next[field.key] = field.value;
-    setDraft(next);
-    if (activeDocument.id !== documentId) setDocumentId(activeDocument.id);
-  }, [activeDocument?.id, selected]);
+    if (!detail) return;
+    const next: Record<string, Record<string, string>> = {};
+    for (const document of detail.documents) {
+      const fields: Record<string, string> = {};
+      for (const field of document.extracted || []) fields[field.key] = field.value;
+      next[document.id] = fields;
+    }
+    setDrafts(next);
+  }, [selected, documentKey]);
 
-  async function readDocument() {
-    if (!activeDocument) return;
+  async function readDocument(documentId: string) {
     setError("");
+    setReadingId(documentId);
     try {
-      const result = await api<{ parsedData: Record<string, string>; production: boolean; engine: string }>(`/api/clarity/v1/desks/kyc/${selected}/documents/${activeDocument.id}/ocr`, { method: "POST" });
+      const result = await api<{ parsedData: Record<string, string>; production: boolean; engine: string }>(`/api/clarity/v1/desks/kyc/${selected}/documents/${documentId}/ocr`, { method: "POST" });
       const refreshed = await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}`);
       setDetail(refreshed);
-      const current = refreshed.documents.find((item) => item.id === activeDocument.id);
+      const current = refreshed.documents.find((item) => item.id === documentId);
       const next: Record<string, string> = {};
       for (const field of current?.extracted || []) next[field.key] = field.value;
-      setDraft(next);
+      setDrafts((existing) => ({ ...existing, [documentId]: next }));
       const found = ["firstName", "lastName", "dateOfBirth"].some((key) => result.parsedData?.[key]);
       setMessage(found ? "Lecture enregistrée. Ce n'est pas une vérification d'identité de production." : "Aucune identité lue sur cette pièce.");
       await loadQueue(selected);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Lecture refusée");
+    } finally {
+      setReadingId("");
     }
   }
 
-  async function saveExtracted(event: FormEvent) {
+  async function saveExtracted(documentId: string, event: FormEvent) {
     event.preventDefault();
-    if (!activeDocument) return;
     setError("");
     try {
-      const updated = await api<ViewerDocument & { extracted?: Field[] }>(`/api/clarity/v1/desks/kyc/${selected}/documents/${activeDocument.id}`, {
+      const updated = await api<ViewerDocument & { extracted?: Field[] }>(`/api/clarity/v1/desks/kyc/${selected}/documents/${documentId}`, {
         method: "PATCH",
-        body: JSON.stringify({ fields: draft }),
+        body: JSON.stringify({ fields: drafts[documentId] || {} }),
       });
       setDetail((current) => current && ({
         ...current,
@@ -263,28 +267,35 @@ export default function KycDesk() {
               </div>
             ) : null}
             {tab === "Données du document" ? (
-              <article className="card">
-                <div className="tabs">
-                  {detail.documents.map((item) => (
-                    <button className={item.id === activeDocument?.id ? "active" : ""} key={item.id} type="button" onClick={() => setDocumentId(item.id)}>{item.title}</button>
-                  ))}
-                </div>
-                {activeDocument ? (
-                  <form className="form" onSubmit={(event) => void saveExtracted(event)}>
-                    {(activeDocument.extracted || []).map((field) => (
-                      <label className={field.match === false ? "mismatch" : ""} key={field.key}>
-                        {field.label}
-                        <input value={draft[field.key] ?? field.value} onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))} />
-                      </label>
-                    ))}
-                    <div className="actions">
-                      <button className="ghost" type="button" onClick={() => void readDocument()}>Lire la pièce</button>
-                      <button type="submit">Enregistrer</button>
-                    </div>
-                    {activeDocument.ocr ? <p className="label">Moteur {activeDocument.ocr.engine} · confiance {activeDocument.ocr.confidence} · lecture locale, pas une vérification de production.</p> : null}
-                  </form>
-                ) : <p className="label">Aucune pièce sur ce dossier.</p>}
-              </article>
+              <div className="document-data">
+                {detail.documents.filter((item) => item.extracted?.length).map((document) => (
+                  <article className="card" key={document.id}>
+                    <h3>{document.title}</h3>
+                    <form className="form" onSubmit={(event) => void saveExtracted(document.id, event)}>
+                      {(document.extracted || []).map((field) => (
+                        <label className={field.match === false ? "mismatch" : ""} key={field.key}>
+                          {field.label}
+                          <input
+                            value={drafts[document.id]?.[field.key] ?? field.value}
+                            onChange={(event) => setDrafts((current) => ({
+                              ...current,
+                              [document.id]: { ...current[document.id], [field.key]: event.target.value },
+                            }))}
+                          />
+                        </label>
+                      ))}
+                      <div className="actions">
+                        <button className="ghost" type="button" disabled={readingId === document.id} onClick={() => void readDocument(document.id)}>
+                          {readingId === document.id ? "Lecture…" : "Lire la pièce"}
+                        </button>
+                        <button type="submit">Enregistrer</button>
+                      </div>
+                      {document.ocr ? <p className="label">Moteur {document.ocr.engine} · confiance {document.ocr.confidence} · lecture locale, pas une vérification de production.</p> : null}
+                    </form>
+                  </article>
+                ))}
+                {!detail.documents.some((item) => item.extracted?.length) ? <p className="label">Aucune donnée lue sur les pièces.</p> : null}
+              </div>
             ) : null}
             {tab === "Résultats" ? (
               <article className="card">
