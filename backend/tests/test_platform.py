@@ -583,6 +583,53 @@ def test_kyc_and_case_desks_show_documents(tmp_path):
         assert "events" in manager.json()
 
 
+def test_verification_file_shows_aml_answers_from_the_journey(tmp_path):
+    with _client(tmp_path) as client:
+        ballerine = {"Authorization": f"Bearer {BALLERINE_API_KEY}"}
+        headers = {"Authorization": f"Bearer {_login(client, ANALYST_EMAIL)}"}
+        entity = {"type": "individual", "id": "aml-user", "data": {"firstName": "Amine", "lastName": "Miladi", "dateOfBirth": "1983-06-02"}}
+        collection = client.post(
+            "/api/v1/external/workflows/run",
+            headers=ballerine,
+            json={"workflowId": "kyc_collection_flow", "context": {"entity": entity, "documents": []}},
+        )
+        assert collection.status_code == 200, collection.text
+        runtime = collection.json()["workflowRuntimeId"]
+        patched = client.patch(
+            f"/api/v1/external/workflows/{runtime}",
+            headers=ballerine,
+            json={
+                "context": {
+                    "marbleAml": {
+                        "provided": {
+                            "pepPublicFunction": False,
+                            "pepFamilyAssociate": True,
+                            "pepFinancialInvolvement": False,
+                        },
+                        "system": {"score": 12, "outcome": "review"},
+                    }
+                }
+            },
+        )
+        assert patched.status_code == 200, patched.text
+        review = client.post(
+            "/api/v1/external/workflows/run",
+            headers=ballerine,
+            json={"workflowId": "risk-score-improvement-dev", "context": {"entity": entity}},
+        )
+        assert review.status_code == 200, review.text
+        detail = client.get(f"/api/clarity/v1/desks/kyc/{review.json()['workflowRuntimeId']}", headers=headers)
+        assert detail.status_code == 200, detail.text
+        fields = {field["key"]: field for field in detail.json()["submitted"]}
+        assert fields["firstName"]["value"] == "Amine"
+        assert fields["pepPublicFunction"]["value"] == "Non"
+        assert fields["pepFamilyAssociate"]["value"] == "Oui"
+        assert fields["pepFinancialInvolvement"]["value"] == "Non"
+        assert "fonction publique" in fields["pepPublicFunction"]["label"]
+        assert fields["amlScore"]["value"] == "12"
+        assert fields["amlOutcome"]["value"] == "review"
+
+
 def test_document_ocr_reads_labels_and_mrz():
     from app.ocr import read_identity
 

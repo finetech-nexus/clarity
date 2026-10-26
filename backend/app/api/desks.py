@@ -114,7 +114,14 @@ _FIELD_LABELS = {
     "legal_form": "Forme juridique",
     "registered_address": "Adresse du siège",
     "industry": "Secteur",
+    "pepPublicFunction": "Exercez-vous ou avez-vous exercé une fonction publique importante ?",
+    "pepFamilyAssociate": "Êtes-vous un membre de la famille ou un proche associé d'une personne politiquement exposée ?",
+    "pepFinancialInvolvement": "Une personne politiquement exposée intervient-elle dans vos activités ou vos opérations financières ?",
+    "amlScore": "Score AML",
+    "amlOutcome": "Résultat AML",
+    "screeningTags": "Étiquettes de criblage",
 }
+_AML_QUESTIONS = ("pepPublicFunction", "pepFamilyAssociate", "pepFinancialInvolvement")
 
 
 def _label(key: str) -> str:
@@ -133,7 +140,58 @@ def _scalar_fields(source: dict) -> list[dict]:
     return rows
 
 
-def _submitted_fields(workflow: WorkflowInstance, customer: Customer | None) -> list[dict]:
+def _yes_no(value: object) -> str:
+    if value is True:
+        return "Oui"
+    if value is False:
+        return "Non"
+    return ""
+
+
+def _aml_profile(db: Session, workflow: WorkflowInstance) -> dict:
+    contexts = [workflow.context or {}]
+    if workflow.customer_id:
+        others = db.scalars(
+            select(WorkflowInstance).where(
+                WorkflowInstance.tenant_id == workflow.tenant_id,
+                WorkflowInstance.customer_id == workflow.customer_id,
+                WorkflowInstance.id != workflow.id,
+            )
+        ).all()
+        contexts.extend(row.context or {} for row in others)
+    fallback = None
+    for context in contexts:
+        profile = context.get("marbleAml")
+        if not isinstance(profile, dict):
+            continue
+        provided = profile.get("provided") if isinstance(profile.get("provided"), dict) else {}
+        if any(isinstance(value, bool) for value in provided.values()):
+            return profile
+        fallback = fallback or profile
+    return fallback or {}
+
+
+def _aml_fields(db: Session, workflow: WorkflowInstance) -> list[dict]:
+    profile = _aml_profile(db, workflow)
+    provided = profile.get("provided") if isinstance(profile.get("provided"), dict) else {}
+    system = profile.get("system") if isinstance(profile.get("system"), dict) else {}
+    rows = []
+    for key in _AML_QUESTIONS:
+        answer = _yes_no(provided.get(key))
+        if answer:
+            rows.append({"key": key, "label": _label(key), "value": answer})
+    if isinstance(system.get("score"), (int, float)):
+        rows.append({"key": "amlScore", "label": _label("amlScore"), "value": str(system["score"])})
+    outcome = system.get("outcome") or system.get("riskLevel")
+    if isinstance(outcome, str) and outcome.strip():
+        rows.append({"key": "amlOutcome", "label": _label("amlOutcome"), "value": outcome.strip()})
+    tags = system.get("screeningTags")
+    if isinstance(tags, str) and tags.strip():
+        rows.append({"key": "screeningTags", "label": _label("screeningTags"), "value": tags.strip()})
+    return rows
+
+
+def _submitted_fields(db: Session, workflow: WorkflowInstance, customer: Customer | None) -> list[dict]:
     context = workflow.context or {}
     entity = context.get("entity") if isinstance(context.get("entity"), dict) else {}
     data = entity.get("data") if isinstance(entity.get("data"), dict) else {}
@@ -161,6 +219,10 @@ def _submitted_fields(workflow: WorkflowInstance, customer: Customer | None) -> 
             "industry": customer.business.industry,
         }
     for row in _scalar_fields(profile):
+        if row["key"] not in seen:
+            rows.append(row)
+            seen.add(row["key"])
+    for row in _aml_fields(db, workflow):
         if row["key"] not in seen:
             rows.append(row)
     return rows
@@ -333,7 +395,7 @@ def kyc_case(runtime_id: str, principal: Principal = Depends(clarity_principal),
         "case": _kyc_card(db, workflow),
         "task": None if not task else {"key": task.task_key, "name": task.name},
         "customer": None if not customer else customer_view(db, customer),
-        "submitted": _submitted_fields(workflow, customer),
+        "submitted": _submitted_fields(db, workflow, customer),
         "documents": [_document_view(document, declared) for document in documents],
         "tracker": _document_tracker(db, principal, workflow, documents),
         "alert": flags["alert"],
