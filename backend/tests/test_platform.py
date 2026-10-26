@@ -528,6 +528,14 @@ def test_kyc_and_case_desks_show_documents(tmp_path):
         body = detail.json()
         assert "Les pièces affichées" not in detail.text
         assert any(field["key"] == "firstName" for field in body["submitted"])
+        passport = next(item for item in body["documents"] if item["type"] == "passport")
+        read = {field["key"]: field for field in passport["extracted"]}
+        assert read["firstName"]["value"] == ""
+        assert read["lastName"]["value"] == ""
+        assert read["dateOfBirth"]["value"] == ""
+        assert read["firstName"]["match"] is False
+        assert body["alert"] is True
+        assert "correspondence" in body["alert_reasons"]
         documents = body["documents"]
         assert len(documents) >= 2
         assert documents[0]["extracted"]

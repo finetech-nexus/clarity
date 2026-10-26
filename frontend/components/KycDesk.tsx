@@ -13,9 +13,10 @@ type QueueItem = {
   state: string | null;
   documents: number;
   revisions: number;
+  alert?: boolean;
 };
 
-type Field = { key: string; label: string; value: string };
+type Field = { key: string; label: string; value: string; match?: boolean | null };
 
 type Detail = {
   case: QueueItem & { task?: { key: string; name: string } | null };
@@ -31,6 +32,8 @@ type Detail = {
     verification_checks: Array<Record<string, unknown>>;
   } | null;
   submitted: Field[];
+  alert?: boolean;
+  alert_reasons?: string[];
   documents: Array<ViewerDocument & { extracted?: Field[]; decision?: string | null; status?: string; type?: string; category?: string }>;
   tracker: Array<{ id?: string; type: string; category: string; country?: string; required: boolean; status: string; document_id?: string | null }>;
 };
@@ -112,6 +115,8 @@ export default function KycDesk() {
         documents: current.documents.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)),
       }));
       setMessage("Données du document enregistrées.");
+      setDetail(await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}`));
+      await loadQueue(selected);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Enregistrement refusé");
     }
@@ -150,18 +155,20 @@ export default function KycDesk() {
       <div className="kyc-shell">
         <div className="queue">
           {queue.map((item) => (
-            <button className={item.id === selected ? "active" : "ghost"} key={item.id} type="button" onClick={() => setSelected(item.id)}>
+            <button className={`${item.id === selected ? "active" : "ghost"}${item.alert ? " alert" : ""}`} key={item.id} type="button" onClick={() => setSelected(item.id)}>
               <span>{item.name}</span>
               <span className="label">{item.state === "analystReview" ? "manual review" : (item.state || item.status)} · {item.documents} pièce(s){item.revisions ? ` · ${item.revisions} à renvoyer` : ""}</span>
             </button>
           ))}
         </div>
         {detail ? (
-          <div className="case-sheet">
+          <div className={`case-sheet${detail.alert ? " alert" : ""}`}>
             <header className="case-bar">
               <div>
                 <h2>{detail.customer?.display_name || detail.case.name}</h2>
                 <p className="label">{detail.case.definition} · {detail.case.status} · {detail.task?.name || detail.case.state || "sans tâche ouverte"}</p>
+                {detail.alert_reasons?.includes("correspondence") ? <p className="alert-line">Les données lues sur la pièce ne correspondent pas aux informations saisies.</p> : null}
+                {detail.alert_reasons?.includes("screening") ? <p className="alert-line">Le criblage remonte une alerte.</p> : null}
               </div>
               <div className="actions">
                 <button className="ghost" type="button" disabled={!revisions} onClick={() => void decideCase("revision")}>Demander les renvois{revisions ? ` (${revisions})` : ""}</button>
@@ -212,7 +219,7 @@ export default function KycDesk() {
                 {activeDocument ? (
                   <form className="form" onSubmit={(event) => void saveExtracted(event)}>
                     {(activeDocument.extracted || []).map((field) => (
-                      <label key={field.key}>
+                      <label className={field.match === false ? "mismatch" : ""} key={field.key}>
                         {field.label}
                         <input value={draft[field.key] ?? field.value} onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))} />
                       </label>

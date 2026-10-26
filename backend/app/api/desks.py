@@ -1,5 +1,8 @@
 """Case desks for the KYC review and the AML investigation."""
 
+import re
+import unicodedata
+
 from fastapi import APIRouter, Depends, File, Request, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy import select
@@ -74,6 +77,9 @@ def _case(db: Session, principal: Principal, case_id: str) -> CaseRecord:
 
 
 _FILE_KEYS = {"fileName", "mime", "title", "synthetic", "uri", "workflowRuntimeId", "side", "extracted"}
+_ACCOUNT_FIELDS = ("firstName", "lastName", "dateOfBirth")
+_IDENTITY_TYPES = {"passport", "id_card", "id-card", "drivers_license", "residence_permit"}
+_QUIET_SCREENING = {"no_hit", "cleared", "false_positive", "whitelisted"}
 _COLUMN_FIELDS = (
     ("type", "doc_type"),
     ("category", "category"),
@@ -158,19 +164,106 @@ def _submitted_fields(workflow: WorkflowInstance, customer: Customer | None) -> 
     return rows
 
 
-def _extracted_fields(document: IdentityDocument) -> list[dict]:
+def _clean(value: object) -> str:
+    text = "" if value is None else str(value).strip()
+    return "" if not text or set(text) <= {"-", ".", "/"} else text
+
+
+def _norm(value: str) -> str:
+    text = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]", "", text)
+
+
+def _norm_date(value: str) -> str:
+    text = _clean(value)
+    match = re.fullmatch(r"(\d{2})[/. -](\d{2})[/. -](\d{4})", text)
+    if match:
+        text = f"{match.group(3)}-{match.group(2)}-{match.group(1)}"
+    return re.sub(r"\D", "", text)
+
+
+def _declared_identity(workflow: WorkflowInstance, customer: Customer | None) -> dict[str, str]:
+    context = workflow.context or {}
+    entity = context.get("entity") if isinstance(context.get("entity"), dict) else {}
+    data = entity.get("data") if isinstance(entity.get("data"), dict) else {}
+    values = {
+        "firstName": _clean(data.get("firstName") or data.get("given_name")),
+        "lastName": _clean(data.get("lastName") or data.get("family_name")),
+        "dateOfBirth": _clean(data.get("dateOfBirth") or data.get("date_of_birth")),
+    }
+    if customer and customer.individual and not values["dateOfBirth"]:
+        values["dateOfBirth"] = _clean(customer.individual.date_of_birth)
+    return values
+
+
+def _document_values(document: IdentityDocument) -> dict[str, str]:
     properties = document.properties or {}
     stored = properties.get("extracted") if isinstance(properties.get("extracted"), dict) else {}
-    values = {key: getattr(document, column) for key, column in _COLUMN_FIELDS}
+    values = {key: _clean(getattr(document, column)) for key, column in _COLUMN_FIELDS}
     for key, value in properties.items():
         if key in _FILE_KEYS or isinstance(value, (dict, list)):
             continue
-        values[key] = value
-    values.update(stored)
-    return [{"key": key, "label": _label(key), "value": "" if value is None else str(value)} for key, value in values.items()]
+        values[key] = _clean(value)
+    for key, value in stored.items():
+        if not isinstance(value, (dict, list)):
+            values[str(key)] = _clean(value)
+    if values.get("expires") and not values.get("expiry"):
+        values["expiry"] = values["expires"]
+    if values.get("expiry") and not values.get("expires"):
+        values["expires"] = values["expiry"]
+    return values
 
 
-def _document_view(document: IdentityDocument) -> dict:
+def _same(key: str, left: str, right: str) -> bool:
+    if not left or not right:
+        return False
+    if key == "dateOfBirth":
+        return _norm_date(left) == _norm_date(right)
+    return _norm(left) == _norm(right)
+
+
+def _extracted_fields(document: IdentityDocument, declared: dict[str, str] | None = None) -> list[dict]:
+    values = _document_values(document)
+    compare = document.doc_type in _IDENTITY_TYPES
+    ordered = [key for key in (*_ACCOUNT_FIELDS, "nationality", "documentNumber", "expiry") if key in _ACCOUNT_FIELDS or key in values]
+    skip = {"expiry"} if "expiry" in ordered else set()
+    if values.get("expires") == values.get("expiry"):
+        skip.add("expires")
+    ordered.extend(key for key in values if key not in ordered and key not in skip)
+    rows = []
+    for key in ordered:
+        value = values.get(key, "")
+        match = None
+        if compare and key in _ACCOUNT_FIELDS and declared is not None:
+            match = _same(key, declared.get(key, ""), value)
+        rows.append({"key": key, "label": _label(key), "value": value, "match": match})
+    return rows
+
+
+def _screening_alert(db: Session, customer: Customer | None) -> bool:
+    if not customer:
+        return False
+    checks = db.scalars(select(ScreeningCheck).where(ScreeningCheck.customer_id == customer.id)).all()
+    return any(check.status not in _QUIET_SCREENING for check in checks)
+
+
+def _review_flags(db: Session, workflow: WorkflowInstance, customer: Customer | None, documents: list[IdentityDocument]) -> dict:
+    declared = _declared_identity(workflow, customer)
+    identity = [document for document in documents if document.doc_type in _IDENTITY_TYPES]
+    mismatched = []
+    for key in _ACCOUNT_FIELDS:
+        read = next((_document_values(document).get(key, "") for document in identity if _document_values(document).get(key, "")), "")
+        if not _same(key, declared.get(key, ""), read):
+            mismatched.append(key)
+    reasons = []
+    if mismatched or not identity:
+        reasons.append("correspondence")
+    if _screening_alert(db, customer):
+        reasons.append("screening")
+    return {"alert": bool(reasons), "alert_reasons": reasons, "mismatched": mismatched}
+
+
+def _document_view(document: IdentityDocument, declared: dict[str, str] | None = None) -> dict:
     payload = document_record(document)
     title = (document.properties or {}).get("title") or document.doc_type
     payload.update(
@@ -180,7 +273,7 @@ def _document_view(document: IdentityDocument) -> dict:
             "mime": (document.properties or {}).get("mime") or "application/octet-stream",
             "synthetic": bool((document.properties or {}).get("synthetic")),
             "url": f"/api/clarity/v1/desks/documents/{document.id}/content",
-            "extracted": _extracted_fields(document),
+            "extracted": _extracted_fields(document, declared),
         }
     )
     return payload
@@ -201,6 +294,7 @@ def _kyc_card(db: Session, workflow: WorkflowInstance) -> dict:
         "documents": len(documents),
         "revisions": sum(1 for document in documents if document.decision == "revisions"),
         "created_at": iso(workflow.created_at),
+        "alert": _review_flags(db, workflow, customer, documents)["alert"],
     }
 
 
@@ -221,13 +315,17 @@ def kyc_case(runtime_id: str, principal: Principal = Depends(clarity_principal),
     if customer and not documents:
         documents = db.scalars(select(IdentityDocument).where(IdentityDocument.customer_id == customer.id)).all()
     task = db.scalar(select(WorkflowTask).where(WorkflowTask.workflow_id == workflow.id, WorkflowTask.status == "open"))
+    declared = _declared_identity(workflow, customer)
+    flags = _review_flags(db, workflow, customer, documents)
     return {
         "case": _kyc_card(db, workflow),
         "task": None if not task else {"key": task.task_key, "name": task.name},
         "customer": None if not customer else customer_view(db, customer),
         "submitted": _submitted_fields(workflow, customer),
-        "documents": [_document_view(document) for document in documents],
+        "documents": [_document_view(document, declared) for document in documents],
         "tracker": _document_tracker(db, principal, workflow, documents),
+        "alert": flags["alert"],
+        "alert_reasons": flags["alert_reasons"],
     }
 
 
@@ -309,7 +407,8 @@ def update_document_fields(runtime_id: str, document_id: str, body: dict, princi
     document.properties = properties
     flag_modified(document, "properties")
     audit(db, principal.tenant_id, actor_label(principal), "document.fields", "document", document.id, {"fields": list(extracted)})
-    return _document_view(document)
+    customer = db.get(Customer, workflow.customer_id) if workflow.customer_id else None
+    return _document_view(document, _declared_identity(workflow, customer))
 
 
 @router.post("/documents/{document_id}/decision")

@@ -168,6 +168,9 @@ button.active, button.active:hover {
 .case-bar, .viewer-caption, .file-row, .actions { display: flex; justify-content: space-between; gap: 1rem; align-items: center; flex-wrap: wrap; }
 .kv span { display: contents; }
 .form label { display: grid; gap: 0.25rem; color: var(--muted); font-size: 0.85rem; }
+.form label.mismatch input { border-color: var(--danger); background: #fdecee; }
+.queue button.alert, .case-sheet.alert { border: 1.5px solid var(--danger); background: #fdecee; }
+.alert-line { color: var(--danger); margin: 0.2rem 0 0; font-weight: 700; }
 .case-bar h2, .info-pane h3, .card h3 { margin: 0.2rem 0 0.4rem; font-size: 1.15rem; }
 .kyc-body, .manager-grid { display: grid; grid-template-columns: 320px 1fr; gap: 1rem; align-items: start; }
 .viewer { background: #fafafb; border: 1.5px solid var(--line); border-radius: 10px; padding: 0.8rem; }
