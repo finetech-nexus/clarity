@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     ai_api_key: str = ""
     ai_base_url: str = "https://api.openai.com/v1"
     ai_model: str = "gpt-4o-mini"
+    ocr_url: str = ""
     public_app_url: str = "http://localhost:3010"
 
     @property

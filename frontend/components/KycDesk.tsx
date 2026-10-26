@@ -135,7 +135,12 @@ export default function KycDesk() {
       const refreshed = await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}/identity/ocr`, { method: "POST" });
       setDetail(refreshed);
       const found = (refreshed.identity || []).some((field) => ["firstName", "lastName", "dateOfBirth"].includes(field.key) && field.value);
-      setMessage(found ? "Lecture enregistrée à partir de la carte d'identité et du passeport. Ce n'est pas une vérification de production." : "Aucune identité lue sur la carte ou le passeport.");
+      const paddle = (refreshed.documents || []).some((item) => item.ocr?.engine === "paddleocr");
+      setMessage(found
+        ? paddle
+          ? "Lecture par le modèle PaddleOCR. Ce n'est pas une vérification de production."
+          : "Lecture enregistrée à partir de la carte d'identité et du passeport. Ce n'est pas une vérification de production."
+        : "Aucune identité lue sur la carte ou le passeport.");
       await loadQueue(selected);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Lecture refusée");
@@ -272,7 +277,7 @@ export default function KycDesk() {
                       </button>
                       <button type="submit">Enregistrer</button>
                     </div>
-                    <p className="label">Une seule lecture pour la carte d'identité et le passeport. Ce n'est pas une vérification de production.</p>
+                    <p className="label">Une seule lecture PaddleOCR pour la carte d'identité et le passeport. Ce n'est pas une vérification de production.</p>
                   </form>
                 ) : <p className="label">Aucune carte d'identité ou passeport sur ce dossier.</p>}
               </article>

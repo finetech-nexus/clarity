@@ -1,10 +1,12 @@
 """Read identity fields from a stored document.
 
-The reader uses the text embedded in the file, or Tesseract when the file is a
-picture and the `tesseract` program is installed. It never copies the name the
-customer typed. A local read is not a production identity check.
+Pictures are sent to the PaddleOCR model when CLARITY_OCR_URL is set. The text
+embedded in the file, then Tesseract, are used only when that model is not
+available. The reader never copies the name the customer typed. A local read
+is not a production identity check.
 """
 
+import base64
 import re
 import shutil
 import subprocess
@@ -13,6 +15,10 @@ import unicodedata
 import xml.etree.ElementTree as ET
 from datetime import date
 from pathlib import Path
+
+import httpx
+
+from app.config import get_settings
 
 _ACCOUNT = ("firstName", "lastName", "dateOfBirth", "nationality", "documentNumber", "expiry", "gender", "address")
 _LABELS = (
@@ -42,12 +48,81 @@ _IMAGE_SUFFIX = {
 
 
 def read_identity(content: bytes) -> dict:
+    paddle_text, paddle_fields, used_paddle = _paddle_read(content)
+    if used_paddle:
+        parsed = _parse(paddle_text, "paddleocr")
+        _merge_paddle_fields(parsed, paddle_fields)
+        return parsed
     text, engine = _extract_text(content, "6")
     parsed = _parse(text, engine)
     if engine == "tesseract" and not _trusted(parsed):
         alternative, alternative_engine = _extract_text(content, "4")
         parsed = _choose(parsed, _parse(alternative, alternative_engine))
     return parsed
+
+
+def _paddle_read(content: bytes) -> tuple[str, dict, bool]:
+    """Ask the PaddleOCR service for the text on a photo. SVG text stays local."""
+    if not _image_suffix(content):
+        return "", {}, False
+    base = get_settings().ocr_url.strip().rstrip("/")
+    if not base:
+        return "", {}, False
+    try:
+        response = httpx.post(
+            f"{base}/api/v1/kyc/ocr",
+            json={"document": base64.b64encode(content).decode("ascii")},
+            timeout=90,
+        )
+    except httpx.HTTPError:
+        return "", {}, False
+    if response.status_code != 200:
+        return "", {}, False
+    body = response.json()
+    ocr_data = body.get("ocr_data") if isinstance(body, dict) else None
+    if not isinstance(ocr_data, dict):
+        return "", {}, True
+    raw = str(ocr_data.get("extracted_text") or "").replace(" | ", "\n")
+    fields = ocr_data.get("fields") if isinstance(ocr_data.get("fields"), dict) else {}
+    return raw, fields, True
+
+
+def _merge_paddle_fields(parsed: dict, fields: dict) -> None:
+    data = parsed["parsedData"]
+    mapping = {
+        "dateOfBirth": fields.get("date_of_birth"),
+        "expiry": fields.get("expiry_date"),
+        "nationality": fields.get("nationality"),
+        "documentNumber": fields.get("document_number"),
+        "gender": fields.get("gender"),
+        "address": fields.get("address"),
+    }
+    for key, value in mapping.items():
+        if data.get(key) or value is None:
+            continue
+        normalized = _normalize_field(key, str(value))
+        if normalized:
+            data[key] = normalized
+    if not data["firstName"] and not data["lastName"]:
+        parts = [part for part in str(fields.get("full_name") or "").split() if part]
+        if len(parts) == 2 and _plausible_name(parts[0]) and _plausible_name(parts[1]):
+            data["firstName"] = parts[0]
+            data["lastName"] = parts[1]
+    if not parsed.get("mrz"):
+        _drop_fragments(data)
+    _refresh_confidence(parsed)
+
+
+def _refresh_confidence(parsed: dict) -> None:
+    if parsed["engine"] == "unavailable":
+        return
+    filled = sum(1 for key in ("firstName", "lastName", "dateOfBirth") if parsed["parsedData"].get(key))
+    if parsed.get("mrz") and filled >= 2:
+        parsed["confidence"] = max(parsed["confidence"], 0.9)
+    elif filled >= 2:
+        parsed["confidence"] = max(parsed["confidence"], 0.85)
+    elif filled == 1:
+        parsed["confidence"] = max(parsed["confidence"], 0.55)
 
 
 def _merge_missing(primary: dict, secondary: dict) -> dict:

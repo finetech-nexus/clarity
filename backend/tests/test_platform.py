@@ -715,6 +715,34 @@ def test_document_ocr_reads_labels_and_mrz():
     assert garbage["mrz"] is False
 
 
+def test_paddleocr_text_is_parsed_and_noise_is_rejected(monkeypatch):
+    from app import ocr
+
+    photo = b"\xff\xd8\xff" + b"photo"
+
+    def recognized(_content: bytes):
+        return "Nom\nMILADI\nPrenoms\nMohamed Amine\nDate de naissance\n02 06 1983", {"nationality": "Française"}, True
+
+    monkeypatch.setattr(ocr, "_paddle_read", recognized)
+    read = ocr.read_identity(photo)
+    assert read["engine"] == "paddleocr"
+    assert read["production"] is False
+    assert read["parsedData"]["firstName"] == "Mohamed Amine"
+    assert read["parsedData"]["lastName"] == "MILADI"
+    assert read["parsedData"]["dateOfBirth"] == "1983-06-02"
+    assert read["parsedData"]["nationality"] == "FRA"
+
+    def noise(_content: bytes):
+        return "PARA RM RARES Cd", {"full_name": "PARA RM RARES Cd", "date_of_birth": "000202"}, True
+
+    monkeypatch.setattr(ocr, "_paddle_read", noise)
+    rejected = ocr.read_identity(photo)
+    assert rejected["engine"] == "paddleocr"
+    assert rejected["parsedData"]["firstName"] == ""
+    assert rejected["parsedData"]["lastName"] == ""
+    assert rejected["parsedData"]["dateOfBirth"] == ""
+
+
 def test_scenario_editor_and_document_types(tmp_path):
     with _client(tmp_path) as client:
         headers = {"Authorization": f"Bearer {_login(client, ANALYST_EMAIL)}"}
