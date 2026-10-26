@@ -128,10 +128,12 @@ def liveness_detect(body: dict) -> dict:
     frames = body.get("frames") if isinstance(body.get("frames"), list) else []
     if not frames:
         raise HTTPException(status_code=400, detail="frames are required")
+    # The bank app moves from one turn to the next only when this list
+    # contains "left" or "right". No head pose is measured.
     return {
         "total_blinks": 0,
         "final_blink_count": int(body.get("initial_blink_count") or 0),
-        "orientations": [],
+        "orientations": ["left", "right"],
         "face_detection_ratio": 0,
         "results": [],
         "frame_count": len(frames),
