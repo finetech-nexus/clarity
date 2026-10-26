@@ -814,44 +814,24 @@ def test_kyc_cycles_expire_and_can_be_reminded(tmp_path):
         assert too_early.status_code == 422
 
 
-def test_photo_check_accepts_documents_without_claiming_a_match(tmp_path: Path):
+def test_model_service_routes_stay_off_clarity(tmp_path: Path):
+    """kyc-api keeps photo, OCR, and video calls on its model service."""
+    model_paths = {
+        "/api/v1/kyc/verify",
+        "/api/v1/kyc/ocr",
+        "/api/v1/liveness/challenge",
+        "/api/v1/liveness/verify",
+        "/api/v1/liveness/detect",
+        "/api/v1/health",
+    }
     with _client(tmp_path) as client:
-        checked = client.post(
-            "/api/v1/kyc/verify",
-            files={
-                "id_document": ("id.jpg", b"\xff\xd8\xff id", "image/jpeg"),
-                "selfie_image": ("selfie.jpg", b"\xff\xd8\xff selfie", "image/jpeg"),
-            },
-        )
-        assert checked.status_code == 200, checked.text
-        body = checked.json()
-        assert body["verification_status"] == "pending"
-        assert body["production"] is False
-        challenge = client.get("/api/v1/liveness/challenge", params={"types": "turn_left,turn_right"})
-        assert challenge.status_code == 200, challenge.text
-        live = client.post(
-            "/api/v1/liveness/verify",
-            json={"challenge_id": challenge.json()["challenge_id"], "frames": ["data:image/jpeg;base64,AA=="]},
-        )
-        assert live.status_code == 200, live.text
-        assert live.json()["status"] == "pass"
-        assert live.json()["production"] is False
-        scanned = client.post("/api/v1/kyc/ocr", json={"document": "data:image/jpeg;base64,AA=="})
-        assert scanned.status_code == 200, scanned.text
-        ocr = scanned.json()["ocr_data"]
-        assert ocr["document_type"] is None
-        assert ocr["extracted_text"] == ""
-        assert ocr["confidence"] >= 0.25
-        assert ocr["production"] is False
-        detected = client.post(
-            "/api/v1/liveness/detect",
-            json={"frames": ["data:image/jpeg;base64,AA=="], "initial_blink_count": 0},
-        )
-        assert detected.status_code == 200, detected.text
-        directions = detected.json()["orientations"]
-        assert "left" in directions and "right" in directions
-        assert detected.json()["production"] is False
-        assert detected.json()["face_detection_ratio"] == 0
+        served = set(client.app.openapi()["paths"])
+        assert model_paths.isdisjoint(served)
+        assert "/api/v1/external/workflows/run" in served
+        assert "/api/v1/collection-flow/files" in served
+        assert "/api/v1/collection-flow/sync/context" in served
+        assert "/v1/ingest/{object_type}" in served
+        assert "/v1/decisions/all" in served
 
 
 def normalize_template(path: str) -> str:
