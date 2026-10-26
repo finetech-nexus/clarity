@@ -18,6 +18,13 @@ type QueueItem = {
 
 type Field = { key: string; label: string; value: string; match?: boolean | null };
 
+type OcrRead = {
+  engine: string;
+  confidence: number;
+  production: boolean;
+  extracted_text?: string;
+};
+
 type Detail = {
   case: QueueItem & { task?: { key: string; name: string } | null };
   task: { key: string; name: string } | null;
@@ -34,7 +41,7 @@ type Detail = {
   submitted: Field[];
   alert?: boolean;
   alert_reasons?: string[];
-  documents: Array<ViewerDocument & { extracted?: Field[]; decision?: string | null; status?: string; type?: string; category?: string }>;
+  documents: Array<ViewerDocument & { extracted?: Field[]; ocr?: OcrRead | null; decision?: string | null; status?: string; type?: string; category?: string }>;
   tracker: Array<{ id?: string; type: string; category: string; country?: string; required: boolean; status: string; document_id?: string | null }>;
 };
 
@@ -100,6 +107,25 @@ export default function KycDesk() {
     setDraft(next);
     if (activeDocument.id !== documentId) setDocumentId(activeDocument.id);
   }, [activeDocument?.id, selected]);
+
+  async function readDocument() {
+    if (!activeDocument) return;
+    setError("");
+    try {
+      const result = await api<{ parsedData: Record<string, string>; production: boolean; engine: string }>(`/api/clarity/v1/desks/kyc/${selected}/documents/${activeDocument.id}/ocr`, { method: "POST" });
+      const refreshed = await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}`);
+      setDetail(refreshed);
+      const current = refreshed.documents.find((item) => item.id === activeDocument.id);
+      const next: Record<string, string> = {};
+      for (const field of current?.extracted || []) next[field.key] = field.value;
+      setDraft(next);
+      const found = ["firstName", "lastName", "dateOfBirth"].some((key) => result.parsedData?.[key]);
+      setMessage(found ? "Lecture enregistrée. Ce n'est pas une vérification d'identité de production." : "Aucune identité lue sur cette pièce.");
+      await loadQueue(selected);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Lecture refusée");
+    }
+  }
 
   async function saveExtracted(event: FormEvent) {
     event.preventDefault();
@@ -224,7 +250,11 @@ export default function KycDesk() {
                         <input value={draft[field.key] ?? field.value} onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))} />
                       </label>
                     ))}
-                    <button className="wide" type="submit">Enregistrer</button>
+                    <div className="actions">
+                      <button className="ghost" type="button" onClick={() => void readDocument()}>Lire la pièce</button>
+                      <button type="submit">Enregistrer</button>
+                    </div>
+                    {activeDocument.ocr ? <p className="label">Moteur {activeDocument.ocr.engine} · confiance {activeDocument.ocr.confidence} · lecture locale, pas une vérification de production.</p> : null}
                   </form>
                 ) : <p className="label">Aucune pièce sur ce dossier.</p>}
               </article>

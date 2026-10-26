@@ -1,5 +1,9 @@
 FROM python:3.12-slim
 
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng tesseract-ocr-fra \
+ && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /srv/clarity
 COPY backend /srv/clarity/backend
 COPY flowable /srv/clarity/flowable

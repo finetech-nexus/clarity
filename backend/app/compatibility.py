@@ -65,6 +65,7 @@ BALLERINE_REPLACEMENT = [
     ("GET", "/api/v1/case-management/profiles/individuals"),
     ("GET", "/api/v1/workflow-logs/{workflow_id}"),
     ("POST", "/api/v1/external/storage"),
+    ("GET", "/api/v1/internal/workflows/{runtime_id}/documents/{document_id}/run-ocr"),
     ("GET", "/api/v1/_health/live"),
     ("GET", "/api/v1/_health/ready"),
 ]

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.config import ROOT
 from app.deps import ballerine_principal, db_session
 from app.models import Customer, IdentityDocument, Tenant, Transaction, WorkflowInstance
+from app.ocr import run_on_document
 from app.security import Principal, verify_payload_signature
 from app.services import (
     ApiFailure,
@@ -41,6 +42,18 @@ def _workflow(db: Session, principal: Principal, runtime_id: str) -> WorkflowIns
     if not workflow:
         raise nest_error(404, f"No resource was found for {runtime_id}")
     return workflow
+
+
+@router.get("/internal/workflows/{runtime_id}/documents/{document_id}/run-ocr")
+def run_document_ocr(runtime_id: str, document_id: str, principal: Principal = Depends(ballerine_principal), db: Session = Depends(db_session)):
+    workflow = _workflow(db, principal, runtime_id)
+    document = db.get(IdentityDocument, document_id)
+    if not document or document.tenant_id != principal.tenant_id or document.workflow_id not in {None, workflow.id}:
+        raise nest_error(404, f"No resource was found for {document_id}")
+    result = run_on_document(document)
+    if result is None:
+        raise nest_error(400, "Cannot run document OCR on document without pages")
+    return result
 
 
 def _translate(action):

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.catalog import list_docs
 from app.config import ROOT
 from app.deps import clarity_principal, db_session
+from app.ocr import run_on_document
 from app.models import (
     Alert,
     AuditEvent,
@@ -274,6 +275,7 @@ def _document_view(document: IdentityDocument, declared: dict[str, str] | None =
             "synthetic": bool((document.properties or {}).get("synthetic")),
             "url": f"/api/clarity/v1/desks/documents/{document.id}/content",
             "extracted": _extracted_fields(document, declared),
+            "ocr": (document.properties or {}).get("ocr"),
         }
     )
     return payload
@@ -409,6 +411,22 @@ def update_document_fields(runtime_id: str, document_id: str, body: dict, princi
     audit(db, principal.tenant_id, actor_label(principal), "document.fields", "document", document.id, {"fields": list(extracted)})
     customer = db.get(Customer, workflow.customer_id) if workflow.customer_id else None
     return _document_view(document, _declared_identity(workflow, customer))
+
+
+@router.post("/kyc/{runtime_id}/documents/{document_id}/ocr")
+def read_document_ocr(runtime_id: str, document_id: str, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    workflow = _workflow(db, principal, runtime_id)
+    document = db.get(IdentityDocument, document_id)
+    if not document or document.tenant_id != principal.tenant_id:
+        raise clarity_error(404, "not_found", "Document introuvable.")
+    if document.workflow_id not in {None, workflow.id} and document.customer_id != workflow.customer_id:
+        raise clarity_error(404, "not_found", "Document introuvable sur ce dossier.")
+    result = run_on_document(document)
+    if result is None:
+        raise clarity_error(400, "invalid", "Cette pièce n'a pas de fichier à lire.")
+    audit(db, principal.tenant_id, actor_label(principal), "document.ocr", "document", document.id, {"engine": result["engine"], "confidence": result["confidence"]})
+    customer = db.get(Customer, workflow.customer_id) if workflow.customer_id else None
+    return {**result, "document": _document_view(document, _declared_identity(workflow, customer))}
 
 
 @router.post("/documents/{document_id}/decision")

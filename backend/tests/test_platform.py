@@ -558,12 +558,55 @@ def test_kyc_and_case_desks_show_documents(tmp_path):
         )
         assert revised.status_code == 200, revised.text
         assert revised.json()["decision"] == "revisions"
+        ocr = client.post(f"/api/clarity/v1/desks/kyc/{amina['id']}/documents/{passport['id']}/ocr", headers=headers)
+        assert ocr.status_code == 200, ocr.text
+        parsed = ocr.json()["parsedData"]
+        assert parsed["firstName"] == "Amina"
+        assert parsed["lastName"] == "El Fassi"
+        assert parsed["dateOfBirth"] == ""
+        assert ocr.json()["production"] is False
+        assert ocr.json()["engine"] == "svg-text"
+        reread = client.get(f"/api/clarity/v1/desks/kyc/{amina['id']}", headers=headers)
+        fields = {field["key"]: field for field in next(item for item in reread.json()["documents"] if item["type"] == "passport")["extracted"]}
+        assert fields["firstName"]["match"] is True
+        assert fields["dateOfBirth"]["match"] is False
+        assert reread.json()["alert"] is True
+        ballerine = {"Authorization": f"Bearer {BALLERINE_API_KEY}"}
+        again = client.get(f"/api/v1/internal/workflows/{amina['id']}/documents/{passport['id']}/run-ocr", headers=ballerine)
+        assert again.status_code == 200, again.text
+        assert again.json()["parsedData"]["firstName"] == "Amina"
         cases = client.get("/api/clarity/v1/desks/cases", headers=headers)
         assert cases.status_code == 200 and cases.json()
         manager = client.get(f"/api/clarity/v1/desks/cases/{cases.json()[0]['id']}", headers=headers)
         assert manager.status_code == 200, manager.text
         assert manager.json()["files"]
         assert "events" in manager.json()
+
+
+def test_document_ocr_reads_labels_and_mrz():
+    from app.ocr import read_identity
+
+    labeled = read_identity(
+        """<svg xmlns="http://www.w3.org/2000/svg"><text>Prénom: Claire</text><text>Nom: Dumont</text><text>Date de naissance: 18/04/1988</text></svg>""".encode()
+    )
+    assert labeled["parsedData"]["firstName"] == "Claire"
+    assert labeled["parsedData"]["lastName"] == "Dumont"
+    assert labeled["parsedData"]["dateOfBirth"] == "1988-04-18"
+    assert labeled["production"] is False
+    line_one = "P<FRADUMONT<<CLAIRE" + "<" * 25
+    line_two = "12AB345678FRA8804186F3001012" + "<" * 15 + "4"
+    assert len(line_one) == 44 and len(line_two) == 44
+    from xml.sax.saxutils import escape
+
+    mrz = read_identity(
+        f'<svg xmlns="http://www.w3.org/2000/svg"><text>{escape(line_one)}</text><text>{escape(line_two)}</text></svg>'.encode()
+    )
+    assert mrz["parsedData"]["firstName"] == "Claire"
+    assert mrz["parsedData"]["lastName"] == "Dumont"
+    assert mrz["parsedData"]["dateOfBirth"] == "1988-04-18"
+    assert mrz["parsedData"]["nationality"] == "FRA"
+    assert mrz["parsedData"]["documentNumber"] == "12AB34567"
+    assert mrz["parsedData"]["expiry"] == "2030-01-01"
 
 
 def test_scenario_editor_and_document_types(tmp_path):
