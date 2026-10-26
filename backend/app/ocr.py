@@ -14,7 +14,17 @@ import xml.etree.ElementTree as ET
 from datetime import date
 from pathlib import Path
 
-_ACCOUNT = ("firstName", "lastName", "dateOfBirth", "nationality", "documentNumber", "expiry", "gender")
+_ACCOUNT = ("firstName", "lastName", "dateOfBirth", "nationality", "documentNumber", "expiry", "gender", "address")
+_LABELS = (
+    ("dateOfBirth", ("date de naissance", "date of birth", "ne e le", "nee le", "ne le", "dob")),
+    ("expiry", ("date d expiration", "date expiration", "expiration", "expiry", "expires")),
+    ("lastName", ("nom de famille", "surname", "family name", "last name")),
+    ("firstName", ("given names", "given name", "first names", "first name")),
+    ("nationality", ("nationalite", "nationality")),
+    ("documentNumber", ("numero de document", "document number", "numero")),
+    ("gender", ("sexe", "gender")),
+    ("address", ("adresse", "address", "domicile")),
+)
 _STOP = {
     "specimen", "synthetique", "synthetic", "demonstration", "document", "passeport", "passport",
     "carte", "identite", "justificatif", "domicile", "preuve", "nationalite", "declaree", "dossier",
@@ -32,7 +42,19 @@ _IMAGE_SUFFIX = {
 
 
 def read_identity(content: bytes) -> dict:
-    text, engine = _extract_text(content)
+    text, engine = _extract_text(content, "6")
+    parsed = _parse(text, engine)
+    names = parsed["parsedData"]
+    if engine == "tesseract" and not names["firstName"] and not names["lastName"]:
+        alternative, alternative_engine = _extract_text(content, "4")
+        other = _parse(alternative, alternative_engine)
+        other_names = other["parsedData"]
+        if other_names["firstName"] or other_names["lastName"] or other_names["dateOfBirth"]:
+            return other
+    return parsed
+
+
+def _parse(text: str, engine: str) -> dict:
     fields = _blank()
     _fill_mrz(text, fields)
     _fill_labels(text, fields)
@@ -67,12 +89,18 @@ def apply_read(document, result: dict) -> None:
     properties = dict(document.properties or {})
     extracted = dict(properties.get("extracted") or {})
     for key, value in result["parsedData"].items():
-        if not value:
+        previous = "" if extracted.get(key) is None else str(extracted.get(key))
+        if value:
+            extracted[key] = value
+            properties[key] = value
+            if key == "expiry":
+                document.expiry = value
             continue
-        extracted[key] = value
-        properties[key] = value
-        if key == "expiry":
-            document.expiry = value
+        stored = previous or str(properties.get(key) or "")
+        if key in {"firstName", "lastName"} and _rejected_name(stored):
+            if _rejected_name(str(properties.get(key) or "")):
+                properties.pop(key, None)
+            extracted.pop(key, None)
     properties["extracted"] = extracted
     properties["ocr"] = {
         "engine": result["engine"],
@@ -88,7 +116,7 @@ def _blank() -> dict[str, str]:
     return {key: "" for key in _ACCOUNT}
 
 
-def _extract_text(content: bytes) -> tuple[str, str]:
+def _extract_text(content: bytes, psm: str = "6") -> tuple[str, str]:
     stripped = content.lstrip()
     if stripped.startswith(b"<svg") or stripped.startswith(b"<?xml"):
         return _svg_text(content), "svg-text"
@@ -102,9 +130,9 @@ def _extract_text(content: bytes) -> tuple[str, str]:
         handle.flush()
         try:
             completed = subprocess.run(
-                ["tesseract", handle.name, "stdout", "-l", "fra+eng", "--psm", "6"],
+                ["tesseract", handle.name, "stdout", "-l", "fra+eng", "--psm", psm],
                 capture_output=True,
-                timeout=40,
+                timeout=25,
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired):
@@ -144,9 +172,13 @@ def _fold(value: str) -> str:
 
 def _iso_date(value: str) -> str:
     text = value.strip()
-    match = re.fullmatch(r"(\d{2})[./-](\d{2})[./-](\d{4})", text)
+    match = re.fullmatch(r"(\d{2})[./\s-](\d{2})[./\s-](\d{4})", text)
     if match:
         text = f"{match.group(3)}-{match.group(2)}-{match.group(1)}"
+    compact = re.sub(r"\s+", "", text)
+    packed = re.fullmatch(r"(\d{2})(\d{2})(\d{4})", compact)
+    if packed:
+        text = f"{packed.group(3)}-{packed.group(2)}-{packed.group(1)}"
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
         return ""
     try:
@@ -201,43 +233,128 @@ def _fill_mrz(text: str, fields: dict[str, str]) -> None:
         fields["lastName"] = last
 
 
+def _noise_word(word: str) -> bool:
+    if word in _STOP:
+        return True
+    if word.startswith(("nation", "repub", "identit", "passeport", "passport", "naissanc")):
+        return True
+    return word in {"francaise", "francais", "francaie", "france", "french"} or bool(re.fullmatch(r"francai\w*", word))
+
+
+def _rejected_name(value: str) -> bool:
+    words = [_fold(word) for word in re.split(r"\s+", value.strip()) if word]
+    return not words or any(_noise_word(word) for word in words)
+
+
+def _match_label(line: str) -> tuple[str, int]:
+    folded = _fold(line)
+    if not folded:
+        return "", 0
+    best: tuple[str, str] | None = None
+    for key, phrases in _LABELS:
+        for phrase in phrases:
+            if folded == phrase or folded.startswith(phrase + " "):
+                if best is None or len(phrase) > len(best[1]):
+                    best = (key, phrase)
+    if best is not None:
+        return best[0], len(best[1].split())
+    first = folded.split(" ", 1)[0]
+    if first.startswith("nation"):
+        return "nationality", 1
+    if first.startswith("prenom"):
+        return "firstName", 1
+    if first == "nom":
+        return "lastName", 1
+    return "", 0
+
+
+def _raw_rest(line: str, words_to_drop: int) -> str:
+    if ":" in line:
+        return line.split(":", 1)[1].strip(" .")
+    parts = line.strip().split()
+    return " ".join(parts[words_to_drop:]).strip(" .")
+
+
+def _normalize_field(key: str, value: str) -> str:
+    text = value.strip(" .")
+    if not text:
+        return ""
+    if key in {"dateOfBirth", "expiry"}:
+        return _iso_date(text)
+    if key == "gender":
+        letter = text[:1].upper()
+        return letter if letter in {"M", "F"} else ""
+    if key == "nationality":
+        folded = _fold(text)
+        if folded.startswith("franc"):
+            return "FRA"
+        if re.fullmatch(r"[A-Za-z]{2,3}", text):
+            return text.upper()
+        if len(text.split()) == 1 and not _noise_word(folded):
+            return text[:40]
+        return ""
+    if key in {"firstName", "lastName"}:
+        if _rejected_name(text) or len(text) > 80:
+            return ""
+        return re.sub(r"\s+", " ", text)
+    if key == "address":
+        return re.sub(r"\s+", " ", text)[:160]
+    return text[:80]
+
+
 def _fill_labels(text: str, fields: dict[str, str]) -> None:
-    patterns = (
-        ("firstName", r"(?:pr[ée]nom|given names?|first names?)\s*[:.]\s*(.+)"),
-        ("lastName", r"(?<![A-Za-zÀ-ÿ])(?:nom de famille|surname|family name|last name|nom)\s*[:.]\s*(.+)"),
-        ("dateOfBirth", r"(?:date de naissance|n[ée]e?(?:\s+le)?|date of birth|dob)\s*[:.]?\s*(\d{2}[./-]\d{2}[./-]\d{4}|\d{4}-\d{2}-\d{2})"),
-        ("expiry", r"(?:date d'expiration|expiration|expiry|expires)\s*[:.]?\s*(\d{2}[./-]\d{2}[./-]\d{4}|\d{4}-\d{2}-\d{2})"),
-        ("nationality", r"(?:nationalit[ée]|nationality)\s*[:.]\s*([A-Za-z]{2,3})\b"),
-        ("documentNumber", r"(?:n[°o]\s*(?:de\s*)?(?:document|pi[èe]ce)?|document number|numero)\s*[:.]\s*([A-Z0-9][A-Z0-9-]{4,})"),
-        ("gender", r"(?:sexe|gender)\s*[:.]\s*([MFmf])\b"),
-    )
-    for key, pattern in patterns:
-        if fields[key]:
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        key, drop = _match_label(lines[index])
+        if not key:
+            index += 1
             continue
-        match = re.search(pattern, text, re.IGNORECASE)
-        if not match:
+        multiline = key == "address"
+        inline = _raw_rest(lines[index], drop)
+        collected = [inline] if inline else []
+        index += 1
+        while index < len(lines) and len(collected) < (3 if multiline else 1):
+            nxt = lines[index].strip()
+            if not nxt:
+                index += 1
+                if collected:
+                    break
+                continue
+            if _match_label(nxt)[0] or re.fullmatch(r"[A-Z0-9<]{30,44}", re.sub(r"\s+", "", nxt.upper())):
+                break
+            collected.append(nxt)
+            index += 1
+            if not multiline:
+                break
+        if fields.get(key):
             continue
-        value = match.group(1).strip(" .")
-        if key in {"dateOfBirth", "expiry"}:
-            value = _iso_date(value)
-        elif key == "gender":
-            value = value.upper()
-        elif key == "nationality":
-            value = value.upper()
-        elif len(value) > 80:
-            value = ""
-        fields[key] = value
+        fields[key] = _normalize_field(key, ", ".join(part for part in collected if part) if multiline else " ".join(collected))
 
 
 def _guess_name(text: str) -> tuple[str, str]:
-    for raw in text.splitlines():
-        words = [word for word in re.split(r"\s+", raw.strip()) if word]
-        if not 2 <= len(words) <= 5:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    for index, raw in enumerate(lines):
+        if _match_label(raw)[0] or _rejected_name(raw):
+            continue
+        words = raw.split()
+        if len(words) != 1 or not words[0].isupper():
+            continue
+        if not re.fullmatch(r"[A-ZÀ-Ý][A-ZÀ-Ý'’-]{1,}", words[0]):
+            continue
+        if index + 1 >= len(lines):
+            continue
+        given = lines[index + 1]
+        given_words = given.split()
+        if not 1 <= len(given_words) <= 4 or _match_label(given)[0] or _rejected_name(given):
+            continue
+        if all(re.fullmatch(r"[A-ZÀ-Ý][A-Za-zÀ-ÿ'’-]*", word) for word in given_words):
+            return given, words[0]
+    for raw in lines:
+        words = [word for word in raw.split() if word]
+        if not 2 <= len(words) <= 4 or _rejected_name(raw):
             continue
         if not any(character.islower() for character in raw):
-            continue
-        folded = [_fold(word) for word in words]
-        if any(word in _STOP for word in folded):
             continue
         if not all(re.fullmatch(r"[A-ZÀ-Ý][A-Za-zÀ-ÿ'’-]*", word) or _fold(word) in _PARTICLES for word in words):
             continue

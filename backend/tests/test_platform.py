@@ -607,6 +607,25 @@ def test_document_ocr_reads_labels_and_mrz():
     assert mrz["parsedData"]["nationality"] == "FRA"
     assert mrz["parsedData"]["documentNumber"] == "12AB34567"
     assert mrz["parsedData"]["expiry"] == "2030-01-01"
+    card = read_identity(
+        """<svg xmlns="http://www.w3.org/2000/svg">
+        <text>Nom</text><text>MILADI</text>
+        <text>Prenoms</text><text>Mohamed Amine</text>
+        <text>Nationatite Francaie</text>
+        <text>Date de naissance</text><text>02061983</text>
+        <text>Adresse</text><text>12 rue de la Paix</text><text>75002 Paris</text>
+        </svg>""".encode()
+    )
+    assert card["parsedData"]["firstName"] == "Mohamed Amine"
+    assert card["parsedData"]["lastName"] == "MILADI"
+    assert card["parsedData"]["dateOfBirth"] == "1983-06-02"
+    assert card["parsedData"]["nationality"] == "FRA"
+    assert "rue de la Paix" in card["parsedData"]["address"]
+    noise = read_identity(
+        """<svg xmlns="http://www.w3.org/2000/svg"><text>Nationatite Francaie</text></svg>""".encode()
+    )
+    assert noise["parsedData"]["firstName"] == ""
+    assert noise["parsedData"]["lastName"] == ""
 
 
 def test_scenario_editor_and_document_types(tmp_path):
