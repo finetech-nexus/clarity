@@ -12,8 +12,8 @@ PROCESS_CATALOG = {
             "verify": "Enregistrement de la vérification",
             "screen": "Criblage",
             "score": "Évaluation du risque",
-            "analystReview": "manual review",
-            "checkerReview": "Approbation checker",
+            "analystReview": "Revue analyste",
+            "checkerReview": "Contrôle checker",
             "remediate": "Demande de complément",
         },
     },
@@ -25,8 +25,8 @@ PROCESS_CATALOG = {
             "verify": "Contrôles documentaires",
             "screen": "Criblage des parties",
             "score": "Évaluation du risque",
-            "analystReview": "manual review",
-            "checkerReview": "Approbation checker",
+            "analystReview": "Revue analyste",
+            "checkerReview": "Contrôle checker",
             "remediate": "Demande de complément",
         },
     },
@@ -43,8 +43,9 @@ PROCESS_CATALOG = {
         "start": "screen",
         "tasks": {
             "screen": "Criblage",
-            "score": "Évaluation du score",
-            "analystReview": "manual review",
+            "score": "Évaluation du risque",
+            "analystReview": "Revue analyste",
+            "checkerReview": "Contrôle checker",
             "remediate": "Demande de complément",
         },
     },
@@ -76,10 +77,89 @@ ADVANCE = {
     "risk-score-improvement": {
         "screen": {"_": "score"},
         "score": {"_": "analystReview"},
-        "analystReview": {"approve": "approved", "reject": "rejected", "remediate": "remediate"},
+        "analystReview": {"approve": "checkerReview", "reject": "rejected", "remediate": "remediate"},
+        "checkerReview": {"approve": "approved", "reject": "rejected", "return": "analystReview"},
         "remediate": {"_": "screen"},
     },
 }
+
+TERMINAL_LABELS = {"approved": "Approuvé", "rejected": "Rejeté", "closed": "Clôturé"}
+_ORPHAN_STATES = {"criblage", "evaluation_score", "manual_review"}
+
+
+def definition_chart(process_key: str) -> dict:
+    """Statechart whose transitions are the same links the engine executes."""
+    catalog = PROCESS_CATALOG[process_key]
+    advance = ADVANCE[process_key]
+    states: dict[str, dict] = {}
+    for key, label in catalog["tasks"].items():
+        states[key] = {
+            "meta": {"label": label},
+            "on": {"NEXT" if action == "_" else action: target for action, target in advance.get(key, {}).items()},
+        }
+    for routes in advance.values():
+        for target in routes.values():
+            if target in TERMINAL_LABELS and target not in states:
+                states[target] = {"type": "final", "meta": {"label": TERMINAL_LABELS[target]}}
+    return {"initial": catalog["start"], "states": states}
+
+
+def chart_needs_repair(definition: dict | None, process_key: str) -> bool:
+    if process_key not in PROCESS_CATALOG:
+        return False
+    chart = definition_chart(process_key)
+    states = (definition or {}).get("states") or {}
+    if _ORPHAN_STATES.intersection(states):
+        return True
+    if (definition or {}).get("initial") not in chart["states"]:
+        return True
+    for key, routes in ADVANCE[process_key].items():
+        if routes and not (states.get(key) or {}).get("on"):
+            return True
+    for routes in ADVANCE[process_key].values():
+        for target in routes.values():
+            if target in TERMINAL_LABELS and target not in states:
+                return True
+    return False
+
+
+def process_steps(process_key: str, state: str | None) -> list[dict]:
+    if process_key not in PROCESS_CATALOG:
+        return []
+    advance = ADVANCE[process_key]
+    labels = {**PROCESS_CATALOG[process_key]["tasks"], **TERMINAL_LABELS}
+    spine: list[str] = []
+    cursor: str | None = PROCESS_CATALOG[process_key]["start"]
+    seen: set[str] = set()
+    while cursor and cursor not in seen and cursor not in TERMINAL:
+        seen.add(cursor)
+        spine.append(cursor)
+        cursor = advance.get(cursor, {}).get("_")
+    tail = spine[-1] if spine else None
+    nxt = advance.get(tail, {}).get("approve") if tail else None
+    while nxt and nxt not in spine:
+        spine.append(nxt)
+        if nxt in TERMINAL:
+            break
+        nxt = advance.get(nxt, {}).get("approve") or advance.get(nxt, {}).get("_")
+    current = state or ""
+    if current and current not in spine:
+        origin = next((key for key, routes in advance.items() if current in routes.values() and key in spine), None)
+        insert_at = spine.index(origin) + 1 if origin in spine else len(spine)
+        spine.insert(insert_at, current)
+    index = spine.index(current) if current in spine else -1
+    steps = []
+    for position, key in enumerate(spine):
+        if index < 0:
+            status = "upcoming"
+        elif position < index:
+            status = "done"
+        elif position == index:
+            status = "current"
+        else:
+            status = "upcoming"
+        steps.append({"key": key, "label": labels.get(key, key), "status": status})
+    return steps
 
 TERMINAL = {"approved", "rejected", "closed"}
 

@@ -402,22 +402,13 @@ def ensure_risk_score_case(db: Session, engine=None, seed_clients: bool = True) 
     definition_row = db.scalar(
         select(ConfigDocument).where(ConfigDocument.tenant_id == TENANT_ID, ConfigDocument.kind == "workflow_definition", ConfigDocument.name == "risk-score-improvement")
     )
-    if definition_row:
-        definition = dict(definition_row.payload.get("definition") or {})
-        states = dict(definition.get("states") or {})
-        manual = dict(states.get("manual_review") or {"tags": ["manual_review"]})
-        manual["meta"] = {"label": "manual review"}
-        states["criblage"] = {"meta": {"label": "Criblage"}, "on": {"NEXT": "evaluation_score"}}
-        states["evaluation_score"] = {"meta": {"label": "Évaluation du score"}, "on": {"NEXT": "manual_review"}}
-        states["manual_review"] = manual
-        definition["initial"] = "criblage"
-        definition["states"] = states
-        definition_row.payload = {**definition_row.payload, "definition": definition}
+    if definition_row and definition_row.payload.get("displayName") in {None, "", "risk-score-improvement"}:
+        definition_row.payload = {**definition_row.payload, "displayName": "Revue du score de risque"}
         from sqlalchemy.orm.attributes import flag_modified
         flag_modified(definition_row, "payload")
     for task in db.scalars(select(WorkflowTask).where(WorkflowTask.tenant_id == TENANT_ID, WorkflowTask.task_key == "analystReview")).all():
-        if task.name in {"Revue analyste", "analystReview"}:
-            task.name = "manual review"
+        if task.name in {"Revue analyste", "analystReview", "manual review"}:
+            task.name = "Revue analyste"
     if not seed_clients:
         return
     if db.scalar(select(WorkflowInstance).where(WorkflowInstance.tenant_id == TENANT_ID, WorkflowInstance.definition_key == "risk-score-improvement")):

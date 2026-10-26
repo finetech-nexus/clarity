@@ -43,9 +43,29 @@ type Detail = {
   alert_reasons?: string[];
   documents: Array<ViewerDocument & { extracted?: Field[]; ocr?: OcrRead | null; decision?: string | null; status?: string; type?: string; category?: string }>;
   tracker: Array<{ id?: string; type: string; category: string; country?: string; required: boolean; status: string; document_id?: string | null }>;
+  steps?: Array<{ key: string; label: string; status: "done" | "current" | "upcoming" }>;
 };
 
 const TABS = ["Informations saisies", "Documents", "Données du document", "Résultats", "Criblage"] as const;
+
+const STEP_LABEL: Record<string, string> = {
+  collect: "Collecte",
+  verify: "Vérification",
+  screen: "Criblage",
+  score: "Évaluation du risque",
+  analystReview: "Revue analyste",
+  checkerReview: "Contrôle checker",
+  remediate: "Complément",
+  investigate: "Investigation",
+  approved: "Approuvé",
+  rejected: "Rejeté",
+  closed: "Clôturé",
+};
+
+function stepLabel(state: string | null | undefined, fallback: string) {
+  if (!state) return fallback;
+  return STEP_LABEL[state] || state;
+}
 
 const TASK_ACTION: Record<string, string> = {
   analystReview: "Transmettre au contrôle",
@@ -183,7 +203,7 @@ export default function KycDesk() {
           {queue.map((item) => (
             <button className={`${item.id === selected ? "active" : "ghost"}${item.alert ? " alert" : ""}`} key={item.id} type="button" onClick={() => setSelected(item.id)}>
               <span>{item.name}</span>
-              <span className="label">{item.state === "analystReview" ? "manual review" : (item.state || item.status)} · {item.documents} pièce(s){item.revisions ? ` · ${item.revisions} à renvoyer` : ""}</span>
+              <span className="label">{stepLabel(item.state, item.status)} · {item.documents} pièce(s){item.revisions ? ` · ${item.revisions} à renvoyer` : ""}</span>
             </button>
           ))}
         </div>
@@ -192,14 +212,21 @@ export default function KycDesk() {
             <header className="case-bar">
               <div>
                 <h2>{detail.customer?.display_name || detail.case.name}</h2>
-                <p className="label">{detail.case.definition} · {detail.case.status} · {detail.task?.name || detail.case.state || "sans tâche ouverte"}</p>
+                <p className="label">{detail.case.definition} · {detail.case.status} · {detail.task?.name || stepLabel(detail.case.state, "sans tâche ouverte")}</p>
+                {detail.steps?.length ? (
+                  <ol className="stepper">
+                    {detail.steps.map((step) => (
+                      <li className={step.status} key={step.key}><span className="dot" />{step.label}</li>
+                    ))}
+                  </ol>
+                ) : null}
                 {detail.alert_reasons?.includes("correspondence") ? <p className="alert-line">Les données lues sur la pièce ne correspondent pas aux informations saisies.</p> : null}
                 {detail.alert_reasons?.includes("screening") ? <p className="alert-line">Le criblage remonte une alerte.</p> : null}
               </div>
               <div className="actions">
-                <button className="ghost" type="button" disabled={!revisions} onClick={() => void decideCase("revision")}>Demander les renvois{revisions ? ` (${revisions})` : ""}</button>
-                <button className="ghost" type="button" onClick={() => void decideCase("reject")}>Rejeter</button>
-                <button type="button" onClick={() => void decideCase("approve")}>{TASK_ACTION[taskKey] || "Approuver"}</button>
+                <button className="ghost" type="button" disabled={!revisions || !taskKey} onClick={() => void decideCase("revision")}>Demander les renvois{revisions ? ` (${revisions})` : ""}</button>
+                <button className="ghost" type="button" disabled={!taskKey} onClick={() => void decideCase("reject")}>Rejeter</button>
+                <button type="button" disabled={!taskKey} onClick={() => void decideCase("approve")}>{TASK_ACTION[taskKey] || "Approuver"}</button>
               </div>
             </header>
             <div className="tabs">

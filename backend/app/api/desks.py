@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.catalog import list_docs
 from app.config import ROOT
 from app.deps import clarity_principal, db_session
+from app.engine import process_steps
 from app.ocr import run_on_document
 from app.models import (
     Alert,
@@ -281,6 +282,15 @@ def _document_view(document: IdentityDocument, declared: dict[str, str] | None =
     return payload
 
 
+def _definition_title(db: Session, workflow: WorkflowInstance) -> str:
+    for row in list_docs(db, workflow.tenant_id, "workflow_definition"):
+        if row.payload.get("processKey") == workflow.definition_key or row.name == workflow.definition_key:
+            title = row.payload.get("displayName")
+            if title:
+                return str(title)
+    return workflow.definition_name
+
+
 def _kyc_card(db: Session, workflow: WorkflowInstance) -> dict:
     customer = db.get(Customer, workflow.customer_id) if workflow.customer_id else None
     documents = db.scalars(select(IdentityDocument).where(IdentityDocument.workflow_id == workflow.id)).all()
@@ -289,7 +299,7 @@ def _kyc_card(db: Session, workflow: WorkflowInstance) -> dict:
         "id": workflow.ballerine_runtime_id,
         "workflow_id": workflow.id,
         "name": customer.display_name if customer else workflow.definition_name,
-        "definition": workflow.definition_name,
+        "definition": _definition_title(db, workflow),
         "status": workflow.status,
         "state": workflow.state,
         "task": None if not task else {"key": task.task_key, "name": task.name},
@@ -328,6 +338,7 @@ def kyc_case(runtime_id: str, principal: Principal = Depends(clarity_principal),
         "tracker": _document_tracker(db, principal, workflow, documents),
         "alert": flags["alert"],
         "alert_reasons": flags["alert_reasons"],
+        "steps": process_steps(workflow.definition_key, workflow.state),
     }
 
 

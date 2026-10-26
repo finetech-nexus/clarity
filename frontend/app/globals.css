@@ -159,6 +159,13 @@ button.active, button.active:hover {
 }
 .desk { display: grid; grid-template-columns: 280px 1fr; gap: 1rem; }
 .step { border-left: 3px solid var(--gold); padding-left: 0.8rem; margin: 0.8rem 0; }
+.stepper { display: flex; flex-wrap: wrap; gap: 0.35rem 0; list-style: none; margin: 0.45rem 0 0; padding: 0; }
+.stepper li { display: flex; align-items: center; gap: 0.35rem; color: var(--muted); font-size: 0.78rem; }
+.stepper li::after { content: ""; width: 1.1rem; height: 1px; margin: 0 0.35rem; background: var(--line); }
+.stepper li:last-child::after { display: none; }
+.stepper li.done { color: var(--ink); }
+.stepper li.current { color: var(--accent-deep); font-weight: 700; }
+.stepper .dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: currentColor; flex: none; }
 .error { color: var(--danger); }
 .factor { color: var(--muted); font-size: 0.92rem; margin: 0.35rem 0; }
 .kyc-shell { display: grid; grid-template-columns: 260px 1fr; gap: 1rem; align-items: start; }

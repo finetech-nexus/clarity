@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.ast_eval import AstError, eval_ast, node_evaluation
-from app.engine import PROCESS_CATALOG
+from app.engine import chart_needs_repair, definition_chart
 from app.ids import (
     CS_CONFIG_ID,
     LIST_COUNTRY_ID,
@@ -555,7 +555,7 @@ def _ensure_workflows(db: Session) -> None:
         (WF_KYB_ID, "kyb", "Entrée en relation personne morale", "clarityKybBusiness", "business"),
         (WF_ALERT_ID, "alert-investigation", "Investigation d'alerte", "clarityAlertInvestigation", "any"),
         (str(uuid.uuid5(uuid.UUID(TENANT_ID), "workflow:kyc_collection_flow")), "kyc_collection_flow", "Collecte KYC", "clarityKycIndividual", "individual"),
-        (str(uuid.uuid5(uuid.UUID(TENANT_ID), "workflow:risk-score-improvement")), "risk-score-improvement", "risk-score-improvement", "risk-score-improvement", "individual"),
+        (str(uuid.uuid5(uuid.UUID(TENANT_ID), "workflow:risk-score-improvement")), "risk-score-improvement", "Revue du score de risque", "risk-score-improvement", "individual"),
     ]
     for doc_id, name, display, process, entity in specs:
         named = db.scalar(
@@ -566,16 +566,26 @@ def _ensure_workflows(db: Session) -> None:
             )
         )
         if named:
-            if named.payload.get("processKey") != process and name in {"kyc_collection_flow", "risk-score-improvement"}:
+            payload = dict(named.payload)
+            changed = False
+            if payload.get("processKey") != process and name in {"kyc_collection_flow", "risk-score-improvement"}:
+                payload = {**payload, "processKey": process, "entityType": entity}
+                changed = True
+            if chart_needs_repair(payload.get("definition"), process):
+                payload = {**payload, "definition": definition_chart(process)}
+                changed = True
+            if name == "risk-score-improvement" and payload.get("displayName") in {None, "", "risk-score-improvement"}:
+                payload = {**payload, "displayName": display}
+                changed = True
+            if changed:
                 from sqlalchemy.orm.attributes import flag_modified
 
-                named.payload = {**named.payload, "processKey": process, "entityType": entity}
+                named.payload = payload
                 flag_modified(named, "payload")
                 touch(named)
             continue
         if db.get(ConfigDocument, doc_id):
             continue
-        catalog = PROCESS_CATALOG[process]
         add_doc(
             db,
             TENANT_ID,
@@ -587,7 +597,7 @@ def _ensure_workflows(db: Session) -> None:
                 "definitionType": "bpmn",
                 "processKey": process,
                 "entityType": entity,
-                "definition": {"initial": catalog["start"], "states": {key: {"meta": {"label": label}} for key, label in catalog["tasks"].items()}},
+                "definition": definition_chart(process),
                 "config": {"engine": "flowable-or-fallback", "synthetic": True},
                 "contextSchema": {"type": "object"},
                 "submitStates": ["approved", "rejected", "closed"],

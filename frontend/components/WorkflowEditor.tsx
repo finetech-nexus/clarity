@@ -8,6 +8,7 @@ const PROCESSES = [
   ["clarityKycIndividual", "Personne physique"],
   ["clarityKybBusiness", "Personne morale"],
   ["clarityAlertInvestigation", "Investigation d'alerte"],
+  ["risk-score-improvement", "Revue du score de risque"],
 ] as const;
 
 const PROCESS_FLOW: Record<string, Record<string, Record<string, string>>> = {
@@ -32,6 +33,13 @@ const PROCESS_FLOW: Record<string, Record<string, Record<string, string>>> = {
   clarityAlertInvestigation: {
     investigate: { close: "closed", escalate: "checkerReview" },
     checkerReview: { approve: "closed", return: "investigate" },
+  },
+  "risk-score-improvement": {
+    screen: { NEXT: "score" },
+    score: { NEXT: "analystReview" },
+    analystReview: { approve: "checkerReview", reject: "rejected", remediate: "remediate" },
+    checkerReview: { approve: "approved", reject: "rejected", return: "analystReview" },
+    remediate: { NEXT: "screen" },
   },
 };
 
@@ -429,7 +437,7 @@ export default function WorkflowEditor({ embedded = false }: { embedded?: boolea
       {embedded ? null : (
         <>
           <h1>Parcours</h1>
-          <p className="lede">Le graphe est la définition du parcours. Les dossiers s'exécutent avec le processus choisi : personne physique, personne morale ou investigation.</p>
+          <p className="lede">Le graphe est la définition du parcours. Chaque étape est reliée à la suivante, y compris la revue du score de risque : criblage, évaluation, revue analyste, puis contrôle checker.</p>
         </>
       )}
       {error ? <p className="error">{error}</p> : null}
@@ -534,7 +542,7 @@ export default function WorkflowEditor({ embedded = false }: { embedded?: boolea
                     style={{ left: point.x, top: point.y, width: NODE_W }}
                     onClick={() => setStateId(id)}
                   >
-                    <strong>{titled ? body?.meta?.label : id === "analystReview" ? "manual review" : id}</strong>
+                    <strong>{titled ? body?.meta?.label : id}</strong>
                     <span>{ghost ? "terminal" : titled ? id : id === draft?.initial ? "initiale" : final ? "finale" : "étape"}</span>
                   </button>
                 );

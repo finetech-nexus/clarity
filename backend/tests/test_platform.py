@@ -822,6 +822,25 @@ def test_kyc_api_can_collect_files_and_ingest(tmp_path):
         opened = client.get(f"/api/v1/external/workflows/{review.json()['workflowRuntimeId']}", headers=ballerine)
         assert opened.json()["state"] == "analystReview"
         assert opened.json()["workflowDefinitionName"] == "risk-score-improvement"
+        definitions = client.get("/api/v1/workflow-definition", headers=ballerine)
+        risk = next(row for row in definitions.json() if row["name"] == "risk-score-improvement")
+        linked = risk["definition"]["states"]
+        assert risk["definition"]["initial"] == "screen"
+        assert linked["screen"]["on"]["NEXT"] == "score"
+        assert linked["score"]["on"]["NEXT"] == "analystReview"
+        assert linked["analystReview"]["on"]["approve"] == "checkerReview"
+        assert linked["checkerReview"]["on"]["approve"] == "approved"
+        assert linked["checkerReview"]["on"]["return"] == "analystReview"
+        assert linked["remediate"]["on"]["NEXT"] == "screen"
+        assert "criblage" not in linked
+        assert "manual_review" not in linked
+        case = client.get(f"/api/clarity/v1/desks/kyc/{review.json()['workflowRuntimeId']}", headers=analyst)
+        assert case.status_code == 200, case.text
+        steps = case.json()["steps"]
+        assert [step["key"] for step in steps] == ["screen", "score", "analystReview", "checkerReview", "approved"]
+        assert next(step for step in steps if step["status"] == "current")["key"] == "analystReview"
+        assert steps[0]["status"] == "done"
+        assert steps[1]["status"] == "done"
         prospect = {
             "object_id": "prospect:kyc-api-user",
             "updated_at": "2026-10-25T21:00:00Z",

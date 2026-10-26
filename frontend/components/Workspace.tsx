@@ -447,6 +447,25 @@ type SessionRow = {
   ballerine_runtime_id: string;
 };
 
+const STEP_LABEL: Record<string, string> = {
+  collect: "Collecte",
+  verify: "Vérification",
+  screen: "Criblage",
+  score: "Évaluation du risque",
+  analystReview: "Revue analyste",
+  checkerReview: "Contrôle checker",
+  remediate: "Complément",
+  investigate: "Investigation",
+  approved: "Approuvé",
+  rejected: "Rejeté",
+  closed: "Clôturé",
+};
+
+function stepLabel(state: string | null | undefined, fallback: string) {
+  if (!state) return fallback;
+  return STEP_LABEL[state] || state;
+}
+
 function SessionBoard({ kind }: { kind: "individual" | "business" }) {
   const [rows, setRows] = useState<SessionRow[]>([]);
   const [selected, setSelected] = useState("");
@@ -474,7 +493,7 @@ function SessionBoard({ kind }: { kind: "individual" | "business" }) {
             {rows.map((row) => (
               <tr key={row.id} className={row.id === current?.id ? "selected" : ""} onClick={() => setSelected(row.id)}>
                 <td>{row.customer_name || "—"}</td>
-                <td>{row.state === "analystReview" ? "manual review" : (row.state || row.task || "—")}</td>
+                <td>{stepLabel(row.state, row.task || "—")}</td>
                 <td><span className={`badge ${row.status}`}>{row.status}</span></td>
               </tr>
             ))}
@@ -486,7 +505,7 @@ function SessionBoard({ kind }: { kind: "individual" | "business" }) {
               <h2>{current.customer_name || "Session"}</h2>
               <dl className="kv">
                 <dt>Parcours</dt><dd>{current.definition}</dd>
-                <dt>Étape</dt><dd>{current.state === "analystReview" ? "manual review" : (current.state || "—")}</dd>
+                <dt>Étape</dt><dd>{stepLabel(current.state, "—")}</dd>
                 <dt>Tâche</dt><dd>{current.task || "aucune tâche ouverte"}</dd>
                 <dt>Moteur</dt><dd>{current.engine}</dd>
                 <dt>Référence</dt><dd>{current.ballerine_runtime_id}</dd>
