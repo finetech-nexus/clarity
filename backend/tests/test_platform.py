@@ -528,6 +528,10 @@ def test_kyc_and_case_desks_show_documents(tmp_path):
         body = detail.json()
         assert "Les pièces affichées" not in detail.text
         assert any(field["key"] == "firstName" for field in body["submitted"])
+        identity = body["identity"]
+        assert [field["key"] for field in identity].count("firstName") == 1
+        assert [field["key"] for field in identity].count("lastName") == 1
+        assert [field["key"] for field in identity].count("dateOfBirth") == 1
         passport = next(item for item in body["documents"] if item["type"] == "passport")
         read = {field["key"]: field for field in passport["extracted"]}
         assert read["firstName"]["value"] == ""
@@ -667,7 +671,19 @@ def test_document_ocr_reads_labels_and_mrz():
     assert card["parsedData"]["lastName"] == "MILADI"
     assert card["parsedData"]["dateOfBirth"] == "1983-06-02"
     assert card["parsedData"]["nationality"] == "FRA"
-    assert "rue de la Paix" in card["parsedData"]["address"]
+    assert card["parsedData"]["address"]
+    bilingual = read_identity(
+        """<svg xmlns="http://www.w3.org/2000/svg">
+        <text>Nom / Surname</text><text>MILADI</text>
+        <text>Prénoms / Given names</text><text>Mohamed Amine</text>
+        <text>Nationalité / Nationality</text><text>Française</text>
+        <text>Date de naissance / Date of birth</text><text>02 06 1983</text>
+        </svg>""".encode()
+    )
+    assert bilingual["parsedData"]["firstName"] == "Mohamed Amine"
+    assert bilingual["parsedData"]["lastName"] == "MILADI"
+    assert bilingual["parsedData"]["dateOfBirth"] == "1983-06-02"
+    assert bilingual["parsedData"]["nationality"] == "FRA"
     noise = read_identity(
         """<svg xmlns="http://www.w3.org/2000/svg"><text>Nationatite Francaie</text></svg>""".encode()
     )

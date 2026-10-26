@@ -80,6 +80,7 @@ def _case(db: Session, principal: Principal, case_id: str) -> CaseRecord:
 
 _FILE_KEYS = {"fileName", "mime", "title", "synthetic", "uri", "workflowRuntimeId", "side", "extracted"}
 _ACCOUNT_FIELDS = ("firstName", "lastName", "dateOfBirth")
+_IDENTITY_FORM = ("firstName", "lastName", "dateOfBirth", "nationality", "gender", "documentNumber", "expiry", "address")
 _IDENTITY_TYPES = {"passport", "id_card", "id-card", "drivers_license", "residence_permit"}
 _QUIET_SCREENING = {"no_hit", "cleared", "false_positive", "whitelisted"}
 _COLUMN_FIELDS = (
@@ -107,6 +108,7 @@ _FIELD_LABELS = {
     "expiry": "Expiration",
     "issuingVersion": "Version du document",
     "documentNumber": "Numéro du document",
+    "gender": "Sexe",
     "fullName": "Nom complet",
     "trading_name": "Nom commercial",
     "registration_number": "Immatriculation",
@@ -327,6 +329,52 @@ def _review_flags(db: Session, workflow: WorkflowInstance, customer: Customer | 
     return {"alert": bool(reasons), "alert_reasons": reasons, "mismatched": mismatched}
 
 
+def _identity_documents(documents: list[IdentityDocument]) -> list[IdentityDocument]:
+    return [document for document in documents if document.doc_type in _IDENTITY_TYPES]
+
+
+def _merged_identity(documents: list[IdentityDocument], declared: dict[str, str]) -> list[dict]:
+    identity = _identity_documents(documents)
+    values: dict[str, str] = {key: "" for key in _IDENTITY_FORM}
+    ranked = sorted(
+        identity,
+        key=lambda document: (
+            document.doc_type == "passport",
+            bool(_document_values(document).get("firstName") and _document_values(document).get("lastName")),
+        ),
+        reverse=True,
+    )
+    for document in ranked:
+        found = _document_values(document)
+        for key in _IDENTITY_FORM:
+            if found.get(key) and not values[key]:
+                values[key] = found[key]
+    rows = []
+    for key in _IDENTITY_FORM:
+        match = _same(key, declared.get(key, ""), values[key]) if key in _ACCOUNT_FIELDS else None
+        rows.append({"key": key, "label": _label(key), "value": values[key], "match": match})
+    return rows
+
+
+def _write_document_fields(document: IdentityDocument, fields: dict) -> None:
+    from sqlalchemy.orm.attributes import flag_modified
+
+    columns = dict(_COLUMN_FIELDS)
+    properties = dict(document.properties or {})
+    extracted = dict(properties.get("extracted") or {})
+    for key, value in fields.items():
+        name = str(key)
+        text = "" if value is None else str(value).strip()
+        if name in columns:
+            setattr(document, columns[name], text or None)
+        extracted[name] = text
+        if name == "expiry":
+            document.expiry = text or None
+    properties["extracted"] = extracted
+    document.properties = properties
+    flag_modified(document, "properties")
+
+
 def _document_view(document: IdentityDocument, declared: dict[str, str] | None = None) -> dict:
     payload = document_record(document)
     title = (document.properties or {}).get("title") or document.doc_type
@@ -396,6 +444,7 @@ def kyc_case(runtime_id: str, principal: Principal = Depends(clarity_principal),
         "task": None if not task else {"key": task.task_key, "name": task.name},
         "customer": None if not customer else customer_view(db, customer),
         "submitted": _submitted_fields(db, workflow, customer),
+        "identity": _merged_identity(documents, declared),
         "documents": [_document_view(document, declared) for document in documents],
         "tracker": _document_tracker(db, principal, workflow, documents),
         "alert": flags["alert"],
@@ -458,8 +507,6 @@ def decide_kyc(runtime_id: str, body: dict, request: Request, principal: Princip
 
 @router.patch("/kyc/{runtime_id}/documents/{document_id}")
 def update_document_fields(runtime_id: str, document_id: str, body: dict, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
-    from sqlalchemy.orm.attributes import flag_modified
-
     workflow = _workflow(db, principal, runtime_id)
     document = db.get(IdentityDocument, document_id)
     if not document or document.tenant_id != principal.tenant_id:
@@ -469,19 +516,8 @@ def update_document_fields(runtime_id: str, document_id: str, body: dict, princi
     fields = body.get("fields")
     if not isinstance(fields, dict) or not fields:
         raise clarity_error(400, "invalid", "Les champs du document sont requis.")
-    columns = dict(_COLUMN_FIELDS)
-    properties = dict(document.properties or {})
-    extracted = dict(properties.get("extracted") or {})
-    for key, value in fields.items():
-        name = str(key)
-        text = "" if value is None else str(value).strip()
-        if name in columns:
-            setattr(document, columns[name], text or None)
-        extracted[name] = text
-    properties["extracted"] = extracted
-    document.properties = properties
-    flag_modified(document, "properties")
-    audit(db, principal.tenant_id, actor_label(principal), "document.fields", "document", document.id, {"fields": list(extracted)})
+    _write_document_fields(document, fields)
+    audit(db, principal.tenant_id, actor_label(principal), "document.fields", "document", document.id, {"fields": list(fields)})
     customer = db.get(Customer, workflow.customer_id) if workflow.customer_id else None
     return _document_view(document, _declared_identity(workflow, customer))
 
@@ -500,6 +536,54 @@ def read_document_ocr(runtime_id: str, document_id: str, principal: Principal = 
     audit(db, principal.tenant_id, actor_label(principal), "document.ocr", "document", document.id, {"engine": result["engine"], "confidence": result["confidence"]})
     customer = db.get(Customer, workflow.customer_id) if workflow.customer_id else None
     return {**result, "document": _document_view(document, _declared_identity(workflow, customer))}
+
+
+def _case_documents(db: Session, workflow: WorkflowInstance) -> list[IdentityDocument]:
+    documents = list(db.scalars(select(IdentityDocument).where(IdentityDocument.workflow_id == workflow.id).order_by(IdentityDocument.created_at.asc())).all())
+    if workflow.customer_id and not documents:
+        documents = list(db.scalars(select(IdentityDocument).where(IdentityDocument.customer_id == workflow.customer_id)).all())
+    return documents
+
+
+@router.post("/kyc/{runtime_id}/identity/ocr")
+def read_identity_documents(runtime_id: str, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    workflow = _workflow(db, principal, runtime_id)
+    identity = _identity_documents(_case_documents(db, workflow))
+    reads = []
+    for document in identity:
+        result = run_on_document(document)
+        if result is None:
+            continue
+        reads.append(result["parsedData"])
+        audit(db, principal.tenant_id, actor_label(principal), "document.ocr", "document", document.id, {"engine": result["engine"], "confidence": result["confidence"]})
+    if not reads:
+        raise clarity_error(400, "invalid", "Aucune carte d'identité ou passeport à lire.")
+    merged = {key: "" for key in _IDENTITY_FORM}
+    ranked = sorted(reads, key=lambda item: (bool(item.get("firstName") and item.get("lastName")), bool(item.get("dateOfBirth"))), reverse=True)
+    for item in ranked:
+        for key in _IDENTITY_FORM:
+            if item.get(key) and not merged[key]:
+                merged[key] = item[key]
+    stored = {key: value for key, value in merged.items() if value}
+    for document in identity:
+        _write_document_fields(document, stored)
+    return kyc_case(runtime_id, principal, db)
+
+
+@router.patch("/kyc/{runtime_id}/identity")
+def save_identity(runtime_id: str, body: dict, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    workflow = _workflow(db, principal, runtime_id)
+    fields = body.get("fields")
+    if not isinstance(fields, dict) or not fields:
+        raise clarity_error(400, "invalid", "Les champs d'identité sont requis.")
+    identity = _identity_documents(_case_documents(db, workflow))
+    if not identity:
+        raise clarity_error(404, "not_found", "Aucune carte d'identité ou passeport sur ce dossier.")
+    kept = {key: fields.get(key, "") for key in _IDENTITY_FORM if key in fields}
+    for document in identity:
+        _write_document_fields(document, kept)
+        audit(db, principal.tenant_id, actor_label(principal), "document.fields", "document", document.id, {"fields": list(kept)})
+    return kyc_case(runtime_id, principal, db)
 
 
 @router.post("/documents/{document_id}/decision")

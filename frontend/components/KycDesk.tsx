@@ -39,6 +39,7 @@ type Detail = {
     verification_checks: Array<Record<string, unknown>>;
   } | null;
   submitted: Field[];
+  identity?: Field[];
   alert?: boolean;
   alert_reasons?: string[];
   documents: Array<ViewerDocument & { extracted?: Field[]; ocr?: OcrRead | null; decision?: string | null; status?: string; type?: string; category?: string }>;
@@ -83,8 +84,8 @@ export default function KycDesk() {
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const [tab, setTab] = useState<(typeof TABS)[number]>("Informations saisies");
-  const [drafts, setDrafts] = useState<Record<string, Record<string, string>>>({});
-  const [readingId, setReadingId] = useState("");
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [reading, setReading] = useState(false);
 
   async function loadQueue(prefer?: string, nextQuery = query, nextPage = page) {
     const body = await searchPage<QueueItem>("/api/clarity/v1/desks/kyc", nextQuery, nextPage);
@@ -118,54 +119,40 @@ export default function KycDesk() {
     }
   }
 
-  const documentKey = detail?.documents.map((item) => item.id).join(",") || "";
+  const identityKey = (detail?.identity || []).map((field) => `${field.key}:${field.value}`).join("|");
 
   useEffect(() => {
     if (!detail) return;
-    const next: Record<string, Record<string, string>> = {};
-    for (const document of detail.documents) {
-      const fields: Record<string, string> = {};
-      for (const field of document.extracted || []) fields[field.key] = field.value;
-      next[document.id] = fields;
-    }
-    setDrafts(next);
-  }, [selected, documentKey]);
+    const next: Record<string, string> = {};
+    for (const field of detail.identity || []) next[field.key] = field.value;
+    setDraft(next);
+  }, [selected, identityKey]);
 
-  async function readDocument(documentId: string) {
+  async function readIdentity() {
     setError("");
-    setReadingId(documentId);
+    setReading(true);
     try {
-      const result = await api<{ parsedData: Record<string, string>; production: boolean; engine: string }>(`/api/clarity/v1/desks/kyc/${selected}/documents/${documentId}/ocr`, { method: "POST" });
-      const refreshed = await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}`);
+      const refreshed = await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}/identity/ocr`, { method: "POST" });
       setDetail(refreshed);
-      const current = refreshed.documents.find((item) => item.id === documentId);
-      const next: Record<string, string> = {};
-      for (const field of current?.extracted || []) next[field.key] = field.value;
-      setDrafts((existing) => ({ ...existing, [documentId]: next }));
-      const found = ["firstName", "lastName", "dateOfBirth"].some((key) => result.parsedData?.[key]);
-      setMessage(found ? "Lecture enregistrée. Ce n'est pas une vérification d'identité de production." : "Aucune identité lue sur cette pièce.");
+      const found = (refreshed.identity || []).some((field) => ["firstName", "lastName", "dateOfBirth"].includes(field.key) && field.value);
+      setMessage(found ? "Lecture enregistrée à partir de la carte d'identité et du passeport. Ce n'est pas une vérification de production." : "Aucune identité lue sur la carte ou le passeport.");
       await loadQueue(selected);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Lecture refusée");
     } finally {
-      setReadingId("");
+      setReading(false);
     }
   }
 
-  async function saveExtracted(documentId: string, event: FormEvent) {
+  async function saveIdentity(event: FormEvent) {
     event.preventDefault();
     setError("");
     try {
-      const updated = await api<ViewerDocument & { extracted?: Field[] }>(`/api/clarity/v1/desks/kyc/${selected}/documents/${documentId}`, {
+      setDetail(await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}/identity`, {
         method: "PATCH",
-        body: JSON.stringify({ fields: drafts[documentId] || {} }),
-      });
-      setDetail((current) => current && ({
-        ...current,
-        documents: current.documents.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)),
+        body: JSON.stringify({ fields: draft }),
       }));
-      setMessage("Données du document enregistrées.");
-      setDetail(await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}`));
+      setMessage("Données d'identité enregistrées.");
       await loadQueue(selected);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Enregistrement refusé");
@@ -267,35 +254,28 @@ export default function KycDesk() {
               </div>
             ) : null}
             {tab === "Données du document" ? (
-              <div className="document-data">
-                {detail.documents.filter((item) => item.extracted?.length).map((document) => (
-                  <article className="card" key={document.id}>
-                    <h3>{document.title}</h3>
-                    <form className="form" onSubmit={(event) => void saveExtracted(document.id, event)}>
-                      {(document.extracted || []).map((field) => (
-                        <label className={field.match === false ? "mismatch" : ""} key={field.key}>
-                          {field.label}
-                          <input
-                            value={drafts[document.id]?.[field.key] ?? field.value}
-                            onChange={(event) => setDrafts((current) => ({
-                              ...current,
-                              [document.id]: { ...current[document.id], [field.key]: event.target.value },
-                            }))}
-                          />
-                        </label>
-                      ))}
-                      <div className="actions">
-                        <button className="ghost" type="button" disabled={readingId === document.id} onClick={() => void readDocument(document.id)}>
-                          {readingId === document.id ? "Lecture…" : "Lire la pièce"}
-                        </button>
-                        <button type="submit">Enregistrer</button>
-                      </div>
-                      {document.ocr ? <p className="label">Moteur {document.ocr.engine} · confiance {document.ocr.confidence} · lecture locale, pas une vérification de production.</p> : null}
-                    </form>
-                  </article>
-                ))}
-                {!detail.documents.some((item) => item.extracted?.length) ? <p className="label">Aucune donnée lue sur les pièces.</p> : null}
-              </div>
+              <article className="card">
+                {detail.identity?.length ? (
+                  <form className="form" onSubmit={(event) => void saveIdentity(event)}>
+                    {detail.identity.map((field) => (
+                      <label className={field.match === false ? "mismatch" : ""} key={field.key}>
+                        {field.label}
+                        <input
+                          value={draft[field.key] ?? field.value}
+                          onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))}
+                        />
+                      </label>
+                    ))}
+                    <div className="actions">
+                      <button className="ghost" type="button" disabled={reading} onClick={() => void readIdentity()}>
+                        {reading ? "Lecture…" : "Lire les pièces"}
+                      </button>
+                      <button type="submit">Enregistrer</button>
+                    </div>
+                    <p className="label">Une seule lecture pour la carte d'identité et le passeport. Ce n'est pas une vérification de production.</p>
+                  </form>
+                ) : <p className="label">Aucune carte d'identité ou passeport sur ce dossier.</p>}
+              </article>
             ) : null}
             {tab === "Résultats" ? (
               <article className="card">

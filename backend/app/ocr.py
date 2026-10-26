@@ -47,11 +47,22 @@ def read_identity(content: bytes) -> dict:
     names = parsed["parsedData"]
     if engine == "tesseract" and not names["firstName"] and not names["lastName"]:
         alternative, alternative_engine = _extract_text(content, "4")
-        other = _parse(alternative, alternative_engine)
-        other_names = other["parsedData"]
-        if other_names["firstName"] or other_names["lastName"] or other_names["dateOfBirth"]:
-            return other
+        _merge_missing(parsed, _parse(alternative, alternative_engine))
     return parsed
+
+
+def _merge_missing(primary: dict, secondary: dict) -> dict:
+    for key, value in secondary["parsedData"].items():
+        if value and not primary["parsedData"].get(key):
+            primary["parsedData"][key] = value
+    if not primary["extracted_text"] and secondary["extracted_text"]:
+        primary["extracted_text"] = secondary["extracted_text"]
+    filled = sum(1 for key in ("firstName", "lastName", "dateOfBirth") if primary["parsedData"].get(key))
+    if primary["engine"] != "unavailable" and filled >= 2:
+        primary["confidence"] = max(primary["confidence"], 0.85)
+    elif primary["engine"] != "unavailable" and filled == 1:
+        primary["confidence"] = max(primary["confidence"], 0.55)
+    return primary
 
 
 def _parse(text: str, engine: str) -> dict:
@@ -221,8 +232,7 @@ def _fill_mrz(text: str, fields: dict[str, str]) -> None:
         fields["dateOfBirth"] = _mrz_date(lines[1][13:19], True)
         fields["gender"] = lines[1][20] if lines[1][20] in {"M", "F"} else ""
         fields["expiry"] = _mrz_date(lines[1][21:27], False)
-        return
-    if len(lines) >= 3 and all(len(line) >= 30 for line in lines[:3]):
+    elif len(lines) >= 3 and all(len(line) >= 30 for line in lines[:3]):
         fields["documentNumber"] = lines[0][5:14].replace("<", "")
         fields["dateOfBirth"] = _mrz_date(lines[1][0:6], True)
         fields["gender"] = lines[1][7] if lines[1][7] in {"M", "F"} else ""
@@ -231,6 +241,53 @@ def _fill_mrz(text: str, fields: dict[str, str]) -> None:
         first, last = _mrz_name(lines[2])
         fields["firstName"] = first
         fields["lastName"] = last
+    for line in lines:
+        _salvage_mrz_line(line, fields)
+
+
+def _salvage_mrz_line(line: str, fields: dict[str, str]) -> None:
+    """Fill only the gaps left when a passport or identity-card line was read alone."""
+    if line.startswith("P") and "<<" in line and not (fields["firstName"] and fields["lastName"]):
+        first, last = _mrz_name(line[5:])
+        fields["firstName"] = fields["firstName"] or first
+        fields["lastName"] = fields["lastName"] or last
+    elif line.startswith("IDFRA"):
+        body = line[5:]
+        if "<<" in body:
+            last, _, given = body.partition("<<")
+            last = re.sub(r"<+", " ", last).strip().title()
+            given = re.sub(r"<+", " ", given).strip().title()
+            fields["lastName"] = fields["lastName"] or last
+            fields["firstName"] = fields["firstName"] or given
+        elif not fields["lastName"]:
+            last = body.split("<", 1)[0].strip()
+            if last.isalpha():
+                fields["lastName"] = last.title()
+    elif "<<" in line and line[:1].isalpha() and not (fields["firstName"] and fields["lastName"]):
+        first, last = _mrz_name(line)
+        fields["firstName"] = fields["firstName"] or first
+        fields["lastName"] = fields["lastName"] or last
+    if re.match(r"\d{6}", line):
+        fields["dateOfBirth"] = fields["dateOfBirth"] or _mrz_date(line[0:6], True)
+        if len(line) > 7 and line[7] in {"M", "F"}:
+            fields["gender"] = fields["gender"] or line[7]
+        if len(line) >= 14:
+            fields["expiry"] = fields["expiry"] or _mrz_date(line[8:14], False)
+        if len(line) >= 18:
+            fields["nationality"] = fields["nationality"] or line[15:18].replace("<", "")
+
+
+_TRANSLATIONS = {
+    "surname", "name", "names", "given", "nom", "prenom", "prenoms", "nationality", "nationalite",
+    "date", "birth", "of", "sex", "sexe", "family", "naissance",
+}
+
+
+def _strip_translation(value: str) -> str:
+    parts = [part for part in re.split(r"[\s/|]+", value.strip()) if part]
+    while parts and _fold(parts[0]) in _TRANSLATIONS:
+        parts.pop(0)
+    return " ".join(parts)
 
 
 def _noise_word(word: str) -> bool:
@@ -311,7 +368,7 @@ def _fill_labels(text: str, fields: dict[str, str]) -> None:
             index += 1
             continue
         multiline = key == "address"
-        inline = _raw_rest(lines[index], drop)
+        inline = _strip_translation(_raw_rest(lines[index], drop))
         collected = [inline] if inline else []
         index += 1
         while index < len(lines) and len(collected) < (3 if multiline else 1):
