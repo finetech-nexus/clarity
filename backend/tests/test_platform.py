@@ -753,6 +753,26 @@ def test_paddleocr_text_is_parsed_and_noise_is_rejected(monkeypatch):
     assert rejected["parsedData"]["dateOfBirth"] == ""
 
 
+def test_name_fragments_are_skipped_for_the_real_identity():
+    from app.ocr import read_identity
+
+    card = read_identity(
+        """<svg xmlns="http://www.w3.org/2000/svg">
+        <text>Nom</text><text>rrret</text><text>MILADI</text>
+        <text>Prenoms</text><text>Cite, e</text><text>Mohamed Amine</text>
+        <text>Date de naissance</text><text>02 06 1983</text>
+        </svg>""".encode()
+    )
+    assert card["parsedData"]["firstName"] == "Mohamed Amine"
+    assert card["parsedData"]["lastName"] == "MILADI"
+    assert card["parsedData"]["dateOfBirth"] == "1983-06-02"
+    noise = read_identity(
+        """<svg xmlns="http://www.w3.org/2000/svg"><text>Prenoms</text><text>Cite, e</text><text>Nom</text><text>rrret</text></svg>""".encode()
+    )
+    assert noise["parsedData"]["firstName"] == ""
+    assert noise["parsedData"]["lastName"] == ""
+
+
 def test_scenario_editor_and_document_types(tmp_path):
     with _client(tmp_path) as client:
         headers = {"Authorization": f"Bearer {_login(client, ANALYST_EMAIL)}"}

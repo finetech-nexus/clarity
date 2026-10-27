@@ -35,7 +35,7 @@ RUN set -eux; \
       test -s "$dest/inference.pdiparams"; \
       rm -f "/tmp/${name}.tar"; \
     }; \
-    fetch PP-OCRv5_mobile_det /opt/paddleocr/det; \
+    fetch PP-OCRv5_server_det /opt/paddleocr/det; \
     fetch latin_PP-OCRv5_mobile_rec /opt/paddleocr/rec
 
 COPY backend /srv/clarity/backend

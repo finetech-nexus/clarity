@@ -91,13 +91,17 @@ def _local_paddle():
             from paddleocr import PaddleOCR
 
             _PADDLE_ENGINE = PaddleOCR(
-                text_detection_model_name="PP-OCRv5_mobile_det",
+                text_detection_model_name="PP-OCRv5_server_det",
                 text_detection_model_dir=str(det),
                 text_recognition_model_name="latin_PP-OCRv5_mobile_rec",
                 text_recognition_model_dir=str(rec),
                 use_doc_orientation_classify=False,
                 use_doc_unwarping=False,
                 use_textline_orientation=False,
+                text_det_limit_side_len=1600,
+                text_det_limit_type="max",
+                text_det_unclip_ratio=1.8,
+                text_rec_score_thresh=0.35,
             )
         except Exception:
             _PADDLE_ENGINE = False
@@ -111,13 +115,16 @@ def _paddle_lines(result) -> str:
     for item in items:
         texts = None
         polys = None
+        scores = None
         if hasattr(item, "rec_texts"):
             texts = list(item.rec_texts or [])
             polys = list(getattr(item, "dt_polys", None) or [])
+            scores = list(getattr(item, "rec_scores", None) or [])
         elif isinstance(item, dict):
             payload = item.get("res") if isinstance(item.get("res"), dict) else item
             texts = list(payload.get("rec_texts") or [])
             polys = list(payload.get("dt_polys") or [])
+            scores = list(payload.get("rec_scores") or [])
         elif isinstance(item, list):
             for block in item:
                 if not isinstance(block, (list, tuple)) or len(block) < 2:
@@ -137,6 +144,12 @@ def _paddle_lines(result) -> str:
         for index, text in enumerate(texts):
             if not str(text).strip():
                 continue
+            if scores and index < len(scores):
+                try:
+                    if float(scores[index]) < 0.35:
+                        continue
+                except (TypeError, ValueError):
+                    pass
             y = float(index)
             if index < len(polys) and polys[index] is not None:
                 try:
@@ -148,6 +161,36 @@ def _paddle_lines(result) -> str:
     return "\n".join(text for _, text in rows)
 
 
+def _prepare_photo(content: bytes) -> tuple[bytes, str]:
+    """Turn a phone photo upright and large enough for the name line to be read."""
+    suffix = _image_suffix(content) or ".jpg"
+    try:
+        from io import BytesIO
+
+        from PIL import Image, ImageOps
+    except ImportError:
+        return content, suffix
+    try:
+        image = ImageOps.exif_transpose(Image.open(BytesIO(content)))
+        if image.mode not in ("RGB", "L"):
+            image = image.convert("RGB")
+        image = ImageOps.autocontrast(image)
+        long_side = max(image.size)
+        if long_side < 1600:
+            scale = 1600 / long_side
+        elif long_side > 2200:
+            scale = 2200 / long_side
+        else:
+            scale = 1
+        if scale != 1:
+            image = image.resize((int(image.width * scale), int(image.height * scale)), Image.Resampling.LANCZOS)
+        out = BytesIO()
+        image.save(out, format="JPEG", quality=92)
+        return out.getvalue(), ".jpg"
+    except Exception:
+        return content, suffix
+
+
 def _paddle_read(content: bytes) -> tuple[str, dict, bool]:
     """Read a photo with the local PP-OCRv5 models. SVG text stays in the file parser."""
     if not _image_suffix(content):
@@ -155,10 +198,10 @@ def _paddle_read(content: bytes) -> tuple[str, dict, bool]:
     engine = _local_paddle()
     if engine is None:
         return "", {}, False
-    suffix = _image_suffix(content)
+    prepared, suffix = _prepare_photo(content)
     try:
         with tempfile.NamedTemporaryFile(suffix=suffix) as handle:
-            handle.write(content)
+            handle.write(prepared)
             handle.flush()
             predict = getattr(engine, "predict", None) or engine.ocr
             result = predict(handle.name)
@@ -526,6 +569,8 @@ def _plausible_piece(word: str) -> bool:
         return True
     if not folded.isalpha() or not 3 <= len(folded) <= 30 or _noise_word(folded):
         return False
+    if re.search(r"(.)\1\1", folded):
+        return False
     if not any(char in "aeiouy" for char in folded):
         return False
     return re.search(r"[^aeiouy]{5,}", folded) is None
@@ -614,19 +659,23 @@ def _fill_labels(text: str, fields: dict[str, str]) -> None:
             continue
         multiline = key == "address"
         inline = _strip_translation(_raw_rest(lines[index], drop))
+        if inline and key in {"firstName", "lastName"} and not _plausible_name(inline):
+            inline = ""
         collected = [inline] if inline else []
         index += 1
-        while index < len(lines) and len(collected) < (3 if multiline else 1):
+        skipped = 0
+        while index < len(lines) and len(collected) < (3 if multiline else 1) and skipped < 4:
             nxt = lines[index].strip()
             if not nxt:
                 index += 1
-                if collected:
-                    break
                 continue
             if _match_label(nxt)[0] or re.fullmatch(r"[A-Z0-9<]{30,44}", re.sub(r"\s+", "", nxt.upper())):
                 break
-            collected.append(nxt)
             index += 1
+            if key in {"firstName", "lastName"} and not _plausible_name(nxt):
+                skipped += 1
+                continue
+            collected.append(nxt)
             if not multiline:
                 break
         if fields.get(key):
@@ -644,12 +693,13 @@ def _guess_name(text: str) -> tuple[str, str]:
             continue
         if not _plausible_name(words[0]):
             continue
-        if index + 1 >= len(lines):
-            continue
-        given = lines[index + 1]
-        if _match_label(given)[0] or not _plausible_name(given):
-            continue
-        return given, words[0]
+        for offset in range(1, 5):
+            if index + offset >= len(lines):
+                break
+            given = lines[index + offset]
+            if _match_label(given)[0] or not _plausible_name(given):
+                continue
+            return given, words[0]
     for raw in lines:
         words = [word for word in raw.split() if word]
         if not 2 <= len(words) <= 4 or not any(character.islower() for character in raw):
