@@ -22,7 +22,14 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || response.statusText);
+    let message = text || response.statusText;
+    try {
+      const body = JSON.parse(text) as { message?: string };
+      if (body.message) message = body.message;
+    } catch {
+      message = text || response.statusText;
+    }
+    throw new Error(message);
   }
   return response.json() as Promise<T>;
 }

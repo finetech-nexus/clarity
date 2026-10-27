@@ -266,14 +266,16 @@ def list_customers(
                 "reminded_at": view["reminded_at"] if view else None,
             }
         )
-    if status == "pending":
-        listed = [row for row in listed if row["kyc_status"] in {"pending", "overdue"}]
-    elif status:
-        listed = [row for row in listed if row["kyc_status"] == status]
+    if status:
+        wanted = {item.strip() for item in status.split(",") if item.strip()}
+        if "pending" in wanted:
+            wanted.add("overdue")
+        listed = [row for row in listed if row["kyc_status"] in wanted]
     if name:
         listed = [row for row in listed if name.lower() in row["display_name"].lower()]
     if risk:
-        listed = [row for row in listed if (row["risk_tier"] or "") == risk]
+        wanted = {item.strip() for item in risk.split(",") if item.strip()}
+        listed = [row for row in listed if (row["risk_tier"] or "") in wanted]
     sort_key = sort if sort in {"display_name", "kyc_label", "risk_tier", "kyc_created_at", "kyc_validated_at", "kyc_expires_at"} else "display_name"
     listed.sort(key=lambda row: (row.get(sort_key) is None, str(row.get(sort_key) or "").lower()), reverse=direction == "desc")
     return present(listed, q, lambda row: {"name": row["display_name"], "status": row["kyc_label"], "kind": row["kind"], "risk": row["risk_tier"] or ""}, limit, offset)

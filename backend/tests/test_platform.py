@@ -243,6 +243,13 @@ def test_maker_checker_and_tenant_isolation(tmp_path):
         workflow_id = opened.json()["workflow_id"]
         assert opened.json()["state"] == "analystReview"
         assert opened.json()["engine"] == "in-process-fallback"
+        from app.models import IdentityDocument
+
+        db = client.app.state.database.session_factory()
+        customer = db.get(Customer, opened.json()["customer"]["id"])
+        db.add(IdentityDocument(tenant_id=customer.tenant_id, customer_id=customer.id, workflow_id=workflow_id, doc_type="passport", decision="approved", properties={"title": "Passeport"}))
+        db.commit()
+        db.close()
         same = client.post(
             f"/api/clarity/v1/workflows/{workflow_id}/actions",
             headers={"Authorization": f"Bearer {analyst}"},
@@ -1074,6 +1081,69 @@ def test_kyc_api_can_collect_files_and_ingest(tmp_path):
         assert next(step for step in steps if step["status"] == "current")["key"] == "analystReview"
         assert steps[0]["status"] == "done"
         assert steps[1]["status"] == "done"
+        assert isinstance(case.json()["customer"]["risk"]["score"], int)
+        profile = client.get(f"/api/clarity/v1/customers/{case.json()['customer']['id']}", headers=analyst)
+        cycle = profile.json()["kyc_cycles"][0]
+        assert cycle["workflow_runtime_id"] == runtime_id
+        assert cycle["created_at"]
+        assert "expires_at" in cycle
+        assert cycle["documents"]
+        assert cycle["documents"][0]["url"].endswith("/content")
+        blocked = client.post(
+            f"/api/clarity/v1/desks/kyc/{runtime_id}/decision",
+            headers=analyst,
+            json={"action": "approve", "rationale": "trop tôt"},
+        )
+        assert blocked.status_code == 422, blocked.text
+        assert "pièces" in blocked.json()["message"]
+        for document in case.json()["documents"]:
+            decided = client.post(
+                f"/api/clarity/v1/desks/documents/{document['id']}/decision",
+                headers=analyst,
+                json={"decision": "approve"},
+            )
+            assert decided.status_code == 200, decided.text
+        from app.models import ScreeningCheck, ScreeningMatch
+
+        db = client.app.state.database.session_factory()
+        customer = db.get(Customer, case.json()["customer"]["id"])
+        screening = ScreeningCheck(tenant_id=customer.tenant_id, customer_id=customer.id, status="in_review", query={}, match_count=1, partial=False, production=False)
+        db.add(screening)
+        db.flush()
+        match = ScreeningMatch(
+            tenant_id=customer.tenant_id,
+            screening_id=screening.id,
+            entity_id="candidate-1",
+            status="pending",
+            score=90,
+            explanation=["candidate"],
+            payload={"caption": "Candidate", "synthetic": True},
+            query_ids=[],
+        )
+        db.add(match)
+        db.commit()
+        match_id = match.id
+        db.close()
+        waiting = client.post(
+            f"/api/clarity/v1/desks/kyc/{runtime_id}/decision",
+            headers=analyst,
+            json={"action": "approve", "rationale": "criblage ouvert"},
+        )
+        assert waiting.status_code == 422, waiting.text
+        assert "criblage" in waiting.json()["message"]
+        cleared = client.post(
+            f"/api/clarity/v1/screening/matches/{match_id}/disposition",
+            headers=analyst,
+            json={"status": "no_hit"},
+        )
+        assert cleared.status_code == 200, cleared.text
+        moved = client.post(
+            f"/api/clarity/v1/desks/kyc/{runtime_id}/decision",
+            headers=analyst,
+            json={"action": "approve", "rationale": "pièces et criblage vérifiés"},
+        )
+        assert moved.status_code == 200, moved.text
+        assert moved.json()["case"]["state"] == "checkerReview"
         prospect = {
             "object_id": "prospect:kyc-api-user",
             "updated_at": "2026-10-25T21:00:00Z",

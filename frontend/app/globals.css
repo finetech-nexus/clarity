@@ -138,8 +138,12 @@ h2 { font-size: 1.05rem; margin: 0.2rem 0 0.45rem; }
 .form { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; }
 .form .wide { grid-column: 1 / -1; }
 .login .brand span { display: block; color: var(--muted); font-family: "Avenir Next", sans-serif; font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; margin-top: 0.3rem; }
+.accounts { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+.accounts th, .accounts td { text-align: left; vertical-align: top; padding: 0.4rem 0.35rem; border-bottom: 1px solid var(--line); }
+.accounts th { color: var(--muted); font-size: 0.75rem; font-weight: 700; }
+.accounts td:first-child { font-weight: 700; white-space: nowrap; }
 .login {
-  max-width: 440px;
+  max-width: 720px;
   margin: 8vh auto;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -190,7 +194,18 @@ button.active, button.active:hover {
 .tool-link { border: 1px solid var(--line); color: var(--ink); font-size: 0.68rem; }
 .thumbs { display: flex; gap: 0.45rem; overflow: auto; margin-top: 0.6rem; }
 .thumbs button { min-width: 140px; }
-.kv { display: grid; grid-template-columns: 7rem 1fr; gap: 0.35rem 0.7rem; margin: 0.4rem 0 0.8rem; }
+.kv { display: grid; grid-template-columns: minmax(15rem, 38%) 1fr; gap: 0.45rem 1rem; margin: 0.4rem 0 0.8rem; }
+.kv dt { overflow-wrap: anywhere; }
+.filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.75rem 1.25rem; margin: 0.6rem 0 0.9rem; }
+.filters .field { display: grid; gap: 0.25rem; width: 14rem; font-size: 0.78rem; color: var(--muted); }
+.filters .field input, .filters .field select { width: 14rem; max-width: 14rem; margin: 0; height: 2.25rem; }
+.filters .checks { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem 0.85rem; min-height: 2.25rem; }
+.filters .checks label { display: inline-flex; align-items: center; gap: 0.35rem; width: auto; font-size: 0.82rem; }
+.filters .checks input { width: auto; margin: 0; }
+.doc-stack { display: grid; gap: 0.9rem; }
+.score-chip { display: grid; justify-items: center; min-width: 7.5rem; padding: 0.35rem 0.8rem; border: 1.5px solid var(--line); border-radius: 10px; background: #fff; }
+.score-chip strong { font-size: 1.6rem; line-height: 1.1; }
+.factors { margin: 0.35rem 0 0; padding-left: 1.1rem; color: var(--muted); font-size: 0.82rem; }
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; }
 .inbox { width: 100%; border-collapse: collapse; background: var(--panel); border: 1.5px solid var(--line); border-radius: 10px; overflow: hidden; }

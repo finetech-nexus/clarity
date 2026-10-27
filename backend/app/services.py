@@ -115,11 +115,12 @@ def kyc_label(status: str) -> str:
     return status
 
 
-def kyc_cycle_view(row: KycCycle) -> dict:
+def kyc_cycle_view(row: KycCycle, runtime_id: str | None = None, documents: list | None = None) -> dict:
     return {
         "id": row.id,
         "customer_id": row.customer_id,
         "workflow_id": row.workflow_id,
+        "workflow_runtime_id": runtime_id,
         "status": row.status,
         "label": kyc_label(row.status),
         "pending": row.status in {"pending", "overdue"},
@@ -129,6 +130,7 @@ def kyc_cycle_view(row: KycCycle) -> dict:
         "reminder": row.reminder,
         "reminded_at": iso(row.reminded_at),
         "production": row.production,
+        "documents": documents or [],
     }
 
 
@@ -1195,6 +1197,19 @@ def _screen_customer(db: Session, tenant: Tenant, customer: Customer) -> Screeni
     return screening
 
 
+def _require_approval_ready(db: Session, workflow: WorkflowInstance) -> None:
+    if not workflow.customer_id:
+        raise clarity_error(422, "documents_pending", "Toutes les pièces doivent être approuvées avant la validation du dossier.")
+    documents = list(db.scalars(select(IdentityDocument).where(IdentityDocument.customer_id == workflow.customer_id)).all())
+    owned = [document for document in documents if document.workflow_id == workflow.id]
+    if not owned:
+        owned = documents
+    if not owned or any(document.decision != "approved" for document in owned):
+        raise clarity_error(422, "documents_pending", "Toutes les pièces doivent être approuvées avant la validation du dossier.")
+    if _customer_has_pending_screening(db, workflow.customer_id):
+        raise clarity_error(422, "screening_pending", "Des correspondances de criblage ne sont pas encore vérifiées.")
+
+
 def _customer_has_pending_screening(db: Session, customer_id: str) -> bool:
     screening_ids = list(db.scalars(select(ScreeningCheck.id).where(ScreeningCheck.customer_id == customer_id)).all())
     if not screening_ids:
@@ -1298,6 +1313,8 @@ def advance_workflow(db: Session, engine, tenant: Tenant, principal: Principal, 
     identity = principal.user_id or principal.credential_id
     if task.task_key == "checkerReview" and maker and maker == identity:
         raise clarity_error(403, "maker_checker", "La personne qui a instruit le dossier ne peut pas l'approuver.")
+    if action == "approve":
+        _require_approval_ready(db, workflow)
     if task.task_key == "analystReview":
         context["maker_id"] = identity
         workflow.context = context
@@ -1472,6 +1489,31 @@ def customer_view(db: Session, customer: Customer) -> dict:
     checks = db.scalars(select(VerificationCheck).where(VerificationCheck.customer_id == customer.id)).all()
     refresh_kyc_cycles(db, customer.tenant_id)
     cycles = db.scalars(select(KycCycle).where(KycCycle.customer_id == customer.id).order_by(KycCycle.created_at.desc())).all()
+    workflows = {
+        item.id: item
+        for item in db.scalars(select(WorkflowInstance).where(WorkflowInstance.customer_id == customer.id)).all()
+    }
+    grouped: dict[str, list] = {}
+    loose: list = []
+    for document in documents:
+        piece = {
+            "id": document.id,
+            "title": str((document.properties or {}).get("title") or document.doc_type or "Pièce"),
+            "type": document.doc_type,
+            "decision": document.decision,
+            "url": f"/api/clarity/v1/desks/documents/{document.id}/content",
+        }
+        if document.workflow_id:
+            grouped.setdefault(document.workflow_id, []).append(piece)
+        else:
+            loose.append(piece)
+    cycle_views = []
+    for index, row in enumerate(cycles):
+        owned = list(grouped.get(row.workflow_id or "", []))
+        if index == 0:
+            owned.extend(loose)
+        runtime = workflows[row.workflow_id].ballerine_runtime_id if row.workflow_id and row.workflow_id in workflows else None
+        cycle_views.append(kyc_cycle_view(row, runtime, owned))
     return {
         "id": customer.id,
         "kind": customer.kind,
@@ -1518,7 +1560,7 @@ def customer_view(db: Session, customer: Customer) -> dict:
             for party in parties
         ],
         "documents": [document_record(document) for document in documents],
-        "kyc_cycles": [kyc_cycle_view(row) for row in cycles],
+        "kyc_cycles": cycle_views,
         "verification_checks": [
             {
                 "id": check.id,
@@ -1544,7 +1586,8 @@ def customer_view(db: Session, customer: Customer) -> dict:
                         "score": match.score,
                         "explanation": match.explanation,
                         "entity_id": match.entity_id,
-                        "synthetic": match.payload.get("synthetic", False),
+                        "name": str((match.payload or {}).get("caption") or (match.payload or {}).get("name") or match.entity_id),
+                        "synthetic": (match.payload or {}).get("synthetic", False),
                     }
                     for match in matches
                     if match.screening_id == item.id

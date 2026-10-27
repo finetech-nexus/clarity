@@ -2,7 +2,6 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import DocumentViewer, { ViewerDocument } from "./DocumentViewer";
-import { QueryStack } from "./QueryStack";
 import { api, searchPage } from "../lib/api";
 
 type QueueItem = {
@@ -37,6 +36,7 @@ type Detail = {
     business: Record<string, string | null> | null;
     screening: Array<{ id: string; status: string; production: boolean; matches: Array<{ id: string; status: string; score: number; name?: string }> }>;
     verification_checks: Array<Record<string, unknown>>;
+    risk?: { score: number; tier: string; factors?: Array<{ code: string; points: number; explanation: string }> } | null;
   } | null;
   submitted: Field[];
   identity?: Field[];
@@ -68,6 +68,20 @@ function stepLabel(state: string | null | undefined, fallback: string) {
   return STEP_LABEL[state] || state;
 }
 
+const STATUS_FILTERS = [
+  { value: "active", label: "En cours" },
+  { value: "completed", label: "Terminée" },
+  { value: "failed", label: "Échec" },
+];
+
+function filtersQuery(name: string, statuses: string[]) {
+  const parts: string[] = [];
+  const trimmed = name.trim().replaceAll('"', "");
+  if (trimmed) parts.push(trimmed.includes(" ") || trimmed.includes(":") ? `name:"${trimmed}"` : `name:${trimmed}`);
+  statuses.forEach((status) => parts.push(`status:${status}`));
+  return parts.join(" ");
+}
+
 const TASK_ACTION: Record<string, string> = {
   analystReview: "Transmettre au contrôle",
   checkerReview: "Approuver",
@@ -81,6 +95,8 @@ export default function KycDesk() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [query, setQuery] = useState("");
+  const [nameQuery, setNameQuery] = useState("");
+  const [statuses, setStatuses] = useState<string[]>([]);
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const [tab, setTab] = useState<(typeof TABS)[number]>("Informations saisies");
@@ -91,7 +107,8 @@ export default function KycDesk() {
     const body = await searchPage<QueueItem>("/api/clarity/v1/desks/kyc", nextQuery, nextPage);
     setQueue(body.items);
     setTotal(body.total);
-    const next = prefer && body.items.some((row) => row.id === prefer) ? prefer : body.items[0]?.id || "";
+    const requested = new URLSearchParams(window.location.search).get("case") || "";
+    const next = prefer && body.items.some((row) => row.id === prefer) ? prefer : requested || body.items[0]?.id || "";
     setSelected(next);
   }
 
@@ -159,6 +176,17 @@ export default function KycDesk() {
     }
   }
 
+  async function disposition(id: string, status: "no_hit" | "confirmed_hit") {
+    setError("");
+    try {
+      await api(`/api/clarity/v1/screening/matches/${id}/disposition`, { method: "POST", body: JSON.stringify({ status }) });
+      setDetail(await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}`));
+      setMessage(status === "no_hit" ? "Correspondance écartée." : "Correspondance confirmée.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Vérification du criblage refusée");
+    }
+  }
+
   async function decideDocument(id: string, decision: "approve" | "reject" | "revision") {
     const updated = await api<ViewerDocument>(`/api/clarity/v1/desks/documents/${id}/decision`, {
       method: "POST",
@@ -173,6 +201,9 @@ export default function KycDesk() {
   const taskKey = detail?.task?.key || "";
   const revisions = detail?.documents.filter((item) => item.decision === "revisions").length || 0;
   const matches = (detail?.customer?.screening || []).flatMap((item) => item.matches || []);
+  const piecesApproved = Boolean(detail?.documents.length) && detail!.documents.every((item) => item.decision === "approved");
+  const screeningPending = matches.some((item) => item.status === "pending");
+  const canApprove = Boolean(taskKey) && piecesApproved && !screeningPending;
 
   return (
     <>
@@ -180,15 +211,43 @@ export default function KycDesk() {
       <p className="lede">Dossier de vérification : informations saisies, pièces et données lues sur les documents.</p>
       {error ? <p className="error">{error}</p> : null}
       {message ? <p className="label">{message}</p> : null}
-      <QueryStack
-        query={query}
-        onChange={(next) => { setPage(0); setQuery(next); }}
-        fields={[{ key: "status", label: "Statut", options: ["active", "completed", "failed"] }, { key: "state", label: "Étape" }, { key: "name", label: "Nom" }]}
-        total={total}
-        page={page}
-        pageSize={25}
-        onPage={setPage}
-      />
+      <div className="filters">
+        <label className="field">Nom
+          <input
+            aria-label="Rechercher par nom"
+            placeholder="Rechercher"
+            value={nameQuery}
+            onChange={(event) => {
+              const next = event.target.value;
+              setNameQuery(next);
+              setPage(0);
+              setQuery(filtersQuery(next, statuses));
+            }}
+          />
+        </label>
+        <div className="checks" role="group" aria-label="Statut">
+          {STATUS_FILTERS.map((item) => (
+            <label key={item.value}>
+              <input
+                type="checkbox"
+                checked={statuses.includes(item.value)}
+                onChange={() => {
+                  const next = statuses.includes(item.value) ? statuses.filter((value) => value !== item.value) : [...statuses, item.value];
+                  setStatuses(next);
+                  setPage(0);
+                  setQuery(filtersQuery(nameQuery, next));
+                }}
+              />
+              {item.label}
+            </label>
+          ))}
+        </div>
+      </div>
+      <p className="label">{total} dossier(s) · page {page + 1}</p>
+      <div className="tabs">
+        <button className="ghost" type="button" disabled={page === 0} onClick={() => setPage((current) => Math.max(0, current - 1))}>Précédent</button>
+        <button className="ghost" type="button" disabled={(page + 1) * 25 >= total} onClick={() => setPage((current) => current + 1)}>Suivant</button>
+      </div>
       <div className="kyc-shell">
         <div className="queue">
           {queue.map((item) => (
@@ -213,11 +272,25 @@ export default function KycDesk() {
                 ) : null}
                 {detail.alert_reasons?.includes("correspondence") ? <p className="alert-line">Les données lues sur la pièce ne correspondent pas aux informations saisies.</p> : null}
                 {detail.alert_reasons?.includes("screening") ? <p className="alert-line">Le criblage remonte une alerte.</p> : null}
+                {detail.customer?.risk?.factors?.length ? (
+                  <ul className="factors">
+                    {detail.customer.risk.factors.map((factor) => (
+                      <li key={factor.code}>{factor.points} pts — {factor.explanation}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+              <div className="score-chip">
+                <span className="label">Score de risque</span>
+                <strong>{detail.customer?.risk ? detail.customer.risk.score : "—"}</strong>
+                <span className="label">{detail.customer?.risk?.tier || "non calculé"}</span>
               </div>
               <div className="actions">
                 <button className="ghost" type="button" disabled={!revisions || !taskKey} onClick={() => void decideCase("revision")}>Demander les renvois{revisions ? ` (${revisions})` : ""}</button>
                 <button className="ghost" type="button" disabled={!taskKey} onClick={() => void decideCase("reject")}>Rejeter</button>
-                <button type="button" disabled={!taskKey} onClick={() => void decideCase("approve")}>{TASK_ACTION[taskKey] || "Approuver"}</button>
+                <button type="button" disabled={!canApprove} onClick={() => void decideCase("approve")}>{TASK_ACTION[taskKey] || "Approuver"}</button>
+                {!piecesApproved ? <p className="label">Approuvez chaque pièce pour activer la validation.</p> : null}
+                {screeningPending ? <p className="label">Vérifiez chaque correspondance de criblage avant de valider.</p> : null}
               </div>
             </header>
             <div className="tabs">
@@ -237,19 +310,9 @@ export default function KycDesk() {
               </article>
             ) : null}
             {tab === "Documents" ? (
-              <div className="kyc-body">
-                <aside className="info-pane">
-                  <h3>Liste des pièces</h3>
-                  <div className="tracker">
-                    {(detail.tracker || []).map((item) => (
-                      <p key={`${item.type}-${item.category}-${item.document_id || "missing"}`}>
-                        <span className={`badge ${item.status}`}>{item.status}</span> {item.type}
-                        <span className="label"> {item.category} · {item.country || "ZZ"} · {item.required ? "obligatoire" : "facultatif"}</span>
-                      </p>
-                    ))}
-                    {!detail.tracker?.length ? <p className="label">Aucun type configuré sur ce parcours.</p> : null}
-                  </div>
-                </aside>
+              <div className="document-data">
+                <h3>Liste des pièces</h3>
+                {!detail.documents.length ? <p className="label">Aucune pièce fournie.</p> : null}
                 <DocumentViewer documents={detail.documents} onDecide={(id, decision) => void decideDocument(id, decision)} />
               </div>
             ) : null}
@@ -290,7 +353,15 @@ export default function KycDesk() {
             {tab === "Criblage" ? (
               <article className="card">
                 {matches.length ? matches.map((match) => (
-                  <p key={match.id}>{match.name || match.status} · {match.status} · score {match.score}</p>
+                  <p className="file-row" key={match.id}>
+                    <span>{match.name || "Correspondance"} · score {match.score} · {match.status}</span>
+                    {match.status === "pending" ? (
+                      <span className="tabs">
+                        <button type="button" onClick={() => void disposition(match.id, "no_hit")}>Faux positif</button>
+                        <button className="ghost" type="button" onClick={() => void disposition(match.id, "confirmed_hit")}>Confirmer</button>
+                      </span>
+                    ) : <span className="tag">{match.status === "no_hit" ? "Écartée" : "Confirmée"}</span>}
+                  </p>
                 )) : <p className="label">Aucune correspondance sur ce dossier.</p>}
               </article>
             ) : null}

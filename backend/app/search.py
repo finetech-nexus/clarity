@@ -28,10 +28,14 @@ def matches(query: str, fields: dict) -> bool:
     filters, words = _tokens(query)
     if not filters and not words:
         return True
-    blob = " ".join(str(value) for value in fields.values()).lower()
+    grouped: dict[str, list[str]] = {}
     for field, value in filters:
-        if value not in str(fields.get(field, "")).lower():
+        grouped.setdefault(field, []).append(value)
+    for field, values in grouped.items():
+        haystack = str(fields.get(field, "")).lower()
+        if not any(value in haystack for value in values):
             return False
+    blob = " ".join(str(value) for value in fields.values()).lower()
     return all(word in blob for word in words)
 
 

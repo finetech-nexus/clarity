@@ -10,7 +10,14 @@ import StudioDesk from "./StudioDesk";
 import WorkflowEditor from "./WorkflowEditor";
 import { AdminBoard, AlertBoard, AuditBoard, IntegrationBoard, ReportBoard, ReviewBoard, RiskBoard, TransactionBoard } from "./Workboards";
 import { QueryStack } from "./QueryStack";
-import { api, searchPage } from "../lib/api";
+import { API_URL, api, authHeader, searchPage } from "../lib/api";
+
+const ACCOUNTS = [
+  ["Camille Morel", "camille.morel@clarity.bank", "Analyste : instruit le dossier, ne peut pas l'approuver"],
+  ["Hugo Bernard", "hugo.bernard@clarity.bank", "Checker : approuve le dossier"],
+  ["Léa Martin", "lea.martin@clarity.bank", "Investigateur"],
+  ["Aline Bernard", "aline.bernard@clarity.bank", "Administrateur"],
+];
 
 const GROUPS = [
   {
@@ -85,6 +92,8 @@ type Customer = {
   reminded_at?: string | null;
 };
 
+type CycleDocument = { id: string; title: string; decision?: string | null; url: string };
+
 type KycCycle = {
   id: string;
   status: string;
@@ -96,7 +105,29 @@ type KycCycle = {
   reminder: string;
   reminded_at: string | null;
   production: boolean;
+  workflow_runtime_id?: string | null;
+  documents?: CycleDocument[];
 };
+
+const CLIENT_STATUSES = [
+  { value: "pending", label: "En attente" },
+  { value: "valid", label: "Valide" },
+  { value: "expired", label: "Expiré" },
+  { value: "overdue", label: "Relance" },
+];
+
+const CLIENT_RISKS = [
+  { value: "low", label: "Faible" },
+  { value: "medium", label: "Moyen" },
+  { value: "high", label: "Élevé" },
+];
+
+async function openPiece(url: string) {
+  const response = await fetch(`${API_URL}${url}`, { headers: authHeader() });
+  if (!response.ok) return;
+  const blob = await response.blob();
+  window.open(URL.createObjectURL(blob), "_blank", "noopener");
+}
 
 export default function Workspace({ section, customerId }: { section: string; customerId?: string }) {
   const pathname = usePathname();
@@ -161,6 +192,20 @@ export default function Workspace({ section, customerId }: { section: string; cu
         <input aria-label="Mot de passe" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
         {error && <p className="error">{error}</p>}
         <button type="submit">Entrer</button>
+        <table className="accounts">
+          <thead>
+            <tr><th>Nom</th><th>E-mail</th><th>Rôle</th></tr>
+          </thead>
+          <tbody>
+            {ACCOUNTS.map(([name, mail, role]) => (
+              <tr key={mail}>
+                <td>{name}</td>
+                <td><button className="linkish" type="button" onClick={() => setEmail(mail)}>{mail}</button></td>
+                <td>{role}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </form>
     );
   }
@@ -278,8 +323,8 @@ function day(value?: string | null) {
 function CustomerList({ title, kind }: { title: string; kind: string }) {
   const [rows, setRows] = useState<Customer[]>([]);
   const [name, setName] = useState("");
-  const [status, setStatus] = useState("");
-  const [risk, setRisk] = useState("");
+  const [statuses, setStatuses] = useState<string[]>([]);
+  const [risks, setRisks] = useState<string[]>([]);
   const [sort, setSort] = useState("display_name");
   const [direction, setDirection] = useState<"asc" | "desc">("asc");
   const [page, setPage] = useState(0);
@@ -288,8 +333,8 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
     const params = new URLSearchParams({
       kind,
       name,
-      status,
-      risk,
+      status: statuses.join(","),
+      risk: risks.join(","),
       sort,
       direction,
       limit: "25",
@@ -299,7 +344,7 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
       setRows(body.items);
       setTotal(body.total);
     });
-  }, [kind, name, status, risk, sort, direction, page]);
+  }, [kind, name, statuses, risks, sort, direction, page]);
   function toggle(column: string) {
     setPage(0);
     if (sort === column) setDirection((current) => (current === "asc" ? "desc" : "asc"));
@@ -312,33 +357,48 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
   return (
     <>
       <h1>{title}</h1>
-      <p className="lede">Le filtre et le tri sont dans l'en-tête. Overdue reste dans la file pending.</p>
+      <p className="lede">Recherche par nom, cases à cocher pour le statut et le risque. Le tri reste sur les colonnes.</p>
+      <div className="filters">
+        <label className="field">Nom
+          <input aria-label="Filtrer par nom" placeholder="Rechercher" value={name} onChange={(event) => { setPage(0); setName(event.target.value); }} />
+        </label>
+        <div className="checks" role="group" aria-label="Statut">
+          {CLIENT_STATUSES.map((item) => (
+            <label key={item.value}>
+              <input
+                type="checkbox"
+                checked={statuses.includes(item.value)}
+                onChange={() => {
+                  setPage(0);
+                  setStatuses((current) => current.includes(item.value) ? current.filter((value) => value !== item.value) : [...current, item.value]);
+                }}
+              />
+              {item.label}
+            </label>
+          ))}
+        </div>
+        <div className="checks" role="group" aria-label="Risque">
+          {CLIENT_RISKS.map((item) => (
+            <label key={item.value}>
+              <input
+                type="checkbox"
+                checked={risks.includes(item.value)}
+                onChange={() => {
+                  setPage(0);
+                  setRisks((current) => current.includes(item.value) ? current.filter((value) => value !== item.value) : [...current, item.value]);
+                }}
+              />
+              {item.label}
+            </label>
+          ))}
+        </div>
+      </div>
       <table className="inbox sheet">
         <thead>
           <tr>
-            <th>
-              <button className="sort" type="button" onClick={() => toggle("display_name")}>Client{mark("display_name")}</button>
-              <input aria-label="Filtrer par nom" value={name} placeholder="Nom" onChange={(event) => { setPage(0); setName(event.target.value); }} />
-            </th>
-            <th>
-              <button className="sort" type="button" onClick={() => toggle("kyc_label")}>Vérification{mark("kyc_label")}</button>
-              <select aria-label="Filtrer par statut" value={status} onChange={(event) => { setPage(0); setStatus(event.target.value); }}>
-                <option value="">Tous</option>
-                <option value="pending">pending</option>
-                <option value="valid">valid</option>
-                <option value="expired">expired</option>
-                <option value="overdue">overdue</option>
-              </select>
-            </th>
-            <th>
-              <button className="sort" type="button" onClick={() => toggle("risk_tier")}>Risque{mark("risk_tier")}</button>
-              <select aria-label="Filtrer par risque" value={risk} onChange={(event) => { setPage(0); setRisk(event.target.value); }}>
-                <option value="">Tous</option>
-                <option value="low">low</option>
-                <option value="medium">medium</option>
-                <option value="high">high</option>
-              </select>
-            </th>
+            <th><button className="sort" type="button" onClick={() => toggle("display_name")}>Client{mark("display_name")}</button></th>
+            <th><button className="sort" type="button" onClick={() => toggle("kyc_label")}>Vérification{mark("kyc_label")}</button></th>
+            <th><button className="sort" type="button" onClick={() => toggle("risk_tier")}>Risque{mark("risk_tier")}</button></th>
             <th><button className="sort" type="button" onClick={() => toggle("kyc_created_at")}>Création{mark("kyc_created_at")}</button></th>
             <th><button className="sort" type="button" onClick={() => toggle("kyc_validated_at")}>Validation{mark("kyc_validated_at")}</button></th>
             <th><button className="sort" type="button" onClick={() => toggle("kyc_expires_at")}>Expiration{mark("kyc_expires_at")}</button></th>
@@ -385,16 +445,23 @@ function CustomerView({ profile, onChange }: { profile: Record<string, unknown>;
       <h2>Vérifications</h2>
       <table className="inbox sheet">
         <thead>
-          <tr><th>Statut</th><th>Création</th><th>Validation</th><th>Expiration</th><th>Relance</th><th></th></tr>
+          <tr><th>Statut</th><th>Date</th><th>Validation</th><th>Expiration</th><th>Documents</th><th>Relance</th><th></th></tr>
         </thead>
         <tbody>
-          {!cycles.length ? <tr><td colSpan={6}>Aucune vérification.</td></tr> : null}
+          {!cycles.length ? <tr><td colSpan={7}>Aucune vérification.</td></tr> : null}
           {cycles.map((cycle) => (
             <tr key={cycle.id}>
               <td><span className={`badge ${cycle.status}`}>{cycle.label}</span></td>
               <td>{day(cycle.created_at)}</td>
               <td>{day(cycle.validated_at)}</td>
               <td>{day(cycle.expires_at)}</td>
+              <td>
+                {(cycle.documents || []).map((piece) => (
+                  <button className="ghost" key={piece.id} type="button" onClick={() => void openPiece(piece.url)}>{piece.title}</button>
+                ))}
+                {cycle.workflow_runtime_id ? <Link href={`/verification?case=${cycle.workflow_runtime_id}`}>Dossier</Link> : null}
+                {!cycle.documents?.length && !cycle.workflow_runtime_id ? "—" : null}
+              </td>
               <td>{cycle.reminder === "none" ? "—" : `${cycle.reminder} · ${day(cycle.reminded_at)}`}</td>
               <td>{cycle.status === "valid" ? null : <button type="button" onClick={() => void remind(cycle.id)}>Relancer</button>}</td>
             </tr>

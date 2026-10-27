@@ -19,8 +19,15 @@ export function queryMatches(query: string, fields: Record<string, string>): boo
     }
     words.push(bare.toLowerCase());
   }
+  const grouped = new Map<string, string[]>();
+  for (const [field, value] of filters) {
+    const values = grouped.get(field) || [];
+    values.push(value);
+    grouped.set(field, values);
+  }
   const blob = Object.values(fields).join(" ").toLowerCase();
-  return filters.every(([field, value]) => (fields[field] || "").toLowerCase().includes(value)) && words.every((word) => blob.includes(word));
+  const filtersOk = [...grouped.entries()].every(([field, values]) => values.some((value) => (fields[field] || "").toLowerCase().includes(value)));
+  return filtersOk && words.every((word) => blob.includes(word));
 }
 
 function chips(query: string) {
