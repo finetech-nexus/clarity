@@ -849,16 +849,30 @@ def _complete_active(db: Session, engine, workflow: WorkflowInstance, variables:
     _sync_task(db, workflow, nxt[0])
 
 
-def _active_verification(db: Session, customer: Customer, definition: str) -> WorkflowInstance | None:
+_VERIFICATION_KEYS = {"clarityKycIndividual", "clarityKybBusiness", "risk-score-improvement"}
+
+
+def _open_verification(db: Session, customer: Customer) -> WorkflowInstance | None:
+    """The single verification line for this client, whatever step it has reached."""
     return db.scalar(
         select(WorkflowInstance)
         .where(
             WorkflowInstance.customer_id == customer.id,
-            WorkflowInstance.definition_key == definition,
             WorkflowInstance.status == "active",
+            WorkflowInstance.definition_key.in_(_VERIFICATION_KEYS),
         )
         .order_by(WorkflowInstance.created_at.desc())
     )
+
+
+def _merge_context(current: dict | None, incoming: dict | None) -> dict:
+    merged = dict(current or {})
+    for key, value in (incoming or {}).items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_context(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def _kyc_is_current(db: Session, customer: Customer) -> bool:
@@ -947,6 +961,61 @@ def purge_clients(db: Session, tenant_id: str) -> dict:
     return {"customers": len(customer_ids), "verifications": len(workflow_ids), "files": removed_files}
 
 
+def _progress_verification(db: Session, engine, tenant: Tenant, customer: Customer, workflow: WorkflowInstance) -> None:
+    _advance_if_ready(db, engine, workflow)
+    _advance_if_ready(db, engine, workflow)
+    _screen_customer(db, tenant, customer)
+    pending = _customer_has_pending_screening(db, customer.id)
+    if not pending:
+        moved = _advance_if_ready(db, engine, workflow)
+        assess_customer(db, tenant, customer, source="ruleset")
+        if moved:
+            _advance_if_ready(db, engine, workflow)
+        customer.canonical_status = "in_review"
+    else:
+        customer.canonical_status = "screening_pending"
+        assess_customer(db, tenant, customer, source="ruleset")
+
+
+def _continue_verification(
+    db: Session,
+    engine,
+    tenant: Tenant,
+    principal: Principal,
+    customer: Customer,
+    workflow: WorkflowInstance,
+    kind: str,
+    data: dict,
+    context: dict,
+    config: dict | None,
+    definition: str,
+    hold_at_start: bool,
+) -> tuple[Customer, WorkflowInstance]:
+    """Keep the same verification line. A later step replaces the state, not the row."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    _sync_customer(db, customer, kind, data)
+    workflow.context = _merge_context(workflow.context, context)
+    flag_modified(workflow, "context")
+    workflow.config = {**(workflow.config or {}), **(config or {})}
+    flag_modified(workflow, "config")
+    workflow.updated_at = utcnow()
+    if workflow.definition_key == definition or hold_at_start:
+        open_kyc_cycle(db, customer, workflow.id)
+        audit(db, tenant.id, actor_label(principal), "workflow.resume", "workflow", workflow.id, {"definition": definition})
+        return customer, workflow
+    instance_id, task = engine.start(definition, customer.id, {})
+    workflow.definition_key = definition
+    workflow.definition_name = PROCESS_CATALOG[definition]["name"]
+    workflow.engine = engine.mode
+    workflow.engine_instance_id = instance_id
+    _sync_task(db, workflow, task)
+    open_kyc_cycle(db, customer, workflow.id)
+    _progress_verification(db, engine, tenant, customer, workflow)
+    audit(db, tenant.id, actor_label(principal), "workflow.continue", "workflow", workflow.id, {"definition": definition})
+    return customer, workflow
+
+
 def start_customer_workflow(
     db: Session,
     engine,
@@ -969,15 +1038,11 @@ def start_customer_workflow(
     if definition not in PROCESS_CATALOG:
         raise clarity_error(400, "unknown_workflow", "Cette définition de workflow n'a pas de processus exécutable.")
     if customer is not None:
-        active = _active_verification(db, customer, definition)
+        active = _open_verification(db, customer)
         if active is not None:
-            _sync_customer(db, customer, kind, data)
-            active.context = context
-            active.config = {**(active.config or {}), **(config or {})}
-            active.updated_at = utcnow()
-            open_kyc_cycle(db, customer, active.id)
-            audit(db, tenant.id, actor_label(principal), "workflow.resume", "workflow", active.id, {"definition": definition})
-            return customer, active
+            return _continue_verification(
+                db, engine, tenant, principal, customer, active, kind, data, context, config, definition, hold_at_start
+            )
         if _kyc_is_current(db, customer):
             raise clarity_error(409, "kyc_valid", "La vérification de ce client est encore valable. Une mise à jour est possible après son expiration.")
     if customer is None:
@@ -1021,19 +1086,7 @@ def start_customer_workflow(
         customer.canonical_status = "collecting"
         audit(db, tenant.id, actor_label(principal), "workflow.start", "workflow", workflow.id, {"definition": definition, "held": True})
         return customer, workflow
-    _advance_if_ready(db, engine, workflow)
-    _advance_if_ready(db, engine, workflow)
-    _screen_customer(db, tenant, customer)
-    pending = _customer_has_pending_screening(db, customer.id)
-    if not pending:
-        moved = _advance_if_ready(db, engine, workflow)
-        assess_customer(db, tenant, customer, source="ruleset")
-        if moved:
-            _advance_if_ready(db, engine, workflow)
-        customer.canonical_status = "in_review"
-    else:
-        customer.canonical_status = "screening_pending"
-        assess_customer(db, tenant, customer, source="ruleset")
+    _progress_verification(db, engine, tenant, customer, workflow)
     audit(db, tenant.id, actor_label(principal), "workflow.start", "workflow", workflow.id, {"definition": definition})
     return customer, workflow
 

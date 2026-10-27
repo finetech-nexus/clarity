@@ -1049,6 +1049,9 @@ def test_kyc_api_can_collect_files_and_ingest(tmp_path):
             json={"workflowId": "risk-score-improvement-dev", "context": {"entity": entity, "documents": []}},
         )
         assert review.status_code == 200, review.text
+        assert review.json()["workflowRuntimeId"] == runtime_id
+        desk = client.get("/api/clarity/v1/desks/kyc", headers=analyst)
+        assert len([row for row in desk.json() if row["name"] == "Sara Lopez"]) == 1
         opened = client.get(f"/api/v1/external/workflows/{review.json()['workflowRuntimeId']}", headers=ballerine)
         assert opened.json()["state"] == "analystReview"
         assert opened.json()["workflowDefinitionName"] == "risk-score-improvement"
