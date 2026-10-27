@@ -45,6 +45,31 @@ def _login(client: TestClient, email: str) -> str:
     return response.json()["access_token"]
 
 
+def test_restart_restores_admin_login(tmp_path):
+    with _client(tmp_path) as client:
+        from sqlalchemy import select
+
+        from app.ids import ADMIN_EMAIL
+        from app.models import User
+        from app.seed import seed_demo
+
+        db = client.app.state.database.session_factory()
+        admin = db.scalar(select(User).where(User.email == ADMIN_EMAIL))
+        admin.password_hash = "other$deadbeef"
+        admin.active = False
+        db.commit()
+        db.close()
+        refused = client.post("/api/clarity/v1/auth/login", json={"email": ADMIN_EMAIL, "password": DEMO_PASSWORD})
+        assert refused.status_code == 401
+        db = client.app.state.database.session_factory()
+        seed_demo(db, client.app.state.engine, seed_clients=False)
+        db.commit()
+        db.close()
+        restored = client.post("/api/clarity/v1/auth/login", json={"email": ADMIN_EMAIL, "password": DEMO_PASSWORD})
+        assert restored.status_code == 200, restored.text
+        assert restored.json()["user"]["role"] == "admin"
+
+
 def test_health_reports_fallback_engine(tmp_path):
     with _client(tmp_path) as client:
         body = client.get("/api/clarity/v1/health").json()
@@ -1198,6 +1223,17 @@ def test_kyc_cycles_expire_and_can_be_reminded(tmp_path):
             headers=headers,
         )
         assert too_early.status_code == 422
+        claire_cycle = claire.json()["kyc_cycles"][0]
+        piece = claire_cycle["documents"][0]
+        requested = client.post(
+            f"/api/clarity/v1/customers/{rows['cus-claire']['id']}/verifications/{claire_cycle['id']}/remind",
+            headers=headers,
+            json={"document_ids": [piece["id"]]},
+        )
+        assert requested.status_code == 200, requested.text
+        refreshed = client.get(f"/api/clarity/v1/customers/{rows['cus-claire']['id']}", headers=headers)
+        stored = next(item for row in refreshed.json()["kyc_cycles"] for item in row["documents"] if item["id"] == piece["id"])
+        assert stored["decision"] == "revisions"
 
 
 def test_model_service_routes_stay_off_clarity(tmp_path: Path):

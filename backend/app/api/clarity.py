@@ -1,3 +1,4 @@
+import json
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, File, Request, UploadFile
@@ -282,14 +283,25 @@ def list_customers(
 
 
 @router.post("/customers/{customer_id}/verifications/{cycle_id}/remind")
-def remind_customer_kyc(customer_id: str, cycle_id: str, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+async def remind_customer_kyc(customer_id: str, cycle_id: str, request: Request, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
     from app.services import kyc_cycle_view, remind_kyc_cycle
 
     customer = db.get(Customer, customer_id)
     if not customer or customer.tenant_id != principal.tenant_id:
         raise clarity_error(404, "not_found", "Client introuvable.")
-    row = remind_kyc_cycle(db, customer, cycle_id)
-    audit(db, principal.tenant_id, actor_label(principal), "kyc.remind", "kyc_cycle", row.id, {"reminder": "manual"})
+    document_ids: list[str] = []
+    raw = await request.body()
+    if raw.strip():
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise clarity_error(400, "invalid", "Corps de requête illisible.") from exc
+        chosen = payload.get("document_ids") or []
+        if not isinstance(chosen, list) or any(not isinstance(item, str) or not item for item in chosen):
+            raise clarity_error(400, "invalid", "Les pièces à demander sont invalides.")
+        document_ids = chosen
+    row = remind_kyc_cycle(db, customer, cycle_id, document_ids)
+    audit(db, principal.tenant_id, actor_label(principal), "kyc.remind", "kyc_cycle", row.id, {"reminder": "manual", "documents": document_ids})
     return kyc_cycle_view(row)
 
 

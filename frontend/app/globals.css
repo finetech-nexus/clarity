@@ -203,6 +203,17 @@ button.active, button.active:hover {
 .filters .checks label { display: inline-flex; align-items: center; gap: 0.35rem; width: auto; font-size: 0.82rem; }
 .filters .checks input { width: auto; margin: 0; }
 .doc-stack { display: grid; gap: 0.9rem; }
+.verify-preview { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 0.9rem; padding: 0.35rem 0; }
+.verify-side { display: grid; align-content: start; gap: 0.55rem; }
+.verify-side h3 { margin: 0; }
+.verify-side .tabs { flex-direction: column; align-items: stretch; }
+.verify-side .tabs button, .verify-side .actions button { width: 100%; }
+.detail-row td { background: #f7fbfa; cursor: default; }
+.modal-back { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: rgba(16, 32, 43, 0.45); padding: 1rem; }
+.modal { width: min(440px, 100%); background: #fff; border-radius: 16px; padding: 1rem 1.1rem; display: grid; gap: 0.6rem; }
+.modal h2 { margin: 0; }
+.modal label { display: flex; align-items: center; gap: 0.45rem; }
+.modal label input { width: auto; margin: 0; }
 .score-chip { display: grid; justify-items: center; min-width: 7.5rem; padding: 0.35rem 0.8rem; border: 1.5px solid var(--line); border-radius: 10px; background: #fff; }
 .score-chip strong { font-size: 1.6rem; line-height: 1.1; }
 .factors { margin: 0.35rem 0 0; padding-left: 1.1rem; color: var(--muted); font-size: 0.82rem; }
@@ -297,5 +308,5 @@ button.flow-node.selected, button.flow-node.selected:hover { box-shadow: 0 0 0 2
 @media (max-width: 960px) {
   .shell { grid-template-columns: 1fr; }
   .nav { position: relative; height: auto; }
-  .grid, .split, .form, .kyc-shell, .kyc-body, .manager-grid, .editor, .screen-shell, .flow-desk, .flow-transition { grid-template-columns: 1fr; }
+  .grid, .split, .form, .kyc-shell, .kyc-body, .manager-grid, .editor, .screen-shell, .flow-desk, .flow-transition, .verify-preview { grid-template-columns: 1fr; }
 }

@@ -2,15 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, Fragment, useEffect, useState } from "react";
 import CaseDesk from "./CaseDesk";
-import KycDesk from "./KycDesk";
+import KycDesk, { VerificationPreview } from "./KycDesk";
 import ScreeningDesk from "./ScreeningDesk";
 import StudioDesk from "./StudioDesk";
 import WorkflowEditor from "./WorkflowEditor";
 import { AdminBoard, AlertBoard, AuditBoard, IntegrationBoard, ReportBoard, ReviewBoard, RiskBoard, TransactionBoard } from "./Workboards";
 import { QueryStack } from "./QueryStack";
-import { API_URL, api, authHeader, searchPage } from "../lib/api";
+import { api, searchPage } from "../lib/api";
 
 const ACCOUNTS = [
   ["Camille Morel", "camille.morel@clarity.bank", "Analyste : instruit le dossier, ne peut pas l'approuver"],
@@ -122,12 +122,6 @@ const CLIENT_RISKS = [
   { value: "high", label: "Élevé" },
 ];
 
-async function openPiece(url: string) {
-  const response = await fetch(`${API_URL}${url}`, { headers: authHeader() });
-  if (!response.ok) return;
-  const blob = await response.blob();
-  window.open(URL.createObjectURL(blob), "_blank", "noopener");
-}
 
 export default function Workspace({ section, customerId }: { section: string; customerId?: string }) {
   const pathname = usePathname();
@@ -434,9 +428,27 @@ function CustomerView({ profile, onChange }: { profile: Record<string, unknown>;
   const cycles = (profile.kyc_cycles as KycCycle[]) || [];
   const screening = (profile.screening as Array<Record<string, unknown>>) || [];
   const risk = profile.risk as Record<string, unknown> | null;
-  async function remind(cycleId: string) {
-    await api(`/api/clarity/v1/customers/${profile.id}/verifications/${cycleId}/remind`, { method: "POST" });
-    onChange(await api(`/api/clarity/v1/customers/${profile.id}`));
+  const [openId, setOpenId] = useState(cycles[0]?.id || "");
+  const [requestCycle, setRequestCycle] = useState<KycCycle | null>(null);
+  const [chosen, setChosen] = useState<string[]>([]);
+  const [requestError, setRequestError] = useState("");
+  useEffect(() => {
+    if (!cycles.some((cycle) => cycle.id === openId)) setOpenId(cycles[0]?.id || "");
+  }, [cycles, openId]);
+  async function requestPieces(event: FormEvent) {
+    event.preventDefault();
+    if (!requestCycle || !chosen.length) return;
+    setRequestError("");
+    try {
+      await api(`/api/clarity/v1/customers/${profile.id}/verifications/${requestCycle.id}/remind`, {
+        method: "POST",
+        body: JSON.stringify({ document_ids: chosen }),
+      });
+      setRequestCycle(null);
+      onChange(await api(`/api/clarity/v1/customers/${profile.id}`));
+    } catch (err) {
+      setRequestError(err instanceof Error ? err.message : "Demande refusée");
+    }
   }
   return (
     <>
@@ -445,29 +457,65 @@ function CustomerView({ profile, onChange }: { profile: Record<string, unknown>;
       <h2>Vérifications</h2>
       <table className="inbox sheet">
         <thead>
-          <tr><th>Statut</th><th>Date</th><th>Validation</th><th>Expiration</th><th>Documents</th><th>Relance</th><th></th></tr>
+          <tr><th>Statut</th><th>Date</th><th>Validation</th><th>Expiration</th><th>Relance</th></tr>
         </thead>
         <tbody>
-          {!cycles.length ? <tr><td colSpan={7}>Aucune vérification.</td></tr> : null}
+          {!cycles.length ? <tr><td colSpan={5}>Aucune vérification.</td></tr> : null}
           {cycles.map((cycle) => (
-            <tr key={cycle.id}>
-              <td><span className={`badge ${cycle.status}`}>{cycle.label}</span></td>
-              <td>{day(cycle.created_at)}</td>
-              <td>{day(cycle.validated_at)}</td>
-              <td>{day(cycle.expires_at)}</td>
-              <td>
-                {(cycle.documents || []).map((piece) => (
-                  <button className="ghost" key={piece.id} type="button" onClick={() => void openPiece(piece.url)}>{piece.title}</button>
-                ))}
-                {cycle.workflow_runtime_id ? <Link href={`/verification?case=${cycle.workflow_runtime_id}`}>Dossier</Link> : null}
-                {!cycle.documents?.length && !cycle.workflow_runtime_id ? "—" : null}
-              </td>
-              <td>{cycle.reminder === "none" ? "—" : `${cycle.reminder} · ${day(cycle.reminded_at)}`}</td>
-              <td>{cycle.status === "valid" ? null : <button type="button" onClick={() => void remind(cycle.id)}>Relancer</button>}</td>
-            </tr>
+            <Fragment key={cycle.id}>
+              <tr className={cycle.id === openId ? "selected" : ""} onClick={() => setOpenId(cycle.id)}>
+                <td><span className={`badge ${cycle.status}`}>{cycle.label}</span></td>
+                <td>{day(cycle.created_at)}</td>
+                <td>{day(cycle.validated_at)}</td>
+                <td>{day(cycle.expires_at)}</td>
+                <td onClick={(event) => event.stopPropagation()}>
+                  <div>{cycle.reminder === "none" ? "—" : `${cycle.reminder} · ${day(cycle.reminded_at)}`}</div>
+                  <button
+                    className="ghost"
+                    type="button"
+                    onClick={() => {
+                      setRequestError("");
+                      setChosen([]);
+                      setRequestCycle(cycle);
+                    }}
+                  >
+                    Demander des pièces
+                  </button>
+                </td>
+              </tr>
+              {cycle.id === openId ? (
+                <tr className="detail-row">
+                  <td colSpan={5}>
+                    {cycle.workflow_runtime_id ? <VerificationPreview runtimeId={cycle.workflow_runtime_id} /> : <p className="label">Aucun dossier ouvert pour cette vérification.</p>}
+                  </td>
+                </tr>
+              ) : null}
+            </Fragment>
           ))}
         </tbody>
       </table>
+      {requestCycle ? (
+        <div className="modal-back" role="presentation" onClick={() => setRequestCycle(null)}>
+          <form className="modal" role="dialog" aria-modal="true" aria-labelledby="request-title" onClick={(event) => event.stopPropagation()} onSubmit={(event) => void requestPieces(event)}>
+            <h2 id="request-title">Pièces à demander</h2>
+            {(requestCycle.documents || []).length ? (requestCycle.documents || []).map((piece) => (
+              <label key={piece.id}>
+                <input
+                  type="checkbox"
+                  checked={chosen.includes(piece.id)}
+                  onChange={() => setChosen((current) => current.includes(piece.id) ? current.filter((id) => id !== piece.id) : [...current, piece.id])}
+                />
+                {piece.title}
+              </label>
+            )) : <p className="label">Aucune pièce sur cette vérification.</p>}
+            {requestError ? <p className="error">{requestError}</p> : null}
+            <div className="actions">
+              <button className="ghost" type="button" onClick={() => setRequestCycle(null)}>Annuler</button>
+              <button type="submit" disabled={!chosen.length}>Demander</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
       <p className="label">À l'expiration, une relance automatique est enregistrée. Trente jours plus tard, overdue s'ajoute à pending. La relance manuelle reste disponible.</p>
       <div className="split">
         <section>

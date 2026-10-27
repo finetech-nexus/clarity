@@ -184,16 +184,35 @@ def refresh_kyc_cycles(db: Session, tenant_id: str) -> None:
             row.status = "overdue"
 
 
-def remind_kyc_cycle(db: Session, customer: Customer, cycle_id: str) -> KycCycle:
+def remind_kyc_cycle(db: Session, customer: Customer, cycle_id: str, document_ids: list[str] | None = None) -> KycCycle:
     refresh_kyc_cycles(db, customer.tenant_id)
     row = db.get(KycCycle, cycle_id)
     if not row or row.customer_id != customer.id:
         raise clarity_error(404, "not_found", "Vérification introuvable.")
-    if row.status == "valid":
+    requested = [item for item in (document_ids or []) if item]
+    if requested:
+        found = db.scalars(
+            select(IdentityDocument).where(
+                IdentityDocument.customer_id == customer.id,
+                IdentityDocument.id.in_(requested),
+            )
+        ).all()
+        if len(found) != len(set(requested)):
+            raise clarity_error(404, "not_found", "Pièce introuvable sur cette vérification.")
+        for document in found:
+            if row.workflow_id and document.workflow_id not in {None, row.workflow_id}:
+                raise clarity_error(404, "not_found", "Pièce introuvable sur cette vérification.")
+            document.decision = "revisions"
+            document.decision_reason = "Pièce demandée lors de la relance."
+        titles = ", ".join(str((document.properties or {}).get("title") or document.doc_type or "Pièce") for document in found)
+        note = f"pièces demandées ({titles})"
+    elif row.status == "valid":
         raise clarity_error(422, "not_due", "La relance intervient à l'expiration de la vérification.")
+    else:
+        note = "relance manuelle enregistrée"
     row.reminder = "manual"
     row.reminded_at = utcnow()
-    notify(db, customer.tenant_id, "Relance KYC manuelle", f"{customer.display_name} : relance manuelle enregistrée.")
+    notify(db, customer.tenant_id, "Relance KYC manuelle", f"{customer.display_name} : {note}.")
     return row
 
 
@@ -1494,7 +1513,8 @@ def customer_view(db: Session, customer: Customer) -> dict:
         for item in db.scalars(select(WorkflowInstance).where(WorkflowInstance.customer_id == customer.id)).all()
     }
     grouped: dict[str, list] = {}
-    loose: list = []
+    claimed = {row.workflow_id for row in cycles if row.workflow_id}
+    unclaimed: list = []
     for document in documents:
         piece = {
             "id": document.id,
@@ -1503,16 +1523,21 @@ def customer_view(db: Session, customer: Customer) -> dict:
             "decision": document.decision,
             "url": f"/api/clarity/v1/desks/documents/{document.id}/content",
         }
-        if document.workflow_id:
+        if document.workflow_id and document.workflow_id in claimed:
             grouped.setdefault(document.workflow_id, []).append(piece)
         else:
-            loose.append(piece)
+            unclaimed.append(piece)
+    fallback = None
+    if workflows:
+        fallback = max(workflows.values(), key=lambda item: item.created_at or item.id).ballerine_runtime_id
     cycle_views = []
     for index, row in enumerate(cycles):
         owned = list(grouped.get(row.workflow_id or "", []))
         if index == 0:
-            owned.extend(loose)
+            owned.extend(unclaimed)
         runtime = workflows[row.workflow_id].ballerine_runtime_id if row.workflow_id and row.workflow_id in workflows else None
+        if runtime is None and index == 0:
+            runtime = fallback
         cycle_views.append(kyc_cycle_view(row, runtime, owned))
     return {
         "id": customer.id,

@@ -44,11 +44,32 @@ from app.services import DATA_MODELS, assess_customer, evaluate_transaction, per
 from app.timeutil import utcnow
 
 
+def ensure_demo_logins(db: Session) -> None:
+    """Keep the four console accounts on the password shown by the login form."""
+    accounts = (
+        (ADMIN_EMAIL, "Aline Bernard", "admin"),
+        (ANALYST_EMAIL, "Camille Morel", "analyst"),
+        (CHECKER_EMAIL, "Hugo Bernard", "checker"),
+        (INVESTIGATOR_EMAIL, "Léa Martin", "investigator"),
+    )
+    digest = hash_password(DEMO_PASSWORD)
+    for email, name, role in accounts:
+        user = db.scalar(select(User).where(User.email == email))
+        if user is None:
+            db.add(User(tenant_id=TENANT_ID, email=email, full_name=name, password_hash=digest, role=role, mfa_enabled=True, active=True))
+            continue
+        user.password_hash = digest
+        user.active = True
+        user.role = role
+    db.flush()
+
+
 def seed_demo(db: Session, engine=None, seed_clients: bool = True) -> None:
     if db.get(Tenant, TENANT_ID):
         from app.catalog import ensure_studio
 
         ensure_studio(db)
+        ensure_demo_logins(db)
         ensure_risk_score_case(db, engine, seed_clients=seed_clients)
         if seed_clients:
             ensure_review_pack(db, engine)

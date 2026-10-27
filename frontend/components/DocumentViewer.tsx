@@ -23,9 +23,11 @@ const DECISION_LABEL: Record<string, string> = {
 function DocumentCard({
   document,
   onDecide,
+  locked = false,
 }: {
   document: ViewerDocument;
   onDecide?: (id: string, decision: "approve" | "reject" | "revision") => void;
+  locked?: boolean;
 }) {
   const [src, setSrc] = useState("");
   const [rotation, setRotation] = useState(0);
@@ -71,18 +73,19 @@ function DocumentCard({
           )}
         </div>
         <div className="viewer-tools">
-          <button className="ghost" type="button" onClick={() => setRotation((value) => value - 90)} aria-label="Pivoter à gauche">↺</button>
-          <button className="ghost" type="button" onClick={() => setRotation((value) => value + 90)} aria-label="Pivoter à droite">↻</button>
-          <button className="ghost" type="button" onClick={() => setZoom((value) => Math.min(2.4, value + 0.2))} aria-label="Agrandir">+</button>
-          <button className="ghost" type="button" onClick={() => setZoom((value) => Math.max(0.6, value - 0.2))} aria-label="Réduire">−</button>
-          {src ? <a className="ghost tool-link" href={src} target="_blank" rel="noreferrer">Ouvrir</a> : null}
+          <button className="ghost" type="button" disabled={locked} onClick={() => setRotation((value) => value - 90)} aria-label="Pivoter à gauche">↺</button>
+          <button className="ghost" type="button" disabled={locked} onClick={() => setRotation((value) => value + 90)} aria-label="Pivoter à droite">↻</button>
+          <button className="ghost" type="button" disabled={locked} onClick={() => setZoom((value) => Math.min(2.4, value + 0.2))} aria-label="Agrandir">+</button>
+          <button className="ghost" type="button" disabled={locked} onClick={() => setZoom((value) => Math.max(0.6, value - 0.2))} aria-label="Réduire">−</button>
+          {src && !locked ? <a className="ghost tool-link" href={src} target="_blank" rel="noreferrer">Ouvrir</a> : null}
+          {locked ? <button className="ghost" type="button" disabled>Ouvrir</button> : null}
         </div>
       </div>
       {onDecide ? (
         <div className="tabs">
-          <button type="button" onClick={() => onDecide(document.id, "approve")}>Approuver la pièce</button>
-          <button className="ghost" type="button" onClick={() => onDecide(document.id, "revision")}>À renvoyer</button>
-          <button className="ghost" type="button" onClick={() => onDecide(document.id, "reject")}>Rejeter la pièce</button>
+          <button type="button" disabled={locked} onClick={() => onDecide(document.id, "approve")}>Approuver la pièce</button>
+          <button className="ghost" type="button" disabled={locked} onClick={() => onDecide(document.id, "revision")}>À renvoyer</button>
+          <button className="ghost" type="button" disabled={locked} onClick={() => onDecide(document.id, "reject")}>Rejeter la pièce</button>
         </div>
       ) : null}
     </article>
@@ -92,9 +95,11 @@ function DocumentCard({
 export default function DocumentViewer({
   documents,
   onDecide,
+  locked = false,
 }: {
   documents: ViewerDocument[];
   onDecide?: (id: string, decision: "approve" | "reject" | "revision") => void;
+  locked?: boolean;
 }) {
   if (!documents.length) {
     return <p className="label">Aucun document fourni pour ce dossier.</p>;
@@ -102,7 +107,7 @@ export default function DocumentViewer({
   return (
     <div className="doc-stack">
       {documents.map((document) => (
-        <DocumentCard document={document} key={document.id} onDecide={onDecide} />
+        <DocumentCard document={document} key={document.id} locked={locked} onDecide={onDecide} />
       ))}
     </div>
   );

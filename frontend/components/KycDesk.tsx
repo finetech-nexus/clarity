@@ -371,3 +371,96 @@ export default function KycDesk() {
     </>
   );
 }
+
+export function VerificationPreview({ runtimeId }: { runtimeId: string }) {
+  const [detail, setDetail] = useState<Detail | null>(null);
+  const [error, setError] = useState("");
+  const [tab, setTab] = useState<(typeof TABS)[number]>("Informations saisies");
+
+  useEffect(() => {
+    setDetail(null);
+    setError("");
+    setTab("Informations saisies");
+    void api<Detail>(`/api/clarity/v1/desks/kyc/${runtimeId}`).then(setDetail).catch((err: Error) => setError(err.message));
+  }, [runtimeId]);
+
+  if (error) return <p className="error">{error}</p>;
+  if (!detail) return <p className="label">Chargement de la vérification…</p>;
+  const matches = (detail.customer?.screening || []).flatMap((item) => item.matches || []);
+  return (
+    <div className="verify-preview">
+      <aside className="verify-side">
+        <h3>{detail.customer?.display_name || detail.case.name}</h3>
+        <div className="score-chip">
+          <span className="label">Score de risque</span>
+          <strong>{detail.customer?.risk ? detail.customer.risk.score : "—"}</strong>
+          <span className="label">{detail.customer?.risk?.tier || "non calculé"}</span>
+        </div>
+        <div className="actions">
+          <button className="ghost" type="button" disabled>Demander les renvois</button>
+          <button className="ghost" type="button" disabled>Rejeter</button>
+          <button type="button" disabled>Approuver</button>
+        </div>
+        <div className="tabs">
+          {TABS.map((item) => (
+            <button className={tab === item ? "active" : ""} key={item} type="button" onClick={() => setTab(item)}>{item}</button>
+          ))}
+        </div>
+      </aside>
+      <div>
+        {tab === "Informations saisies" ? (
+          <article className="card">
+            {detail.submitted?.length ? (
+              <dl className="kv">
+                {detail.submitted.map((field) => (
+                  <span key={field.key}><dt>{field.label}</dt><dd>{field.value}</dd></span>
+                ))}
+              </dl>
+            ) : <p className="label">Aucune information saisie sur ce dossier.</p>}
+          </article>
+        ) : null}
+        {tab === "Documents" ? (
+          <DocumentViewer documents={detail.documents} locked onDecide={() => undefined} />
+        ) : null}
+        {tab === "Données du document" ? (
+          <article className="card">
+            {detail.identity?.length ? (
+              <form className="form">
+                {detail.identity.map((field) => (
+                  <label key={field.key}>
+                    {field.label}
+                    <input disabled readOnly value={field.value} />
+                  </label>
+                ))}
+                <div className="actions">
+                  <button className="ghost" type="button" disabled>Lire les pièces</button>
+                  <button type="button" disabled>Enregistrer</button>
+                </div>
+              </form>
+            ) : <p className="label">Aucune carte d'identité ou passeport sur ce dossier.</p>}
+          </article>
+        ) : null}
+        {tab === "Résultats" ? (
+          <article className="card">
+            {detail.documents.map((item) => (
+              <p key={item.id}><strong>{item.title}</strong> · {item.decision || item.status || "en attente"}</p>
+            ))}
+          </article>
+        ) : null}
+        {tab === "Criblage" ? (
+          <article className="card">
+            {matches.length ? matches.map((match) => (
+              <p className="file-row" key={match.id}>
+                <span>{match.name || "Correspondance"} · score {match.score} · {match.status}</span>
+                <span className="tabs">
+                  <button type="button" disabled>Faux positif</button>
+                  <button className="ghost" type="button" disabled>Confirmer</button>
+                </span>
+              </p>
+            )) : <p className="label">Aucune correspondance sur ce dossier.</p>}
+          </article>
+        ) : null}
+      </div>
+    </div>
+  );
+}
