@@ -750,6 +750,21 @@ def test_document_ocr_reads_labels_and_mrz():
     assert repaired["parsedData"]["dateOfBirth"] == "1983-06-02"
 
 
+def test_rapid_lines_accept_array_results():
+    from app.ocr import _rapid_lines
+
+    class Rows(list):
+        def __bool__(self):
+            raise ValueError("ambiguous")
+
+    class Page:
+        txts = Rows(["02 06 1983", "MILADI"])
+        scores = Rows([0.9, 0.8])
+        boxes = Rows([[[0, 40], [1, 40]], [[0, 10], [1, 10]]])
+
+    assert _rapid_lines(Page()) == "MILADI\n02 06 1983"
+
+
 def test_paddle_lines_follow_the_page_from_top_to_bottom():
     from app.ocr import _paddle_lines
 

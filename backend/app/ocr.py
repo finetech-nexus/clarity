@@ -200,10 +200,17 @@ def _prepare_photo(content: bytes) -> tuple[bytes, str]:
         return content, suffix
 
 
+def _as_rows(value):
+    """Numpy arrays must not be tested with `or`: their truth value is ambiguous."""
+    if value is None:
+        return []
+    return list(value)
+
+
 def _rapid_lines(result) -> str:
-    texts = list(getattr(result, "txts", None) or [])
-    scores = list(getattr(result, "scores", None) or [])
-    boxes = list(getattr(result, "boxes", None) or [])
+    texts = _as_rows(getattr(result, "txts", None))
+    scores = _as_rows(getattr(result, "scores", None))
+    boxes = _as_rows(getattr(result, "boxes", None))
     rows: list[tuple[float, str]] = []
     for index, text in enumerate(texts):
         if not str(text).strip():
@@ -238,12 +245,12 @@ def _paddle_read(content: bytes) -> tuple[str, dict, bool]:
             handle.write(prepared)
             handle.flush()
             result = engine(handle.name)
+        if result is None:
+            return "", {}, True
+        return _rapid_lines(result), {}, True
     except Exception:
         logger.warning("PP-OCRv5 could not read the photo", exc_info=True)
         return "", {}, False
-    if result is None:
-        return "", {}, True
-    return _rapid_lines(result), {}, True
 
 
 def _merge_paddle_fields(parsed: dict, fields: dict) -> None:
