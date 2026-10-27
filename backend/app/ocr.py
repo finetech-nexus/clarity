@@ -88,7 +88,8 @@ def _local_paddle():
         if not _paddle_ready():
             _PADDLE_ENGINE = False
             return None
-        os.environ.setdefault("OMP_NUM_THREADS", "1")
+        # Two threads stay inside the pod CPU limit. One thread made two photos miss the gateway deadline.
+        os.environ["OMP_NUM_THREADS"] = "2"
         try:
             from rapidocr import RapidOCR
             from rapidocr.utils.typings import LangRec, ModelType, OCRVersion
@@ -97,11 +98,11 @@ def _local_paddle():
                 params={
                     "Global.use_cls": False,
                     "Global.text_score": 0.35,
-                    "Global.max_side_len": 2200,
+                    "Global.max_side_len": 1280,
                     "Det.model_path": str(_ocr_file("CLARITY_OCR_DET", "/opt/ppocr/det.onnx")),
                     "Det.ocr_version": OCRVersion.PPOCRV5,
                     "Det.model_type": ModelType.SERVER,
-                    "Det.limit_side_len": 1600,
+                    "Det.limit_side_len": 960,
                     "Det.limit_type": "max",
                     "Det.unclip_ratio": 1.8,
                     "Rec.model_path": str(_ocr_file("CLARITY_OCR_REC", "/opt/ppocr/rec.onnx")),
@@ -185,10 +186,8 @@ def _prepare_photo(content: bytes) -> tuple[bytes, str]:
             image = image.convert("RGB")
         image = ImageOps.autocontrast(image)
         long_side = max(image.size)
-        if long_side < 1600:
-            scale = 1600 / long_side
-        elif long_side > 2200:
-            scale = 2200 / long_side
+        if long_side > 1280:
+            scale = 1280 / long_side
         else:
             scale = 1
         if scale != 1:
@@ -230,6 +229,14 @@ def _rapid_lines(result) -> str:
         rows.append((y, str(text).strip()))
     rows.sort(key=lambda row: row[0])
     return "\n".join(text for _, text in rows)
+
+
+def warm_reader() -> None:
+    """Load the models before the first click. A cold load plus two photos misses the gateway deadline."""
+    try:
+        _local_paddle()
+    except Exception:
+        logger.warning("PP-OCRv5 warmup failed", exc_info=True)
 
 
 def _paddle_read(content: bytes) -> tuple[str, dict, bool]:

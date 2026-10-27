@@ -1,4 +1,5 @@
 import logging
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -56,6 +57,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         reset_runtime_overlay()
         bind_settings(settings)
+        from app.ocr import warm_reader
+
+        threading.Thread(target=warm_reader, name="ocr-warmup", daemon=True).start()
         session = database.session_factory()
         try:
             if settings.seed_demo:
