@@ -38,6 +38,34 @@ def _bearer(request: Request) -> str | None:
     return None
 
 
+def console_user(request: Request, db: Session, token: str):
+    """A Clarity session, or a Keycloak token when OpenID is the authentication mode."""
+    settings = request.app.state.settings
+    try:
+        payload = decode_jwt(settings.jwt_secret, token)
+    except Exception:
+        payload = None
+    if payload is not None:
+        user = user_by_email(db, str(payload.get("tenant_id") or ""), str(payload.get("email") or ""))
+        if not user or not user.active or parse_roles(user.role) == ["pending"]:
+            return None
+        return user
+    if settings.resolved_auth_mode == "password":
+        return None
+    from app.oidc import claims_from_keycloak, enabled, provision_oidc_user
+
+    if not enabled(settings):
+        return None
+    try:
+        claims = claims_from_keycloak(settings, token)
+    except Exception:
+        return None
+    user = provision_oidc_user(db, claims)
+    if not user or not user.active or parse_roles(user.role) == ["pending"]:
+        return None
+    return user
+
+
 def marble_principal(request: Request, db: Session = Depends(db_session)) -> Principal:
     token = request.headers.get("x-api-key") or _bearer(request)
     if not token:
@@ -46,13 +74,8 @@ def marble_principal(request: Request, db: Session = Depends(db_session)) -> Pri
     credential = credential_for_token(db, token, "marble")
     if credential:
         return Principal(credential.tenant_id, "marble", None, None, "service", credential.id)
-    settings = request.app.state.settings
-    try:
-        payload = decode_jwt(settings.jwt_secret, token)
-    except Exception as exc:
-        raise ApiFailure(401, None) from exc
-    user = user_by_email(db, payload.get("tenant_id", ""), payload.get("email", ""))
-    if not user or not user.active:
+    user = console_user(request, db, token)
+    if not user:
         raise ApiFailure(401, None)
     return Principal(user.tenant_id, "marble", user.id, user.email, user.role)
 
@@ -65,13 +88,8 @@ def ballerine_principal(request: Request, db: Session = Depends(db_session)) -> 
     credential = credential_for_token(db, token, "ballerine")
     if credential:
         return Principal(credential.tenant_id, "ballerine", None, None, "service", credential.id)
-    settings = request.app.state.settings
-    try:
-        payload = decode_jwt(settings.jwt_secret, token)
-    except Exception as exc:
-        raise ApiFailure(401, {"statusCode": 401, "message": "Unauthorized", "error": "Unauthorized"}) from exc
-    user = user_by_email(db, payload.get("tenant_id", ""), payload.get("email", ""))
-    if not user or not user.active:
+    user = console_user(request, db, token)
+    if not user:
         raise ApiFailure(401, {"statusCode": 401, "message": "Unauthorized", "error": "Unauthorized"})
     return Principal(user.tenant_id, "ballerine", user.id, user.email, user.role)
 

@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { QueryStack, queryMatches } from "./QueryStack";
 import { api } from "../lib/api";
+import { Copy, Lang, LanguageTabs, copyFrom, preferred } from "./LanguageFields";
 
 const PROCESSES = [
   ["clarityKycIndividual", "Personne physique"],
@@ -51,7 +52,7 @@ type StateNode = {
   on?: Record<string, TransitionValue>;
   tags?: string[];
   type?: string;
-  meta?: { label?: string };
+  meta?: { label?: string; i18n?: Partial<Copy> };
   always?: unknown;
   [key: string]: unknown;
 };
@@ -72,8 +73,12 @@ type Definition = {
   definition: Chart;
   processKey?: string;
   entityType?: string;
-  extensions?: { originalProcessKey?: string };
+  extensions?: { originalProcessKey?: string; i18n?: { displayName?: Partial<Copy> } };
 };
+
+function stepCopy(node: StateNode | undefined): Copy {
+  return copyFrom(node?.meta?.i18n, node?.meta?.label || "");
+}
 
 type Slot = { event: string; index: number; target: string; cond?: unknown };
 
@@ -233,7 +238,8 @@ export default function WorkflowEditor({ embedded = false }: { embedded?: boolea
   const [definitions, setDefinitions] = useState<Definition[]>([]);
   const [selected, setSelected] = useState("");
   const [draft, setDraft] = useState<Chart | null>(null);
-  const [displayName, setDisplayName] = useState("");
+  const [displayName, setDisplayName] = useState<Copy>(copyFrom(undefined));
+  const [language, setLanguage] = useState<Lang>("fr");
   const [processKey, setProcessKey] = useState<string>(PROCESSES[0][0]);
   const [entityType, setEntityType] = useState("individual");
   const [stateId, setStateId] = useState("");
@@ -257,7 +263,7 @@ export default function WorkflowEditor({ embedded = false }: { embedded?: boolea
   function openRow(row: Definition) {
     setSelected(row.id);
     setDraft(structuredClone(row.definition || { states: {} }));
-    setDisplayName(String(row.displayName || row.name));
+    setDisplayName(copyFrom(row.extensions?.i18n?.displayName, String(row.displayName || row.name || "")));
     setProcessKey(row.processKey && PROCESSES.some(([key]) => key === row.processKey) ? row.processKey : PROCESSES[0][0]);
     setEntityType(row.entityType || "individual");
     const states = row.definition?.states || {};
@@ -392,7 +398,12 @@ export default function WorkflowEditor({ embedded = false }: { embedded?: boolea
       await api(`/api/v1/workflow-definition/${selected}/definition`, { method: "PUT", body: JSON.stringify(draft) });
       const saved = await api<Definition>(`/api/v1/workflow-definition/${selected}/upgrade`, {
         method: "POST",
-        body: JSON.stringify({ displayName, processKey, entityType }),
+        body: JSON.stringify({
+          displayName: preferred(displayName, current?.name || ""),
+          processKey,
+          entityType,
+          extensions: { ...(current?.extensions || {}), i18n: { ...(current?.extensions?.i18n || {}), displayName } },
+        }),
       });
       setDefinitions((rows) => rows.map((row) => (row.id === saved.id ? saved : row)));
       openRow(saved);
@@ -406,7 +417,7 @@ export default function WorkflowEditor({ embedded = false }: { embedded?: boolea
     if (!selected) return;
     const copied = await api<Definition>(`/api/v1/workflow-definition/${selected}/copy`, {
       method: "POST",
-      body: JSON.stringify({ name: `${current?.name || "parcours"}-copie`, displayName: `${displayName} (copie)` }),
+      body: JSON.stringify({ name: `${current?.name || "parcours"}-copie`, displayName: `${preferred(displayName)} (copie)` }),
     });
     setDefinitions((rows) => [copied, ...rows]);
     openRow(copied);
@@ -473,8 +484,11 @@ export default function WorkflowEditor({ embedded = false }: { embedded?: boolea
           ))}
         </div>
         <div className="flow-stage">
+          <LanguageTabs language={language} onChange={setLanguage} />
           <div className="flow-toolbar">
-            <label>Nom affiché<input value={displayName} onChange={(event) => { setDisplayName(event.target.value); setDirty(true); }} /></label>
+            <label>Nom affiché · {language.toUpperCase()}
+              <input dir={language === "ar" ? "rtl" : "ltr"} value={displayName[language]} onChange={(event) => { setDisplayName((current) => ({ ...current, [language]: event.target.value })); setDirty(true); }} />
+            </label>
             <label>Processus exécuté
               <select value={processKey} onChange={(event) => { setProcessKey(event.target.value); setDirty(true); }}>
                 {PROCESSES.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
@@ -533,7 +547,7 @@ export default function WorkflowEditor({ embedded = false }: { embedded?: boolea
                 const body = states[id];
                 const ghost = !body;
                 const final = body?.type === "final" || ghost;
-                const titled = body?.meta?.label && body.meta.label !== id;
+                const titled = preferred(stepCopy(body)) && preferred(stepCopy(body), id) !== id;
                 return (
                   <button
                     key={id}
@@ -542,7 +556,7 @@ export default function WorkflowEditor({ embedded = false }: { embedded?: boolea
                     style={{ left: point.x, top: point.y, width: NODE_W }}
                     onClick={() => setStateId(id)}
                   >
-                    <strong>{titled ? body?.meta?.label : id}</strong>
+                    <strong>{titled ? (stepCopy(body)[language] || preferred(stepCopy(body))) : id}</strong>
                     <span>{ghost ? "terminal" : titled ? id : id === draft?.initial ? "initiale" : final ? "finale" : "étape"}</span>
                   </button>
                 );
@@ -554,10 +568,14 @@ export default function WorkflowEditor({ embedded = false }: { embedded?: boolea
             <form className="flow-inspector" onSubmit={addTransition}>
               <div className="flow-toolbar">
                 <label>Identifiant<input defaultValue={stateId} key={stateId} onBlur={(event) => renameState(event.target.value)} /></label>
-                <label>Libellé
+                <label>Libellé · {language.toUpperCase()}
                   <input
-                    value={node.meta?.label || ""}
-                    onChange={(event) => updateNode(stateId, { ...node, meta: { ...(node.meta || {}), label: event.target.value } })}
+                    dir={language === "ar" ? "rtl" : "ltr"}
+                    value={stepCopy(node)[language]}
+                    onChange={(event) => {
+                      const i18n = { ...stepCopy(node), [language]: event.target.value };
+                      updateNode(stateId, { ...node, meta: { ...(node.meta || {}), label: preferred(i18n), i18n } });
+                    }}
                   />
                 </label>
                 <label>Étiquettes

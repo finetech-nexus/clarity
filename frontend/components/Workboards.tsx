@@ -212,13 +212,51 @@ export function ReportBoard() {
 
 export function AuditBoard() {
   const [rows, setRows] = useState<Row[]>([]);
-  useEffect(() => { void api<Row[]>("/api/clarity/v1/audit").then(setRows); }, []);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
+  const [actor, setActor] = useState("");
+  const [action, setAction] = useState("");
+  const [entity, setEntity] = useState("");
+  const [when, setWhen] = useState("");
+  const [error, setError] = useState("");
+  const pageSize = 25;
+
+  useEffect(() => {
+    const params = new URLSearchParams({ limit: String(pageSize), offset: String(page * pageSize) });
+    if (actor.trim()) params.set("actor", actor.trim());
+    if (action.trim()) params.set("action", action.trim());
+    if (entity.trim()) params.set("entity", entity.trim());
+    if (when.trim()) params.set("when", when.trim());
+    void api<{ items: Row[]; total: number }>(`/api/clarity/v1/audit?${params}`)
+      .then((body) => {
+        setRows(body.items);
+        setTotal(body.total);
+      })
+      .catch((err: Error) => setError(err.message));
+  }, [actor, action, entity, when, page]);
+
+  function filter(setter: (value: string) => void) {
+    return (value: string) => {
+      setPage(0);
+      setter(value);
+    };
+  }
+
   return (
     <Board title="Audit" lede="Journal des actions du tenant. Les secrets ne sont pas enregistrés.">
-      <table className="inbox">
-        <thead><tr><th>Quand</th><th>Acteur</th><th>Action</th><th>Objet</th></tr></thead>
+      {error ? <p className="error">{error}</p> : null}
+      <table className="inbox sheet">
+        <thead>
+          <tr>
+            <th>Quand<input aria-label="Filtrer la date" value={when} onChange={(event) => filter(setWhen)(event.target.value)} placeholder="2026-10" /></th>
+            <th>Acteur<input aria-label="Filtrer l'acteur" value={actor} onChange={(event) => filter(setActor)(event.target.value)} /></th>
+            <th>Action<input aria-label="Filtrer l'action" value={action} onChange={(event) => filter(setAction)(event.target.value)} /></th>
+            <th>Objet<input aria-label="Filtrer l'objet" value={entity} onChange={(event) => filter(setEntity)(event.target.value)} /></th>
+          </tr>
+        </thead>
         <tbody>
-          {rows.slice(0, 40).map((row) => (
+          {!rows.length ? <tr><td colSpan={4}>Aucun événement.</td></tr> : null}
+          {rows.map((row) => (
             <tr key={String(row.id)}>
               <td>{row.created_at ? new Date(String(row.created_at)).toLocaleString("fr-FR") : "—"}</td>
               <td>{String(row.actor)}</td>
@@ -228,6 +266,11 @@ export function AuditBoard() {
           ))}
         </tbody>
       </table>
+      <p className="label">{total} événement(s) · page {page + 1}</p>
+      <div className="tabs">
+        <button className="ghost" type="button" disabled={page === 0} onClick={() => setPage((current) => Math.max(0, current - 1))}>Précédent</button>
+        <button className="ghost" type="button" disabled={(page + 1) * pageSize >= total} onClick={() => setPage((current) => current + 1)}>Suivant</button>
+      </div>
     </Board>
   );
 }

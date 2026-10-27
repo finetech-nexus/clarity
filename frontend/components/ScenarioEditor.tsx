@@ -3,8 +3,9 @@
 import { FormEvent, useEffect, useState } from "react";
 import { QueryStack, queryMatches } from "./QueryStack";
 import { api } from "../lib/api";
+import { Copy, Lang, LanguageTabs, copyFrom, preferred } from "./LanguageFields";
 
-type Scenario = { id: string; name: string; description?: string; trigger_object_type: string; live_version_id?: string };
+type Scenario = { id: string; name: string; description?: string; trigger_object_type: string; live_version_id?: string; i18n?: { name?: Partial<Copy>; description?: Partial<Copy> } };
 type Iteration = { id: string; version: number | null; body: { score_review_threshold?: number | null; score_block_and_review_threshold?: number | null; score_decline_threshold?: number | null; rules?: string[] } };
 type Rule = { id: string; name: string; description: string; score_modifier: number; formula_ast_expression?: { name?: string } };
 
@@ -32,14 +33,22 @@ export default function ScenarioEditor() {
   const [decline, setDecline] = useState("120");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [listPage, setListPage] = useState(0);
+  const [language, setLanguage] = useState<Lang>("fr");
+  const [names, setNames] = useState<Copy>(copyFrom(undefined));
+  const [descriptions, setDescriptions] = useState<Copy>(copyFrom(undefined));
   const live = Boolean(iteration?.version);
 
   async function loadScenarios(prefer?: string) {
     const rows = await api<Scenario[]>("/scenarios");
     setScenarios(rows);
-    setSelected(prefer && rows.some((row) => row.id === prefer) ? prefer : rows[0]?.id || "");
+    const id = prefer && rows.some((row) => row.id === prefer) ? prefer : rows[0]?.id || "";
+    setSelected(id);
+    const row = rows.find((item) => item.id === id);
+    setNames(copyFrom(row?.i18n?.name, row?.name || ""));
+    setDescriptions(copyFrom(row?.i18n?.description, row?.description || ""));
   }
 
   async function loadIteration(scenarioId: string) {
@@ -55,11 +64,18 @@ export default function ScenarioEditor() {
   }
 
   useEffect(() => {
-    void loadScenarios().catch((err: Error) => setError(err.message));
+    void loadScenarios()
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
     if (!selected) return;
+    const row = scenarios.find((item) => item.id === selected);
+    if (row) {
+      setNames(copyFrom(row.i18n?.name, row.name));
+      setDescriptions(copyFrom(row.i18n?.description, row.description || ""));
+    }
     void loadIteration(selected).catch((err: Error) => setError(err.message));
   }, [selected]);
 
@@ -134,6 +150,22 @@ export default function ScenarioEditor() {
     await loadIteration(selected);
   }
 
+  async function saveCopy(event: FormEvent) {
+    event.preventDefault();
+    if (!selected) return;
+    setError("");
+    try {
+      const saved = await api<Scenario>(`/scenarios/${selected}`, {
+        method: "PATCH",
+        body: JSON.stringify({ i18n: { name: names, description: descriptions } }),
+      });
+      setScenarios((rows) => rows.map((row) => (row.id === saved.id ? saved : row)));
+      setMessage("Libellés enregistrés pour le français, l'anglais et l'arabe.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Enregistrement refusé");
+    }
+  }
+
   async function publish() {
     if (!iteration) return;
     setError("");
@@ -178,13 +210,25 @@ export default function ScenarioEditor() {
         <section className="case-sheet">
           <header className="case-bar">
             <div>
-              <h2>{current.name}</h2>
+              <h2>{preferred(names, current.name)}</h2>
               <p className="label">{live ? `Version ${iteration.version} publiée` : "Brouillon"} · déclencheur {current.trigger_object_type}</p>
             </div>
             {live ? <button type="button" onClick={() => void draftFromLive()}>Nouveau brouillon</button> : <button type="button" onClick={() => void publish()}>Publier</button>}
           </header>
           {error ? <p className="error">{error}</p> : null}
           {message ? <p className="label">{message}</p> : null}
+          <form className="card connector" onSubmit={(event) => void saveCopy(event)}>
+            <LanguageTabs language={language} onChange={setLanguage} />
+            <label>
+              Nom · {language.toUpperCase()}
+              <input dir={language === "ar" ? "rtl" : "ltr"} value={names[language]} onChange={(event) => setNames((current) => ({ ...current, [language]: event.target.value }))} />
+            </label>
+            <label>
+              Description · {language.toUpperCase()}
+              <input dir={language === "ar" ? "rtl" : "ltr"} value={descriptions[language]} onChange={(event) => setDescriptions((current) => ({ ...current, [language]: event.target.value }))} />
+            </label>
+            <button type="submit">Enregistrer les libellés</button>
+          </form>
           <div className="tabs">
             {PANES.map((item) => <button className={pane === item ? "active" : ""} key={item} type="button" onClick={() => setPane(item)}>{item}</button>)}
           </div>
@@ -234,7 +278,14 @@ export default function ScenarioEditor() {
             </form>
           ) : null}
         </section>
-      ) : <p>Chargement du scénario…</p>}
+      ) : (
+        <section className="case-sheet">
+          {error ? <p className="error">{error}</p> : null}
+          {!error && loading ? <p>Chargement du scénario…</p> : null}
+          {!error && !loading && !current ? <p>Aucun scénario.</p> : null}
+          {!error && !loading && current && !iteration ? <p>Ce scénario n'a pas encore d'itération.</p> : null}
+        </section>
+      )}
     </div>
   );
 }

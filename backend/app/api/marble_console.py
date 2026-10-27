@@ -165,11 +165,26 @@ def update_scenario(scenario_id: str, body: dict, principal: Principal = Depends
     for key in ("description", "archived", "deduplicate_batch_objects"):
         if key in body:
             payload[key] = body[key]
+    if isinstance(body.get("i18n"), dict):
+        clean = {}
+        for field in ("name", "description"):
+            raw = body["i18n"].get(field)
+            if isinstance(raw, dict):
+                clean[field] = {lang: str(raw.get(lang) or "") for lang in ("fr", "en", "ar")}
+        payload["i18n"] = clean
+        chosen = next((clean.get("name", {}).get(lang) for lang in ("fr", "en", "ar") if clean.get("name", {}).get(lang)), "")
+        if chosen:
+            scenario.name = chosen
+        described = next((clean.get("description", {}).get(lang) for lang in ("fr", "en", "ar") if clean.get("description", {}).get(lang)), "")
+        if described:
+            payload["description"] = described
     if body.get("archived") is True:
         scenario.active = False
     if meta:
         meta.payload = payload
         touch(meta)
+    elif payload:
+        add_doc(db, principal.tenant_id, "scenario_meta", scenario.name, payload, doc_id=scenario.id)
     return scenario_dto(db, scenario)
 
 

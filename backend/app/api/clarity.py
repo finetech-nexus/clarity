@@ -891,12 +891,36 @@ def create_rule(body: RuleBody, principal: Principal = Depends(clarity_principal
 
 
 @router.get("/audit")
-def audit_log(principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
-    rows = db.scalars(select(AuditEvent).where(AuditEvent.tenant_id == principal.tenant_id).order_by(AuditEvent.created_at.desc()).limit(200)).all()
-    return [
+def audit_log(
+    q: str = "",
+    actor: str = "",
+    action: str = "",
+    entity: str = "",
+    when: str = "",
+    limit: int | None = None,
+    offset: int | None = None,
+    principal: Principal = Depends(clarity_principal),
+    db: Session = Depends(db_session),
+):
+    rows = db.scalars(select(AuditEvent).where(AuditEvent.tenant_id == principal.tenant_id).order_by(AuditEvent.created_at.desc()).limit(500)).all()
+    listed = [
         {"id": row.id, "actor": row.actor, "action": row.action, "entity_type": row.entity_type, "entity_id": row.entity_id, "detail": row.detail, "created_at": iso(row.created_at)}
         for row in rows
     ]
+
+    def keep(row: dict) -> bool:
+        haystacks = {
+            "actor": row["actor"],
+            "action": row["action"],
+            "entity": f"{row['entity_type']} {row['entity_id']}",
+            "when": row["created_at"] or "",
+        }
+        for needle, value in (("actor", actor), ("action", action), ("entity", entity), ("when", when)):
+            if value and value.lower() not in haystacks[needle].lower():
+                return False
+        return True
+
+    return present([row for row in listed if keep(row)], q, lambda row: {"actor": row["actor"], "action": row["action"], "entity": row["entity_type"], "when": row["created_at"] or ""}, limit, offset)
 
 
 class IntegrationUpdate(BaseModel):

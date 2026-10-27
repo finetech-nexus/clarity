@@ -91,6 +91,7 @@ def scenario_dto(db: Session, scenario: Scenario) -> dict:
         "created_at": meta.get("created_at") or iso(utcnow()),
         "deduplicate_batch_objects": bool(meta.get("deduplicate_batch_objects", False)),
         "description": meta.get("description") or "",
+        "i18n": meta.get("i18n") or {},
         "name": scenario.name,
         "organization_id": scenario.tenant_id,
         "trigger_object_type": scenario.trigger_object_type,

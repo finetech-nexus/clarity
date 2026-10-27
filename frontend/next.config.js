@@ -6,10 +6,24 @@ const nextConfig = {
   experimental: { proxyTimeout: 180_000 },
   async rewrites() {
     if (!upstream) return [];
-    return ["api", "v1", "v1beta", "ingestion"].map((prefix) => ({
-      source: `/${prefix}/:path*`,
-      destination: `${upstream}/${prefix}/:path*`,
-    }));
+    const prefixes = [
+      "api",
+      "v1",
+      "v1beta",
+      "ingestion",
+      "scenarios",
+      "scenario-iterations",
+      "scenario-iteration-rules",
+      "data-model",
+      "settings",
+      "custom-lists",
+      "config",
+      "cases",
+    ];
+    return prefixes.flatMap((prefix) => [
+      { source: `/${prefix}`, destination: `${upstream}/${prefix}` },
+      { source: `/${prefix}/:path*`, destination: `${upstream}/${prefix}/:path*` },
+    ]);
   },
 };
 module.exports = nextConfig;

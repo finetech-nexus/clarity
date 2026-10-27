@@ -381,6 +381,11 @@ def test_monitoring_alert_backtest_and_report(tmp_path):
         assert report.json()["submission_channel"] == "not_connected"
         audit = client.get("/api/clarity/v1/audit", headers={"Authorization": f"Bearer {investigator}"})
         assert any(event["action"] == "report.draft" for event in audit.json())
+        page = client.get("/api/clarity/v1/audit", headers={"Authorization": f"Bearer {investigator}"}, params={"limit": 2, "offset": 0, "action": "report"})
+        assert page.status_code == 200, page.text
+        assert page.json()["total"] >= 1
+        assert len(page.json()["items"]) <= 2
+        assert all("report" in item["action"] for item in page.json()["items"])
 
 
 def test_ballerine_kyc_vendor_is_not_faked(tmp_path):
@@ -912,7 +917,17 @@ def test_scenario_editor_and_document_types(tmp_path):
     with _client(tmp_path) as client:
         headers = {"Authorization": f"Bearer {_login(client, ANALYST_EMAIL)}"}
         scenarios = client.get("/scenarios", headers=headers)
+        assert scenarios.status_code == 200, scenarios.text
         scenario_id = scenarios.json()[0]["id"]
+        translated = client.patch(
+            f"/scenarios/{scenario_id}",
+            headers=headers,
+            json={"i18n": {"name": {"fr": "Seuil", "en": "Threshold", "ar": "حد"}, "description": {"fr": "Surveillance", "en": "Watch", "ar": ""}}},
+        )
+        assert translated.status_code == 200, translated.text
+        assert translated.json()["name"] == "Seuil"
+        assert translated.json()["i18n"]["name"]["en"] == "Threshold"
+        assert translated.json()["i18n"]["name"]["ar"] == "حد"
         draft = client.post(
             "/scenario-iterations",
             headers=headers,
@@ -1585,6 +1600,9 @@ def test_keycloak_mifos_is_admin_and_can_give_several_roles(tmp_path):
             me = client.get("/api/clarity/v1/me", headers=headers)
             assert me.status_code == 200, me.text
             assert "admin" in me.json()["roles"]
+            assert client.get("/api/v1/workflow-definition", headers=headers).status_code == 200
+            assert client.get("/scenarios", headers=headers).status_code == 200
+            assert client.get("/data-model", headers=headers).status_code == 200
             assert client.get("/api/clarity/v1/customers", headers=headers).status_code == 200
             created = client.post(
                 "/api/clarity/v1/administration/users",
