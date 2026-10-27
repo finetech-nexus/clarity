@@ -316,6 +316,7 @@ def _parse(text: str, engine: str) -> dict:
     fields = _blank()
     mrz = _fill_mrz(text, fields)
     _fill_labels(text, fields)
+    _detach_address(fields)
     if not fields["firstName"] and not fields["lastName"]:
         guessed = _guess_name(text)
         fields["firstName"] = guessed[0]
@@ -453,22 +454,48 @@ def _fold(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", text).strip()
 
 
+_DATE_TEXT = r"(\d{1,2}(?:\s*[./-]\s*|\s+)\d{1,2}(?:\s*[./-]\s*|\s+)\d{4})"
+_EXPIRY_NOTE = re.compile(rf"carte\s+valab\w*(?:\s+jusqu[^\d:]*)?:?\s*{_DATE_TEXT}", re.IGNORECASE)
+_ISSUE_NOTE = re.compile(rf"d[eé]livr\w*\s+le\s*:?\s*{_DATE_TEXT}", re.IGNORECASE)
+
+
 def _iso_date(value: str) -> str:
     text = value.strip()
-    match = re.fullmatch(r"(\d{2})[./\s-](\d{2})[./\s-](\d{4})", text)
-    if match:
-        text = f"{match.group(3)}-{match.group(2)}-{match.group(1)}"
-    compact = re.sub(r"\s+", "", text)
-    packed = re.fullmatch(r"(\d{2})(\d{2})(\d{4})", compact)
-    if packed:
-        text = f"{packed.group(3)}-{packed.group(2)}-{packed.group(1)}"
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
-        return ""
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        candidate = text
+    else:
+        match = re.fullmatch(r"(\d{1,2})(?:\s*[./-]\s*|\s+)(\d{1,2})(?:\s*[./-]\s*|\s+)(\d{4})", text)
+        if match:
+            candidate = f"{int(match.group(3)):04d}-{int(match.group(2)):02d}-{int(match.group(1)):02d}"
+        else:
+            compact = re.sub(r"\s+", "", text)
+            packed = re.fullmatch(r"(\d{2})(\d{2})(\d{4})", compact)
+            if not packed:
+                return ""
+            candidate = f"{packed.group(3)}-{packed.group(2)}-{packed.group(1)}"
     try:
-        date.fromisoformat(text)
+        date.fromisoformat(candidate)
     except ValueError:
         return ""
-    return text
+    return candidate
+
+
+def _detach_address(fields: dict[str, str]) -> None:
+    """Keep the postal line. A misread « carte valable » date belongs on expiry, not the address."""
+    address = fields.get("address") or ""
+    if not address:
+        return
+    found = ""
+    match = _EXPIRY_NOTE.search(address)
+    if match:
+        found = _iso_date(match.group(1))
+        address = address[: match.start()] + address[match.end() :]
+    address = _ISSUE_NOTE.sub(" ", address)
+    address = re.sub(r"\s+", " ", address)
+    address = re.sub(r"(?:\s*,\s*)+", ", ", address).strip(" ,.;")
+    fields["address"] = address
+    if found and not fields.get("expiry"):
+        fields["expiry"] = found
 
 
 def _mrz_date(value: str, birth: bool) -> str:
@@ -703,6 +730,10 @@ def _match_label(line: str) -> tuple[str, int]:
         return "firstName", 1
     if first == "nom":
         return "lastName", 1
+    if "valab" in folded and ("carte" in folded or "jusqu" in folded):
+        return "expiry", 0
+    if folded.startswith("delivr"):
+        return "issued", 0
     return "", 0
 
 
@@ -749,6 +780,9 @@ def _fill_labels(text: str, fields: dict[str, str]) -> None:
     index = 0
     while index < len(lines):
         key, drop = _match_label(lines[index])
+        if key == "issued":
+            index += 1
+            continue
         if not key:
             index += 1
             continue

@@ -18,6 +18,18 @@ class Database:
         from app import models  # noqa: F401
 
         Base.metadata.create_all(bind=self.engine)
+        self._ensure_tenant_columns()
+
+    def _ensure_tenant_columns(self) -> None:
+        if self.engine.dialect.name != "sqlite":
+            return
+        with self.engine.begin() as connection:
+            rows = connection.exec_driver_sql("PRAGMA table_info(tenants)").fetchall()
+            names = {row[1] for row in rows}
+            if names and "kyc_validity_years" not in names:
+                connection.exec_driver_sql(
+                    "ALTER TABLE tenants ADD COLUMN kyc_validity_years INTEGER NOT NULL DEFAULT 1"
+                )
 
     def session(self) -> Iterator[Session]:
         db = self.session_factory()

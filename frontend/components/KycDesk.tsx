@@ -135,12 +135,7 @@ export default function KycDesk() {
       const refreshed = await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}/identity/ocr`, { method: "POST" });
       setDetail(refreshed);
       const found = (refreshed.identity || []).some((field) => ["firstName", "lastName", "dateOfBirth"].includes(field.key) && field.value);
-      const paddle = (refreshed.documents || []).some((item) => item.ocr?.engine === "paddleocr");
-      setMessage(found
-        ? paddle
-          ? "Lecture par le modèle PP-OCRv5. Ce n'est pas une vérification de production."
-          : "Lecture enregistrée à partir de la carte d'identité et du passeport. Ce n'est pas une vérification de production."
-        : "Aucune identité lue sur la carte ou le passeport.");
+      setMessage(found ? "Lecture enregistrée." : "Aucune identité lue sur la carte ou le passeport.");
       await loadQueue(selected);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Lecture refusée");
@@ -277,7 +272,6 @@ export default function KycDesk() {
                       </button>
                       <button type="submit">Enregistrer</button>
                     </div>
-                    <p className="label">Une seule lecture PP-OCRv5 pour la carte d'identité et le passeport. Ce n'est pas une vérification de production.</p>
                   </form>
                 ) : <p className="label">Aucune carte d'identité ou passeport sur ce dossier.</p>}
               </article>
@@ -287,7 +281,7 @@ export default function KycDesk() {
                 {detail.documents.map((item) => (
                   <p key={item.id}><strong>{item.title}</strong> · {item.decision || item.status || "en attente"}</p>
                 ))}
-                {(detail.customer?.verification_checks || []).map((check) => (
+                {(detail.customer?.verification_checks || []).filter((check) => check.status !== "not_a_production_verification").map((check) => (
                   <p className="factor" key={String(check.id)}>{String(check.kind)} · {String(check.status)}</p>
                 ))}
                 {!detail.documents.length && !(detail.customer?.verification_checks || []).length ? <p className="label">Aucun résultat sur ce dossier.</p> : null}

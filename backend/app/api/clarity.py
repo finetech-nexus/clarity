@@ -886,6 +886,40 @@ def notifications(principal: Principal = Depends(clarity_principal), db: Session
     return [{"id": row.id, "title": row.title, "body": row.body, "read": row.read, "created_at": iso(row.created_at)} for row in rows]
 
 
+class KycPolicyBody(BaseModel):
+    kyc_validity_years: int = Field(ge=1, le=10)
+
+
+@router.get("/administration/kyc")
+def kyc_policy(principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    tenant = db.get(Tenant, principal.tenant_id)
+    years = tenant.kyc_validity_years if tenant else 1
+    return {"kyc_validity_years": years or 1}
+
+
+@router.patch("/administration/kyc")
+def update_kyc_policy(body: KycPolicyBody, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    if not principal.allows("admin"):
+        raise clarity_error(403, "forbidden", "Réservé à l'administration.")
+    tenant = db.get(Tenant, principal.tenant_id)
+    if not tenant:
+        raise clarity_error(404, "not_found", "Tenant introuvable.")
+    tenant.kyc_validity_years = body.kyc_validity_years
+    audit(db, principal.tenant_id, actor_label(principal), "kyc.policy", "tenant", tenant.id, {"kyc_validity_years": body.kyc_validity_years})
+    return {"kyc_validity_years": tenant.kyc_validity_years}
+
+
+@router.post("/administration/purge-clients")
+def purge_client_data(principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    if not principal.allows("admin"):
+        raise clarity_error(403, "forbidden", "Réservé à l'administration.")
+    from app.services import purge_clients
+
+    result = purge_clients(db, principal.tenant_id)
+    audit(db, principal.tenant_id, actor_label(principal), "clients.purge", "tenant", principal.tenant_id, result)
+    return result
+
+
 @router.get("/administration/users")
 def users(principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
     if not principal.allows("admin"):

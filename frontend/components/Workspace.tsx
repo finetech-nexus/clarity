@@ -370,7 +370,7 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
 }
 
 function CustomerView({ profile, onChange }: { profile: Record<string, unknown>; onChange: (next: Record<string, unknown>) => void }) {
-  const checks = (profile.verification_checks as Array<Record<string, unknown>>) || [];
+  const checks = ((profile.verification_checks as Array<Record<string, unknown>>) || []).filter((check) => check.status !== "not_a_production_verification");
   const cycles = (profile.kyc_cycles as KycCycle[]) || [];
   const screening = (profile.screening as Array<Record<string, unknown>>) || [];
   const risk = profile.risk as Record<string, unknown> | null;
@@ -407,7 +407,7 @@ function CustomerView({ profile, onChange }: { profile: Record<string, unknown>;
           <h2>Contrôles</h2>
           {checks.map((check) => (
             <p className="factor" key={String(check.id)}>
-              {String(check.provider)} · production {String(check.production)} · {String((check.detail as Record<string, unknown>)?.notice || check.status)}
+              {String(check.kind)} · {String(check.status)}
             </p>
           ))}
           <h2>Criblage</h2>

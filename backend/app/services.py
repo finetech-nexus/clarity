@@ -3,7 +3,7 @@ import uuid
 from datetime import timedelta
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.ast_eval import AstError, eval_ast
@@ -139,6 +139,8 @@ def latest_kyc_cycle(db: Session, customer_id: str) -> KycCycle | None:
 def open_kyc_cycle(db: Session, customer: Customer, workflow_id: str | None = None) -> KycCycle:
     current = latest_kyc_cycle(db, customer.id)
     if current and current.status == "pending":
+        if workflow_id and not current.workflow_id:
+            current.workflow_id = workflow_id
         return current
     row = KycCycle(tenant_id=customer.tenant_id, customer_id=customer.id, workflow_id=workflow_id, status="pending")
     db.add(row)
@@ -847,6 +849,104 @@ def _complete_active(db: Session, engine, workflow: WorkflowInstance, variables:
     _sync_task(db, workflow, nxt[0])
 
 
+def _active_verification(db: Session, customer: Customer, definition: str) -> WorkflowInstance | None:
+    return db.scalar(
+        select(WorkflowInstance)
+        .where(
+            WorkflowInstance.customer_id == customer.id,
+            WorkflowInstance.definition_key == definition,
+            WorkflowInstance.status == "active",
+        )
+        .order_by(WorkflowInstance.created_at.desc())
+    )
+
+
+def _kyc_is_current(db: Session, customer: Customer) -> bool:
+    refresh_kyc_cycles(db, customer.tenant_id)
+    cycle = latest_kyc_cycle(db, customer.id)
+    return bool(cycle and cycle.status == "valid")
+
+
+def _sync_customer(db: Session, customer: Customer, kind: str, data: dict) -> None:
+    customer.display_name = _display_name(kind, data)
+    customer.updated_at = utcnow()
+    for field, keys in (
+        ("purpose", ("purpose",)),
+        ("expected_activity", ("expected_activity", "expectedActivity")),
+        ("source_of_funds", ("source_of_funds", "sourceOfFunds")),
+    ):
+        value = next((data.get(key) for key in keys if data.get(key)), None)
+        if value:
+            setattr(customer, field, value)
+    if kind == "individual":
+        fresh = _individual(customer.id, data)
+        current = customer.individual
+        names = ("legal_name", "given_name", "family_name", "date_of_birth", "nationality", "residence_country", "address", "email", "phone")
+        if current is None:
+            db.add(fresh)
+            customer.individual = fresh
+        else:
+            for name in names:
+                setattr(current, name, getattr(fresh, name))
+        return
+    fresh_business = _business(customer.id, data)
+    current_business = customer.business
+    names = ("legal_name", "trading_name", "registration_number", "jurisdiction", "legal_form", "registered_address", "industry", "activities")
+    if current_business is None:
+        db.add(fresh_business)
+        customer.business = fresh_business
+        db.flush()
+        return
+    for name in names:
+        setattr(current_business, name, getattr(fresh_business, name))
+
+
+def purge_clients(db: Session, tenant_id: str) -> dict:
+    """Remove clients and the verifications attached to them. Users and settings stay."""
+    customers = db.scalars(select(Customer).where(Customer.tenant_id == tenant_id)).all()
+    customer_ids = [row.id for row in customers]
+    documents = db.scalars(select(IdentityDocument).where(IdentityDocument.tenant_id == tenant_id)).all()
+    removed_files = 0
+    for document in documents:
+        if not document.storage_path:
+            continue
+        path = Path(document.storage_path)
+        if path.is_file():
+            path.unlink()
+            removed_files += 1
+    workflows = db.scalars(select(WorkflowInstance).where(WorkflowInstance.tenant_id == tenant_id)).all()
+    workflow_ids = [row.id for row in workflows]
+    cases = db.scalars(select(CaseRecord).where(CaseRecord.tenant_id == tenant_id)).all()
+    case_ids = [row.id for row in cases]
+    screenings = db.scalars(select(ScreeningCheck).where(ScreeningCheck.tenant_id == tenant_id)).all()
+    screening_ids = [row.id for row in screenings]
+    if case_ids:
+        db.execute(delete(CaseTag).where(CaseTag.case_id.in_(case_ids)))
+        db.execute(delete(CaseComment).where(CaseComment.case_id.in_(case_ids)))
+    db.execute(delete(Evidence).where(Evidence.tenant_id == tenant_id))
+    db.execute(delete(Alert).where(Alert.tenant_id == tenant_id))
+    db.execute(delete(Approval).where(Approval.tenant_id == tenant_id))
+    if workflow_ids:
+        db.execute(delete(WorkflowTask).where(WorkflowTask.workflow_id.in_(workflow_ids)))
+    db.execute(delete(WorkflowInstance).where(WorkflowInstance.tenant_id == tenant_id))
+    if screening_ids:
+        db.execute(delete(ScreeningMatch).where(ScreeningMatch.screening_id.in_(screening_ids)))
+    db.execute(delete(ScreeningCheck).where(ScreeningCheck.tenant_id == tenant_id))
+    db.execute(delete(RiskAssessment).where(RiskAssessment.tenant_id == tenant_id))
+    db.execute(delete(Transaction).where(Transaction.tenant_id == tenant_id))
+    db.execute(delete(IdentityDocument).where(IdentityDocument.tenant_id == tenant_id))
+    db.execute(delete(KycCycle).where(KycCycle.tenant_id == tenant_id))
+    db.execute(delete(VerificationCheck).where(VerificationCheck.tenant_id == tenant_id))
+    db.execute(delete(Party).where(Party.tenant_id == tenant_id))
+    if customer_ids:
+        db.execute(delete(IndividualProfile).where(IndividualProfile.customer_id.in_(customer_ids)))
+        db.execute(delete(BusinessProfile).where(BusinessProfile.customer_id.in_(customer_ids)))
+    db.execute(delete(CaseRecord).where(CaseRecord.tenant_id == tenant_id))
+    db.execute(delete(Customer).where(Customer.tenant_id == tenant_id))
+    db.execute(delete(IngestedObject).where(IngestedObject.tenant_id == tenant_id, IngestedObject.object_type.in_(("clients", "counterparties"))))
+    return {"customers": len(customer_ids), "verifications": len(workflow_ids), "files": removed_files}
+
+
 def start_customer_workflow(
     db: Session,
     engine,
@@ -868,6 +968,18 @@ def start_customer_workflow(
     definition = definition_key or ("clarityKycIndividual" if kind == "individual" else "clarityKybBusiness")
     if definition not in PROCESS_CATALOG:
         raise clarity_error(400, "unknown_workflow", "Cette définition de workflow n'a pas de processus exécutable.")
+    if customer is not None:
+        active = _active_verification(db, customer, definition)
+        if active is not None:
+            _sync_customer(db, customer, kind, data)
+            active.context = context
+            active.config = {**(active.config or {}), **(config or {})}
+            active.updated_at = utcnow()
+            open_kyc_cycle(db, customer, active.id)
+            audit(db, tenant.id, actor_label(principal), "workflow.resume", "workflow", active.id, {"definition": definition})
+            return customer, active
+        if _kyc_is_current(db, customer):
+            raise clarity_error(409, "kyc_valid", "La vérification de ce client est encore valable. Une mise à jour est possible après son expiration.")
     if customer is None:
         customer = Customer(
             tenant_id=tenant.id,
@@ -883,18 +995,11 @@ def start_customer_workflow(
         )
         db.add(customer)
         db.flush()
-        if kind == "individual":
-            profile = _individual(customer.id, data)
-            customer.individual = profile
-            db.add(profile)
-        else:
-            profile = _business(customer.id, data)
-            customer.business = profile
-            db.add(profile)
-            db.flush()
-            _parties(db, tenant.id, customer.id, data)
     else:
-        customer.updated_at = utcnow()
+        customer.canonical_status = "collecting"
+    _sync_customer(db, customer, kind, data)
+    if kind == "business" and customer.business is not None and not db.scalar(select(Party).where(Party.business_customer_id == customer.id)):
+        _parties(db, tenant.id, customer.id, data)
     instance_id, task = engine.start(definition, customer.id, {})
     workflow = WorkflowInstance(
         tenant_id=tenant.id,
@@ -917,19 +1022,6 @@ def start_customer_workflow(
         audit(db, tenant.id, actor_label(principal), "workflow.start", "workflow", workflow.id, {"definition": definition, "held": True})
         return customer, workflow
     _advance_if_ready(db, engine, workflow)
-    db.add(
-        VerificationCheck(
-            tenant_id=tenant.id,
-            customer_id=customer.id,
-            provider="clarity-development-identity",
-            kind="identity_document",
-            status="not_a_production_verification",
-            production=False,
-            detail={
-                "notice": "Aucun prestataire de vérification d'identité, de document ou de vivacité n'est connecté. Ce contrôle ne doit pas être lu comme une vérification réelle."
-            },
-        )
-    )
     _advance_if_ready(db, engine, workflow)
     _screen_customer(db, tenant, customer)
     pending = _customer_has_pending_screening(db, customer.id)
@@ -1171,7 +1263,7 @@ def advance_workflow(db: Session, engine, tenant: Tenant, principal: Principal, 
     customer = db.get(Customer, workflow.customer_id) if workflow.customer_id else None
     if customer and workflow.state == "approved":
         customer.canonical_status = "approved"
-        years = {"high": 1, "medium": 3, "low": 5}.get(customer.risk_tier or "medium", 3)
+        years = tenant.kyc_validity_years or 1
         customer.next_review_at = utcnow() + timedelta(days=365 * years)
         validate_kyc_cycle(db, customer, workflow.id, customer.next_review_at)
     elif customer and workflow.state == "rejected":

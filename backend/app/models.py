@@ -20,6 +20,7 @@ class Tenant(Base):
     slug: Mapped[str] = mapped_column(String(80), unique=True)
     screening_threshold: Mapped[int] = mapped_column(Integer, default=86)
     retention_days: Mapped[int] = mapped_column(Integer, default=1825)
+    kyc_validity_years: Mapped[int] = mapped_column(Integer, default=1)
     synthetic: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

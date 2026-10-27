@@ -327,13 +327,40 @@ export function AdminBoard() {
   const [rows, setRows] = useState<Row[]>([]);
   const [me, setMe] = useState<Row | null>(null);
   const [error, setError] = useState("");
+  const [years, setYears] = useState("1");
+  const [saved, setSaved] = useState("");
   useEffect(() => {
     void api<Row>("/api/clarity/v1/me").then(setMe);
     void api<Row[]>("/api/clarity/v1/administration/users").then(setRows).catch((err: Error) => setError(err.message));
+    void api<{ kyc_validity_years: number }>("/api/clarity/v1/administration/kyc").then((body) => setYears(String(body.kyc_validity_years))).catch(() => undefined);
   }, []);
+  async function savePolicy(event: FormEvent) {
+    event.preventDefault();
+    setSaved("");
+    setError("");
+    try {
+      const body = await api<{ kyc_validity_years: number }>("/api/clarity/v1/administration/kyc", {
+        method: "PATCH",
+        body: JSON.stringify({ kyc_validity_years: Number(years) }),
+      });
+      setYears(String(body.kyc_validity_years));
+      setSaved("Durée de validité enregistrée.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Enregistrement refusé");
+    }
+  }
   return (
     <Board title="Administration" lede={me ? `Session ${String(me.name)} · ${String(me.role)}. Le MFA est un indicateur, pas une preuve d'enrôlement.` : "Comptes du tenant."}>
-      {error ? <p className="error">La liste des utilisateurs est réservée à un administrateur.</p> : null}
+      {error ? <p className="error">{error}</p> : null}
+      {saved ? <p className="label">{saved}</p> : null}
+      <form className="form" onSubmit={(event) => void savePolicy(event)}>
+        <label>
+          Validité du KYC (années)
+          <input min={1} max={10} type="number" value={years} onChange={(event) => setYears(event.target.value)} />
+        </label>
+        <p className="label">Après approbation, la vérification expire à cette échéance. Le client peut alors en ouvrir une nouvelle, qui met à jour sa fiche.</p>
+        <button type="submit">Enregistrer</button>
+      </form>
       <table className="inbox">
         <thead><tr><th>Nom</th><th>E-mail</th><th>Rôle</th><th>MFA</th><th>Actif</th></tr></thead>
         <tbody>

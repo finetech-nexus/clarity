@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from app.config import ROOT, Settings
 from app.engine import PROCESS_CATALOG
 from app.ids import (
+    ADMIN_EMAIL,
     ANALYST_EMAIL,
     BALLERINE_API_KEY,
     CHECKER_EMAIL,
@@ -213,8 +214,7 @@ def test_ballerine_and_clarity_share_customer(tmp_path):
         assert match
         profile = client.get(f"/api/clarity/v1/customers/{match[0]['id']}", headers={"Authorization": f"Bearer {token}"})
         assert profile.status_code == 200
-        assert profile.json()["verification_checks"][0]["production"] is False
-        assert "pas" in profile.json()["verification_checks"][0]["detail"]["notice"] or "n'est pas" in profile.json()["verification_checks"][0]["detail"]["notice"] or "ne doit pas" in profile.json()["verification_checks"][0]["detail"]["notice"]
+        assert profile.json()["verification_checks"] == []
 
 
 def test_maker_checker_and_tenant_isolation(tmp_path):
@@ -671,7 +671,23 @@ def test_document_ocr_reads_labels_and_mrz():
     assert card["parsedData"]["lastName"] == "MILADI"
     assert card["parsedData"]["dateOfBirth"] == "1983-06-02"
     assert card["parsedData"]["nationality"] == "FRA"
-    assert card["parsedData"]["address"]
+    assert card["parsedData"]["address"] == "12 rue de la Paix, 75002 Paris"
+    joined = read_identity(
+        """<svg xmlns="http://www.w3.org/2000/svg">
+        <text>Adresse: 93110 RASNY-SOUS-B015, Carte valabie jusqu'au : 27 11. 2034, délivrée le: 28.11.2019</text>
+        </svg>""".encode()
+    )
+    assert joined["parsedData"]["address"] == "93110 RASNY-SOUS-B015"
+    assert joined["parsedData"]["expiry"] == "2034-11-27"
+    split_card = read_identity(
+        """<svg xmlns="http://www.w3.org/2000/svg">
+        <text>Adresse</text><text>93110 RASNY-SOUS-B015</text>
+        <text>Carte valabie jusqu'au : 27 11. 2034</text>
+        <text>délivrée le: 28.11.2019</text>
+        </svg>""".encode()
+    )
+    assert split_card["parsedData"]["address"] == "93110 RASNY-SOUS-B015"
+    assert split_card["parsedData"]["expiry"] == "2034-11-27"
     bilingual = read_identity(
         """<svg xmlns="http://www.w3.org/2000/svg">
         <text>Nom / Surname</text><text>MILADI</text>
@@ -1129,6 +1145,108 @@ def test_model_service_routes_stay_off_clarity(tmp_path: Path):
         assert "/api/v1/collection-flow/sync/context" in served
         assert "/v1/ingest/{object_type}" in served
         assert "/v1/decisions/all" in served
+
+
+def test_one_verification_per_client_until_expiry(tmp_path):
+    from app.models import KycCycle
+
+    entity = {
+        "type": "individual",
+        "id": "phone-client-1",
+        "data": {"firstName": "Test", "lastName": "Sept", "dateOfBirth": "2000-02-02"},
+    }
+    with _client(tmp_path) as client:
+        headers = {"Authorization": f"Bearer {BALLERINE_API_KEY}"}
+        first = client.post(
+            "/api/v1/external/workflows/run",
+            headers=headers,
+            json={"workflowId": "kyc_collection_flow", "context": {"entity": entity, "documents": []}},
+        )
+        assert first.status_code == 200, first.text
+        updated = {
+            **entity,
+            "data": {**entity["data"], "firstName": "Mohamed", "lastName": "Amine"},
+        }
+        second = client.post(
+            "/api/v1/external/workflows/run",
+            headers=headers,
+            json={"workflowId": "kyc_collection_flow", "context": {"entity": updated, "documents": []}},
+        )
+        assert second.status_code == 200, second.text
+        assert second.json()["workflowRuntimeId"] == first.json()["workflowRuntimeId"]
+        customer_id = first.json()["ballerineEntityId"]
+        listed = client.get("/api/v1/external/workflows", headers=headers)
+        same = [row for row in listed.json()["results"] if row.get("endUserId") == customer_id]
+        assert len(same) == 1
+        analyst = {"Authorization": f"Bearer {_login(client, ANALYST_EMAIL)}"}
+        profile = client.get(f"/api/clarity/v1/customers/{customer_id}", headers=analyst)
+        assert profile.json()["display_name"] == "Mohamed Amine"
+
+        from app.models import WorkflowInstance
+
+        session = client.app.state.database.session_factory()
+        cycle = session.query(KycCycle).filter(KycCycle.customer_id == customer_id).one()
+        cycle.status = "valid"
+        cycle.validated_at = utcnow()
+        cycle.expires_at = utcnow() + timedelta(days=300)
+        workflow = session.query(WorkflowInstance).filter(WorkflowInstance.customer_id == customer_id).one()
+        workflow.status = "completed"
+        workflow.state = "approved"
+        session.commit()
+        session.close()
+        blocked = client.post(
+            "/api/v1/external/workflows/run",
+            headers=headers,
+            json={"workflowId": "kyc_collection_flow", "context": {"entity": updated, "documents": []}},
+        )
+        assert blocked.status_code == 409, blocked.text
+
+        session = client.app.state.database.session_factory()
+        cycle = session.query(KycCycle).filter(KycCycle.customer_id == customer_id, KycCycle.status == "valid").one()
+        cycle.expires_at = utcnow() - timedelta(days=1)
+        session.commit()
+        session.close()
+        renewed = client.post(
+            "/api/v1/external/workflows/run",
+            headers=headers,
+            json={"workflowId": "kyc_collection_flow", "context": {"entity": updated, "documents": []}},
+        )
+        assert renewed.status_code == 200, renewed.text
+        assert renewed.json()["workflowRuntimeId"] != first.json()["workflowRuntimeId"]
+        assert renewed.json()["ballerineEntityId"] == customer_id
+        listed = client.get("/api/v1/external/workflows", headers=headers)
+        same = [row for row in listed.json()["results"] if row.get("endUserId") == customer_id]
+        assert len(same) == 2
+
+
+def test_kyc_validity_defaults_to_one_year(tmp_path):
+    with _client(tmp_path) as client:
+        admin = {"Authorization": f"Bearer {_login(client, ADMIN_EMAIL)}"}
+        current = client.get("/api/clarity/v1/administration/kyc", headers=admin)
+        assert current.status_code == 200, current.text
+        assert current.json()["kyc_validity_years"] == 1
+        saved = client.patch("/api/clarity/v1/administration/kyc", headers=admin, json={"kyc_validity_years": 2})
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["kyc_validity_years"] == 2
+        analyst = {"Authorization": f"Bearer {_login(client, ANALYST_EMAIL)}"}
+        denied = client.patch("/api/clarity/v1/administration/kyc", headers=analyst, json={"kyc_validity_years": 3})
+        assert denied.status_code == 403
+
+
+def test_admin_can_purge_clients_and_verifications(tmp_path):
+    with _client(tmp_path) as client:
+        analyst = {"Authorization": f"Bearer {_login(client, ANALYST_EMAIL)}"}
+        denied = client.post("/api/clarity/v1/administration/purge-clients", headers=analyst)
+        assert denied.status_code == 403
+        before = client.get("/api/clarity/v1/customers", headers=analyst)
+        assert before.json()
+        admin = {"Authorization": f"Bearer {_login(client, ADMIN_EMAIL)}"}
+        purged = client.post("/api/clarity/v1/administration/purge-clients", headers=admin)
+        assert purged.status_code == 200, purged.text
+        assert purged.json()["customers"] > 0
+        assert client.get("/api/clarity/v1/customers", headers=analyst).json() == []
+        assert client.get("/api/clarity/v1/desks/kyc", headers=analyst).json() == []
+        assert client.get("/api/clarity/v1/administration/users", headers=admin).json()
 
 
 def normalize_template(path: str) -> str:
