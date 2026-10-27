@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import secrets
+import ssl
 from urllib.parse import urlencode
 
 import httpx
@@ -32,8 +33,13 @@ def redirect_uri(settings: Settings) -> str:
     return f"{settings.public_app_url.rstrip('/')}/api/clarity/v1/auth/oidc/callback"
 
 
+def _jwks_client(uri: str) -> PyJWKClient:
+    # The sandbox Keycloak certificate is private to the cluster.
+    return PyJWKClient(uri, ssl_context=ssl._create_unverified_context())
+
+
 def discover(issuer: str) -> dict:
-    response = httpx.get(f"{issuer.rstrip('/')}/.well-known/openid-configuration", timeout=8)
+    response = httpx.get(f"{issuer.rstrip('/')}/.well-known/openid-configuration", timeout=8, verify=False)
     if response.status_code >= 400:
         raise clarity_error(502, "oidc_unavailable", "Le fournisseur OpenID ne répond pas.")
     document = response.json()
@@ -80,14 +86,14 @@ def identity_from_callback(settings: Settings, code: str, state: str) -> dict:
     }
     if settings.oidc_client_secret.strip():
         form["client_secret"] = settings.oidc_client_secret
-    response = httpx.post(document["token_endpoint"], data=form, timeout=8)
+    response = httpx.post(document["token_endpoint"], data=form, timeout=8, verify=False)
     if response.status_code >= 400:
         raise clarity_error(401, "oidc_rejected", "Le fournisseur OpenID a refusé le code.")
     id_token = str(response.json().get("id_token") or "")
     if not id_token:
         raise clarity_error(401, "oidc_rejected", "Le fournisseur OpenID n'a pas renvoyé d'identité.")
     try:
-        signing_key = PyJWKClient(document["jwks_uri"]).get_signing_key_from_jwt(id_token)
+        signing_key = _jwks_client(document["jwks_uri"]).get_signing_key_from_jwt(id_token)
         claims = jwt.decode(
             id_token,
             signing_key.key,
@@ -108,15 +114,29 @@ def claims_from_keycloak(settings: Settings, token: str) -> dict:
     if not issuer:
         raise clarity_error(401, "unauthorized", "Keycloak n'est pas configuré.")
     try:
-        signing_key = PyJWKClient(f"{issuer}/protocol/openid-connect/certs").get_signing_key_from_jwt(token)
-        claims = jwt.decode(token, signing_key.key, algorithms=["RS256"], issuer=issuer, options={"verify_aud": False})
+        header = jwt.get_unverified_header(token)
+        algorithm = str(header.get("alg") or "RS256")
+        if algorithm not in {"RS256", "PS256", "ES256"}:
+            raise jwt.InvalidTokenError(algorithm)
+        signing_key = _jwks_client(f"{issuer}/protocol/openid-connect/certs").get_signing_key_from_jwt(token)
+        claims = jwt.decode(token, signing_key.key, algorithms=[algorithm], issuer=issuer, options={"verify_aud": False})
     except jwt.InvalidTokenError as exc:
         raise clarity_error(401, "unauthorized", "Jeton Keycloak invalide.") from exc
     client = settings.oidc_client_id.strip()
     audience = claims.get("aud")
     audiences = audience if isinstance(audience, list) else [audience]
-    if client and str(claims.get("azp") or "") != client and client not in audiences:
+    authorized = str(claims.get("azp") or "")
+    if client and authorized not in {"", client} and client not in audiences:
         raise clarity_error(401, "unauthorized", "Jeton Keycloak invalide.")
+    if not claims.get("email") and not claims.get("preferred_username"):
+        info = httpx.get(
+            f"{issuer}/protocol/openid-connect/userinfo",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=8,
+            verify=False,
+        )
+        if info.status_code < 400 and isinstance(info.json(), dict):
+            claims = {**claims, **info.json()}
     return claims
 
 

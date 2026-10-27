@@ -1432,7 +1432,7 @@ def test_oidc_user_stays_pending_until_an_admin_assigns_a_role(tmp_path):
         }
 
     class FakeJwk:
-        def __init__(self, uri: str):
+        def __init__(self, uri: str, **_kwargs):
             self.uri = uri
 
         def get_signing_key_from_jwt(self, token: str):
@@ -1444,7 +1444,7 @@ def test_oidc_user_stays_pending_until_an_admin_assigns_a_role(tmp_path):
             Signing.key = public
             return Signing()
 
-    def fake_post(url, data=None, timeout=None):
+    def fake_post(url, data=None, timeout=None, **_kwargs):
         pending = jwt.decode(holder["state"], settings.jwt_secret, algorithms=["HS256"])
         now = datetime.now(timezone.utc)
         token = jwt.encode(
@@ -1553,7 +1553,7 @@ def test_keycloak_mifos_is_admin_and_can_give_several_roles(tmp_path):
     )
 
     class FakeJwk:
-        def __init__(self, uri: str):
+        def __init__(self, uri: str, **_kwargs):
             self.uri = uri
 
         def get_signing_key_from_jwt(self, raw: str):

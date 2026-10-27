@@ -11,7 +11,7 @@ import WorkflowEditor from "./WorkflowEditor";
 import { AdminBoard, AlertBoard, AuditBoard, IntegrationBoard, ReportBoard, ReviewBoard, RiskBoard, TransactionBoard } from "./Workboards";
 import { QueryStack } from "./QueryStack";
 import { api, searchPage } from "../lib/api";
-import { login as keycloakLogin, logout as keycloakLogout, startKeycloak } from "../lib/keycloak";
+import { logout as keycloakLogout, startKeycloak } from "../lib/keycloak";
 
 const GROUPS = [
   {
@@ -120,7 +120,6 @@ const CLIENT_RISKS = [
 export default function Workspace({ section, customerId }: { section: string; customerId?: string }) {
   const pathname = usePathname();
   const [token, setToken] = useState<string | null>(null);
-  const [ready, setReady] = useState(false);
   const [account, setAccount] = useState<{ name?: string; role?: string; roles?: string[] } | null>(null);
   const [error, setError] = useState("");
   const [data, setData] = useState<unknown>(null);
@@ -138,12 +137,10 @@ export default function Workspace({ section, customerId }: { section: string; cu
           sessionStorage.removeItem("clarity_token");
           setToken(null);
         }
-        setReady(true);
       })
       .catch(() => {
         if (cancelled) return;
         setError("Keycloak est indisponible.");
-        setReady(true);
       });
     return () => {
       cancelled = true;
@@ -190,24 +187,8 @@ export default function Workspace({ section, customerId }: { section: string; cu
     void keycloakLogout();
   }
 
-  if (!ready) {
-    return (
-      <section className="login home">
-        <img className="mark" src="/logo.svg" alt="" width={72} height={72} />
-        <p className="lede">Connexion…</p>
-      </section>
-    );
-  }
-
   if (!token) {
-    return (
-      <section className="login home">
-        <img className="mark" src="/logo.svg" alt="" width={72} height={72} />
-        <div className="brand">ClarityCheck<span>KYC · KYB · AML · Conformité</span></div>
-        {error ? <p className="error">{error}</p> : null}
-        <button type="button" onClick={() => void keycloakLogin()}>Se connecter</button>
-      </section>
-    );
+    return error ? <p className="error">{error}</p> : null;
   }
 
   if (!account) {

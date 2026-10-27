@@ -12,7 +12,7 @@ export function startKeycloak(): Promise<Keycloak> {
   if (!starting) {
     starting = import("keycloak-js").then(async ({ default: KeycloakClient }) => {
       const client = new KeycloakClient(keycloakConfig);
-      await client.init({ onLoad: "check-sso", pkceMethod: "S256", checkLoginIframe: false });
+      await client.init({ onLoad: "login-required", pkceMethod: "S256", checkLoginIframe: false });
       return client;
     });
   }
