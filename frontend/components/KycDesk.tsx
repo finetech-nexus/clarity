@@ -138,7 +138,7 @@ export default function KycDesk() {
       const paddle = (refreshed.documents || []).some((item) => item.ocr?.engine === "paddleocr");
       setMessage(found
         ? paddle
-          ? "Lecture par le modèle PaddleOCR. Ce n'est pas une vérification de production."
+          ? "Lecture par le modèle PP-OCRv5. Ce n'est pas une vérification de production."
           : "Lecture enregistrée à partir de la carte d'identité et du passeport. Ce n'est pas une vérification de production."
         : "Aucune identité lue sur la carte ou le passeport.");
       await loadQueue(selected);
@@ -277,7 +277,7 @@ export default function KycDesk() {
                       </button>
                       <button type="submit">Enregistrer</button>
                     </div>
-                    <p className="label">Une seule lecture PaddleOCR pour la carte d'identité et le passeport. Ce n'est pas une vérification de production.</p>
+                    <p className="label">Une seule lecture PP-OCRv5 pour la carte d'identité et le passeport. Ce n'est pas une vérification de production.</p>
                   </form>
                 ) : <p className="label">Aucune carte d'identité ou passeport sur ce dossier.</p>}
               </article>

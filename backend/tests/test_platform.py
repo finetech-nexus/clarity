@@ -713,6 +713,41 @@ def test_document_ocr_reads_labels_and_mrz():
     assert garbage["parsedData"]["lastName"] == ""
     assert garbage["parsedData"]["dateOfBirth"] == ""
     assert garbage["mrz"] is False
+    french = read_identity(
+        """<svg xmlns="http://www.w3.org/2000/svg">
+        <text>IDFRADUPONT&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;000000</text>
+        <text>1234567890122MARIE&lt;LOUISE&lt;&lt;8501019F2</text>
+        <text>Carte valable jusqu'au : 01.01.2030</text>
+        </svg>""".encode()
+    )
+    assert french["mrz"] is True
+    assert french["parsedData"]["firstName"] == "Marie Louise"
+    assert french["parsedData"]["lastName"] == "Dupont"
+    assert french["parsedData"]["dateOfBirth"] == "1985-01-01"
+    assert french["parsedData"]["nationality"] == "FRA"
+    assert french["parsedData"]["documentNumber"] == "123456789012"
+    assert french["parsedData"]["expiry"] == "2030-01-01"
+    assert french["parsedData"]["gender"] == "F"
+    broken = read_identity(
+        """<svg xmlns="http://www.w3.org/2000/svg">
+        <text>IDFRADUPONT&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;000000</text>
+        <text>1234567890120MARIE&lt;LOUISE&lt;&lt;0002029F2</text>
+        </svg>""".encode()
+    )
+    assert broken["mrz"] is False
+    assert broken["parsedData"]["firstName"] == ""
+    assert broken["parsedData"]["lastName"] == ""
+    assert broken["parsedData"]["dateOfBirth"] == ""
+    repaired = read_identity(
+        """<svg xmlns="http://www.w3.org/2000/svg">
+        <text>IDFRADUPONT&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;000000</text>
+        <text>1234567890122M0HAMED&lt;&lt;AMINE8306029M2</text>
+        </svg>""".encode()
+    )
+    assert repaired["mrz"] is True
+    assert repaired["parsedData"]["firstName"] == "Mohamed Amine"
+    assert repaired["parsedData"]["lastName"] == "Dupont"
+    assert repaired["parsedData"]["dateOfBirth"] == "1983-06-02"
 
 
 def test_paddle_lines_follow_the_page_from_top_to_bottom():

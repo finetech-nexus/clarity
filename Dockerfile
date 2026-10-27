@@ -15,28 +15,21 @@ WORKDIR /srv/clarity
 COPY backend/requirements.txt /srv/clarity/backend/requirements.txt
 RUN pip install --no-cache-dir -r /srv/clarity/backend/requirements.txt
 
-# Weights only. Do not import Paddle here: it segfaults under QEMU when the
-# image is built for the other architecture.
-ENV CLARITY_PADDLE_DET=/opt/paddleocr/det \
-    CLARITY_PADDLE_REC=/opt/paddleocr/rec \
-    PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True \
+# PP-OCRv5 weights in ONNX. The Paddle interpreter crashes on ARM, including
+# this image's published arm64 build, so the models run through ONNX Runtime.
+ENV CLARITY_OCR_DET=/opt/ppocr/det.onnx \
+    CLARITY_OCR_REC=/opt/ppocr/rec.onnx \
+    CLARITY_OCR_KEYS=/opt/ppocr/latin_dict.txt \
     OMP_NUM_THREADS=1
 RUN set -eux; \
-    base="https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0"; \
-    fetch() { \
-      name="$1"; dest="$2"; \
-      curl -fsSL "$base/${name}_infer.tar" -o "/tmp/${name}.tar"; \
-      rm -rf "/tmp/${name}"; mkdir -p "/tmp/${name}"; \
-      tar -xf "/tmp/${name}.tar" -C "/tmp/${name}"; \
-      dir="$(find "/tmp/${name}" -name inference.pdiparams -printf '%h\n' | head -1)"; \
-      test -n "$dir"; \
-      rm -rf "$dest"; mkdir -p "$(dirname "$dest")"; \
-      mv "$dir" "$dest"; \
-      test -s "$dest/inference.pdiparams"; \
-      rm -f "/tmp/${name}.tar"; \
-    }; \
-    fetch PP-OCRv5_server_det /opt/paddleocr/det; \
-    fetch latin_PP-OCRv5_mobile_rec /opt/paddleocr/rec
+    mkdir -p /opt/ppocr; \
+    base="https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.2"; \
+    curl -fsSL "$base/onnx/PP-OCRv5/det/ch_PP-OCRv5_det_server.onnx" -o /opt/ppocr/det.onnx; \
+    curl -fsSL "$base/onnx/PP-OCRv5/rec/latin_PP-OCRv5_rec_mobile.onnx" -o /opt/ppocr/rec.onnx; \
+    curl -fsSL "$base/paddle/PP-OCRv5/rec/latin_PP-OCRv5_rec_mobile/ppocrv5_latin_dict.txt" -o /opt/ppocr/latin_dict.txt; \
+    echo "0f8846b1d4bba223a2a2f9d9b44022fbc22cc019051a602b41a7fda9667e4cad  /opt/ppocr/det.onnx" | sha256sum -c -; \
+    echo "b20bd37c168a570f583afbc8cd7925603890efbcdc000a59e22c269d160b5f5a  /opt/ppocr/rec.onnx" | sha256sum -c -; \
+    test -s /opt/ppocr/latin_dict.txt
 
 COPY backend /srv/clarity/backend
 COPY flowable /srv/clarity/flowable

@@ -1,11 +1,13 @@
 """Read identity fields from a stored document.
 
-Photos are read by the PP-OCRv5 models shipped in the image. The text embedded
-in the file, then Tesseract, are used only when those models are not installed.
+Photos are read by the PP-OCRv5 models shipped in the image, through ONNX
+Runtime. The text embedded in the file, then Tesseract, are used only when
+those models are not installed.
 The reader never copies the name the customer typed. A local read is not a
 production identity check.
 """
 
+import logging
 import os
 import re
 import shutil
@@ -17,10 +19,12 @@ import xml.etree.ElementTree as ET
 from datetime import date
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 _ACCOUNT = ("firstName", "lastName", "dateOfBirth", "nationality", "documentNumber", "expiry", "gender", "address")
 _LABELS = (
     ("dateOfBirth", ("date de naissance", "date of birth", "ne e le", "nee le", "ne le", "dob")),
-    ("expiry", ("date d expiration", "date expiration", "expiration", "expiry", "expires")),
+    ("expiry", ("date d expiration", "date expiration", "carte valable jusqu au", "carte valable", "valable jusqu au", "expiration", "expiry", "expires")),
     ("lastName", ("nom de famille", "surname", "family name", "last name")),
     ("firstName", ("given names", "given name", "first names", "first name")),
     ("nationality", ("nationalite", "nationality")),
@@ -62,18 +66,19 @@ _PADDLE_LOCK = threading.Lock()
 _PADDLE_ENGINE = None
 
 
-def _paddle_dir(name: str, fallback: str) -> Path:
+def _ocr_file(name: str, fallback: str) -> Path:
     return Path(os.environ.get(name, fallback))
 
 
 def _paddle_ready() -> bool:
-    det = _paddle_dir("CLARITY_PADDLE_DET", "/opt/paddleocr/det")
-    rec = _paddle_dir("CLARITY_PADDLE_REC", "/opt/paddleocr/rec")
-    return (det / "inference.pdiparams").is_file() and (rec / "inference.pdiparams").is_file()
+    det = _ocr_file("CLARITY_OCR_DET", "/opt/ppocr/det.onnx")
+    rec = _ocr_file("CLARITY_OCR_REC", "/opt/ppocr/rec.onnx")
+    keys = _ocr_file("CLARITY_OCR_KEYS", "/opt/ppocr/latin_dict.txt")
+    return det.is_file() and rec.is_file() and keys.is_file()
 
 
 def _local_paddle():
-    """Load the models shipped in the image. Missing files mean this environment has no model."""
+    """Load the PP-OCRv5 models shipped in the image. Missing files mean this environment has no model."""
     global _PADDLE_ENGINE
     if _PADDLE_ENGINE is not None:
         return _PADDLE_ENGINE or None
@@ -83,27 +88,31 @@ def _local_paddle():
         if not _paddle_ready():
             _PADDLE_ENGINE = False
             return None
-        os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
         os.environ.setdefault("OMP_NUM_THREADS", "1")
-        det = _paddle_dir("CLARITY_PADDLE_DET", "/opt/paddleocr/det")
-        rec = _paddle_dir("CLARITY_PADDLE_REC", "/opt/paddleocr/rec")
         try:
-            from paddleocr import PaddleOCR
+            from rapidocr import RapidOCR
+            from rapidocr.utils.typings import LangRec, ModelType, OCRVersion
 
-            _PADDLE_ENGINE = PaddleOCR(
-                text_detection_model_name="PP-OCRv5_server_det",
-                text_detection_model_dir=str(det),
-                text_recognition_model_name="latin_PP-OCRv5_mobile_rec",
-                text_recognition_model_dir=str(rec),
-                use_doc_orientation_classify=False,
-                use_doc_unwarping=False,
-                use_textline_orientation=False,
-                text_det_limit_side_len=1600,
-                text_det_limit_type="max",
-                text_det_unclip_ratio=1.8,
-                text_rec_score_thresh=0.35,
+            _PADDLE_ENGINE = RapidOCR(
+                params={
+                    "Global.use_cls": False,
+                    "Global.text_score": 0.35,
+                    "Global.max_side_len": 2200,
+                    "Det.model_path": str(_ocr_file("CLARITY_OCR_DET", "/opt/ppocr/det.onnx")),
+                    "Det.ocr_version": OCRVersion.PPOCRV5,
+                    "Det.model_type": ModelType.SERVER,
+                    "Det.limit_side_len": 1600,
+                    "Det.limit_type": "max",
+                    "Det.unclip_ratio": 1.8,
+                    "Rec.model_path": str(_ocr_file("CLARITY_OCR_REC", "/opt/ppocr/rec.onnx")),
+                    "Rec.rec_keys_path": str(_ocr_file("CLARITY_OCR_KEYS", "/opt/ppocr/latin_dict.txt")),
+                    "Rec.lang_type": LangRec.LATIN,
+                    "Rec.ocr_version": OCRVersion.PPOCRV5,
+                    "Rec.model_type": ModelType.MOBILE,
+                }
             )
         except Exception:
+            logger.warning("PP-OCRv5 did not start", exc_info=True)
             _PADDLE_ENGINE = False
             return None
     return _PADDLE_ENGINE or None
@@ -191,6 +200,31 @@ def _prepare_photo(content: bytes) -> tuple[bytes, str]:
         return content, suffix
 
 
+def _rapid_lines(result) -> str:
+    texts = list(getattr(result, "txts", None) or [])
+    scores = list(getattr(result, "scores", None) or [])
+    boxes = list(getattr(result, "boxes", None) or [])
+    rows: list[tuple[float, str]] = []
+    for index, text in enumerate(texts):
+        if not str(text).strip():
+            continue
+        if index < len(scores):
+            try:
+                if float(scores[index]) < 0.35:
+                    continue
+            except (TypeError, ValueError):
+                pass
+        y = float(index)
+        if index < len(boxes) and boxes[index] is not None:
+            try:
+                y = min(float(point[1]) for point in boxes[index])
+            except (TypeError, ValueError, IndexError):
+                y = float(index)
+        rows.append((y, str(text).strip()))
+    rows.sort(key=lambda row: row[0])
+    return "\n".join(text for _, text in rows)
+
+
 def _paddle_read(content: bytes) -> tuple[str, dict, bool]:
     """Read a photo with the local PP-OCRv5 models. SVG text stays in the file parser."""
     if not _image_suffix(content):
@@ -203,11 +237,13 @@ def _paddle_read(content: bytes) -> tuple[str, dict, bool]:
         with tempfile.NamedTemporaryFile(suffix=suffix) as handle:
             handle.write(prepared)
             handle.flush()
-            predict = getattr(engine, "predict", None) or engine.ocr
-            result = predict(handle.name)
+            result = engine(handle.name)
     except Exception:
+        logger.warning("PP-OCRv5 could not read the photo", exc_info=True)
         return "", {}, False
-    return _paddle_lines(result), {}, True
+    if result is None:
+        return "", {}, True
+    return _rapid_lines(result), {}, True
 
 
 def _merge_paddle_fields(parsed: dict, fields: dict) -> None:
@@ -474,9 +510,17 @@ def _mrz_lines(text: str) -> list[str]:
     found = []
     for raw in text.splitlines():
         compact = re.sub(r"\s+", "", raw.upper())
-        if re.fullmatch(r"[A-Z0-9<]{30}", compact) or re.fullmatch(r"[A-Z0-9<]{44}", compact):
+        if compact.startswith("IDFRA") and re.fullmatch(r"[A-Z0-9<]{72}", compact):
+            found.append(compact[:36])
+            found.append(compact[36:])
+            continue
+        if re.fullmatch(r"[A-Z0-9<]{30}|[A-Z0-9<]{36}|[A-Z0-9<]{44}", compact):
             found.append(compact)
     return found
+
+
+def _mrz_alpha(field: str) -> str:
+    return re.sub(r"\s+", " ", field.replace("<", " ")).strip().title()
 
 
 def _assign_name(fields: dict[str, str], first: str, last: str) -> None:
@@ -525,10 +569,47 @@ def _apply_td1(line_one: str, line_two: str, line_three: str, fields: dict[str, 
     return True
 
 
+_MRZ_DIGIT_AS_LETTER = str.maketrans("01258", "OIZSB")
+
+
+def _repair_cni_names(line_one: str, line_two: str) -> tuple[str, str]:
+    """A digit inside a name is an OCR slip. The composite check digit decides if the repair is real."""
+    surname = line_one[5:30].translate(_MRZ_DIGIT_AS_LETTER)
+    given = line_two[13:27].translate(_MRZ_DIGIT_AS_LETTER)
+    return line_one[:5] + surname + line_one[30:], line_two[:13] + given + line_two[27:]
+
+
+def _apply_cni(line_one: str, line_two: str, fields: dict[str, str]) -> bool:
+    """French identity card issued before 2021: two lines of 36, surname then given names."""
+    if len(line_one) != 36 or len(line_two) != 36 or not line_one.startswith("IDFRA"):
+        return False
+    if not (_check_matches(line_two[0:12], line_two[12]) and _check_matches(line_two[27:33], line_two[33])):
+        return False
+    repaired_one, repaired_two = _repair_cni_names(line_one, line_two)
+    if _check_matches(line_one + line_two[:35], line_two[35]):
+        pass
+    elif _check_matches(repaired_one + repaired_two[:35], repaired_two[35]):
+        line_one, line_two = repaired_one, repaired_two
+    else:
+        return False
+    first = _mrz_alpha(line_two[13:27])
+    last = _mrz_alpha(line_one[5:30])
+    if not (_plausible_name(first) or _plausible_name(last)):
+        return False
+    _assign_name(fields, first, last)
+    fields["documentNumber"] = line_two[0:12].replace("<", "")
+    fields["nationality"] = "FRA"
+    fields["dateOfBirth"] = _mrz_date(line_two[27:33], True)
+    fields["gender"] = line_two[34] if line_two[34] in {"M", "F"} else ""
+    return True
+
+
 def _fill_mrz(text: str, fields: dict[str, str]) -> bool:
     """Accept a passport or identity-card MRZ only when its check digits match."""
     lines = _mrz_lines(text)
     for index in range(len(lines) - 1):
+        if _apply_cni(lines[index], lines[index + 1], fields):
+            return True
         if _apply_td3(lines[index], lines[index + 1], fields):
             return True
     for index in range(len(lines) - 2):
