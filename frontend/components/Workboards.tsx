@@ -323,12 +323,29 @@ export function IntegrationBoard() {
   );
 }
 
+const TEAM_ROLES = [
+  ["analyst", "Analyste"],
+  ["checker", "Checker"],
+  ["investigator", "Investigateur"],
+  ["admin", "Administrateur"],
+] as const;
+
+function roleList(row: Row): string[] {
+  if (Array.isArray(row.roles)) return row.roles.map(String);
+  return String(row.role || "").split(",").map((item) => item.trim()).filter(Boolean);
+}
+
 export function AdminBoard() {
+  const [tab, setTab] = useState<"equipe" | "config">("equipe");
   const [rows, setRows] = useState<Row[]>([]);
   const [me, setMe] = useState<Row | null>(null);
   const [error, setError] = useState("");
   const [years, setYears] = useState("1");
   const [saved, setSaved] = useState("");
+  const [givenName, setGivenName] = useState("");
+  const [familyName, setFamilyName] = useState("");
+  const [email, setEmail] = useState("");
+  const [chosen, setChosen] = useState<string[]>(["analyst"]);
   useEffect(() => {
     void api<Row>("/api/clarity/v1/me").then(setMe);
     void api<Row[]>("/api/clarity/v1/administration/users").then(setRows).catch((err: Error) => setError(err.message));
@@ -349,49 +366,103 @@ export function AdminBoard() {
       setError(err instanceof Error ? err.message : "Enregistrement refusé");
     }
   }
-  async function assignRole(id: string, role: string) {
+  async function assignRoles(id: string, roles: string[]) {
     setError("");
     try {
-      const updated = await api<Row>(`/api/clarity/v1/administration/users/${id}`, { method: "PATCH", body: JSON.stringify({ role }) });
-      setRows((current) => current.map((row) => (row.id === id ? { ...row, role: updated.role } : row)));
+      const updated = await api<Row>(`/api/clarity/v1/administration/users/${id}`, { method: "PATCH", body: JSON.stringify({ roles }) });
+      setRows((current) => current.map((row) => (row.id === id ? updated : row)));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Attribution refusée");
     }
   }
+  async function addMember(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    try {
+      const created = await api<Row>("/api/clarity/v1/administration/users", {
+        method: "POST",
+        body: JSON.stringify({ given_name: givenName, family_name: familyName, email, roles: chosen }),
+      });
+      setRows((current) => [...current, created]);
+      setGivenName("");
+      setFamilyName("");
+      setEmail("");
+      setChosen(["analyst"]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ajout refusé");
+    }
+  }
   return (
-    <Board title="Administration" lede={me ? `Session ${String(me.name)} · ${String(me.role)}. Un compte OpenID reste en attente tant qu'un rôle ne lui est pas attribué.` : "Comptes du tenant."}>
+    <Board title="Administration" lede={me ? `Session ${String(me.name)}.` : "Équipe et configuration."}>
+      <div className="tabs">
+        <button className={tab === "equipe" ? "active" : ""} type="button" onClick={() => setTab("equipe")}>Équipe</button>
+        <button className={tab === "config" ? "active" : ""} type="button" onClick={() => setTab("config")}>Configuration globale</button>
+      </div>
       {error ? <p className="error">{error}</p> : null}
-      {saved ? <p className="label">{saved}</p> : null}
-      <form className="form" onSubmit={(event) => void savePolicy(event)}>
-        <label>
-          Validité du KYC (années)
-          <input min={1} max={10} type="number" value={years} onChange={(event) => setYears(event.target.value)} />
-        </label>
-        <p className="label">Après approbation, la vérification expire à cette échéance. Le client peut alors en ouvrir une nouvelle, qui met à jour sa fiche.</p>
-        <button type="submit">Enregistrer</button>
-      </form>
-      <table className="inbox">
-        <thead><tr><th>Nom</th><th>E-mail</th><th>Rôle</th><th>MFA</th><th>Actif</th></tr></thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={String(row.id)}>
-              <td>{String(row.name)}</td>
-              <td>{String(row.email)}</td>
-              <td>
-                <select aria-label={`Rôle de ${String(row.name)}`} value={String(row.role)} onChange={(event) => void assignRole(String(row.id), event.target.value)}>
-                  <option value="pending">En attente</option>
-                  <option value="analyst">Analyste</option>
-                  <option value="checker">Checker</option>
-                  <option value="investigator">Investigateur</option>
-                  <option value="admin">Administrateur</option>
-                </select>
-              </td>
-              <td>{row.mfa_enabled ? "indiqué" : "non"}</td>
-              <td>{row.active ? "oui" : "non"}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {tab === "config" ? (
+        <form className="form" onSubmit={(event) => void savePolicy(event)}>
+          {saved ? <p className="label">{saved}</p> : null}
+          <label>
+            Validité du KYC (années)
+            <input min={1} max={10} type="number" value={years} onChange={(event) => setYears(event.target.value)} />
+          </label>
+          <p className="label">Après approbation, la vérification expire à cette échéance. Une nouvelle vérification est alors créée pour mettre à jour le client.</p>
+          <button type="submit">Enregistrer</button>
+        </form>
+      ) : (
+        <>
+          <form className="form" onSubmit={(event) => void addMember(event)}>
+            <label>Prénom<input value={givenName} onChange={(event) => setGivenName(event.target.value)} required /></label>
+            <label>Nom<input value={familyName} onChange={(event) => setFamilyName(event.target.value)} required /></label>
+            <label>E-mail<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
+            <div className="checks" role="group" aria-label="Rôles du nouveau membre">
+              {TEAM_ROLES.map(([value, label]) => (
+                <label key={value}>
+                  <input
+                    type="checkbox"
+                    checked={chosen.includes(value)}
+                    onChange={() => setChosen((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value])}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+            <p className="label">L'identifiant est l'e-mail. La personne se connecte ensuite avec Keycloak.</p>
+            <button type="submit">Ajouter</button>
+          </form>
+          <table className="inbox">
+            <thead><tr><th>Nom</th><th>E-mail</th><th>Rôles</th></tr></thead>
+            <tbody>
+              {rows.map((row) => {
+                const held = roleList(row);
+                return (
+                  <tr key={String(row.id)}>
+                    <td>{String(row.name)}</td>
+                    <td>{String(row.email)}</td>
+                    <td>
+                      <div className="checks" role="group" aria-label={`Rôles de ${String(row.name)}`}>
+                        {TEAM_ROLES.map(([value, label]) => (
+                          <label key={value}>
+                            <input
+                              type="checkbox"
+                              checked={held.includes(value)}
+                              onChange={() => {
+                                const next = held.includes(value) ? held.filter((item) => item !== value) : [...held, value];
+                                void assignRoles(String(row.id), next.filter((item) => item !== "pending"));
+                              }}
+                            />
+                            {label}
+                          </label>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </>
+      )}
     </Board>
   );
 }

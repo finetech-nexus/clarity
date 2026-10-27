@@ -33,9 +33,14 @@ class Settings(BaseSettings):
     admin_username: str = "admin"
     admin_password: str = "password"
     oidc_issuer: str = ""
-    oidc_client_id: str = ""
+    oidc_client_id: str = "web-app"
     oidc_client_secret: str = ""
     oidc_redirect_uri: str = ""
+    oidc_admins: str = "mifos"
+
+    @property
+    def oidc_admin_names(self) -> set[str]:
+        return {item.strip().lower() for item in self.oidc_admins.split(",") if item.strip()}
 
     @property
     def cors_origin_list(self) -> list[str]:

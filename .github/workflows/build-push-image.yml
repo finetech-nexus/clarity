@@ -27,6 +27,9 @@ jobs:
             build_args: |
               NEXT_PUBLIC_API_URL=https://clarity.api.dev.sandbox.internal.nbank.fr
               CLARITY_API_UPSTREAM=http://clarity-api.kyc-aml.svc.cluster.local:8095
+              NEXT_PUBLIC_KEYCLOAK_URL=https://iam.dev.sandbox.internal.nbank.fr/auth
+              NEXT_PUBLIC_KEYCLOAK_REALM=internal
+              NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=web-app
     steps:
       - name: Checkout
         uses: actions/checkout@v5

@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.ids import TENANT_ID
 from app.models import Tenant, User
-from app.security import encode_jwt, hash_password
+from app.security import encode_jwt, hash_password, parse_roles, serialize_roles
 from app.services import clarity_error
 
 PENDING_ROLE = "pending"
@@ -102,27 +102,59 @@ def identity_from_callback(settings: Settings, code: str, state: str) -> dict:
     return claims
 
 
+def claims_from_keycloak(settings: Settings, token: str) -> dict:
+    """Validate an access token issued by Keycloak for the same client as the other applications."""
+    issuer = settings.oidc_issuer.strip().rstrip("/")
+    if not issuer:
+        raise clarity_error(401, "unauthorized", "Keycloak n'est pas configuré.")
+    try:
+        signing_key = PyJWKClient(f"{issuer}/protocol/openid-connect/certs").get_signing_key_from_jwt(token)
+        claims = jwt.decode(token, signing_key.key, algorithms=["RS256"], issuer=issuer, options={"verify_aud": False})
+    except jwt.InvalidTokenError as exc:
+        raise clarity_error(401, "unauthorized", "Jeton Keycloak invalide.") from exc
+    client = settings.oidc_client_id.strip()
+    audience = claims.get("aud")
+    audiences = audience if isinstance(audience, list) else [audience]
+    if client and str(claims.get("azp") or "") != client and client not in audiences:
+        raise clarity_error(401, "unauthorized", "Jeton Keycloak invalide.")
+    return claims
+
+
 def provision_oidc_user(db: Session, claims: dict) -> User:
+    from app.config import current_settings
+
     if db.get(Tenant, TENANT_ID) is None:
         raise clarity_error(503, "not_ready", "Le tenant n'est pas prêt.")
-    email = str(claims.get("email") or claims.get("preferred_username") or "").strip().lower()
-    if not email:
-        raise clarity_error(400, "oidc_rejected", "Le fournisseur OpenID n'a pas fourni d'identifiant.")
-    name = str(claims.get("name") or " ".join(part for part in (claims.get("given_name"), claims.get("family_name")) if part) or email)
-    user = db.scalar(select(User).where(User.tenant_id == TENANT_ID, User.email == email))
+    email = str(claims.get("email") or "").strip().lower()
+    username = str(claims.get("preferred_username") or "").strip().lower()
+    keys = [item for item in (email, username) if item]
+    if not keys:
+        raise clarity_error(400, "oidc_rejected", "Keycloak n'a pas fourni d'identifiant.")
+    user = None
+    for key in keys:
+        user = db.scalar(select(User).where(User.tenant_id == TENANT_ID, User.email == key))
+        if user:
+            break
+    given = str(claims.get("given_name") or "").strip()
+    family = str(claims.get("family_name") or "").strip()
+    name = str(claims.get("name") or f"{given} {family}".strip() or keys[0])
+    bootstrap = bool(set(keys) & current_settings().oidc_admin_names)
     if user is None:
         user = User(
             tenant_id=TENANT_ID,
-            email=email,
+            email=email or username,
             full_name=name[:200],
             password_hash=hash_password(secrets.token_urlsafe(24)),
-            role=PENDING_ROLE,
+            role="admin" if bootstrap else PENDING_ROLE,
             active=True,
             mfa_enabled=False,
         )
         db.add(user)
         db.flush()
         return user
-    user.full_name = name[:200]
+    if name:
+        user.full_name = name[:200]
     user.active = True
+    if bootstrap and "admin" not in parse_roles(user.role):
+        user.role = serialize_roles([*parse_roles(user.role), "admin"])
     return user

@@ -68,9 +68,12 @@ def ensure_env_admin(db: Session) -> None:
     """Keep the local administrator on the username and password from the environment."""
     from app.config import current_settings
 
+    if db.get(Tenant, TENANT_ID) is None:
+        return
     settings = current_settings()
     username = settings.admin_username.strip()
-    if not username or not settings.admin_password or db.get(Tenant, TENANT_ID) is None:
+    if not username or not settings.admin_password:
+        ensure_oidc_admins(db)
         return
     digest = hash_password(settings.admin_password)
     user = db.scalar(select(User).where(User.tenant_id == TENANT_ID, User.email == username))
@@ -79,6 +82,38 @@ def ensure_env_admin(db: Session) -> None:
     else:
         user.password_hash = digest
         user.role = "admin"
+        user.active = True
+    db.flush()
+    ensure_oidc_admins(db)
+
+
+def ensure_oidc_admins(db: Session) -> None:
+    """The Keycloak account named in the environment is an administrator."""
+    import secrets
+
+    from app.config import current_settings
+    from app.security import parse_roles, serialize_roles
+
+    if db.get(Tenant, TENANT_ID) is None:
+        return
+    for name in sorted(current_settings().oidc_admin_names):
+        user = db.scalar(select(User).where(User.tenant_id == TENANT_ID, User.email == name))
+        if user is None:
+            db.add(
+                User(
+                    tenant_id=TENANT_ID,
+                    email=name,
+                    full_name="mifos" if name == "mifos" else name,
+                    password_hash=hash_password(secrets.token_urlsafe(24)),
+                    role="admin",
+                    active=True,
+                    mfa_enabled=False,
+                )
+            )
+            continue
+        roles = parse_roles(user.role)
+        if "admin" not in roles:
+            user.role = serialize_roles([*roles, "admin"])
         user.active = True
     db.flush()
 

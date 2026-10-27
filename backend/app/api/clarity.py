@@ -30,7 +30,7 @@ from app.models import (
     WorkflowTask,
 )
 from app.search import present
-from app.security import Principal, encode_jwt, verify_password
+from app.security import Principal, encode_jwt, parse_roles, serialize_roles, verify_password
 from app.services import (
     ApiFailure,
     actor_label,
@@ -233,10 +233,24 @@ def oidc_callback(request: Request, code: str = "", state: str = "", db: Session
     return RedirectResponse(f"{settings.public_app_url.rstrip('/')}/#session={token}", status_code=302)
 
 
+def _user_view(row: User) -> dict:
+    return {
+        "id": row.id,
+        "email": row.email,
+        "name": row.full_name,
+        "role": row.role,
+        "roles": parse_roles(row.role),
+        "mfa_enabled": row.mfa_enabled,
+        "active": row.active,
+    }
+
+
 @router.get("/me")
 def me(principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
     user = db.get(User, principal.user_id)
-    return {"id": user.id, "email": user.email, "name": user.full_name, "role": user.role, "tenant_id": user.tenant_id, "mfa_enabled": user.mfa_enabled}
+    view = _user_view(user)
+    view["tenant_id"] = user.tenant_id
+    return view
 
 
 def _customer_name(db: Session, customer_id: str | None) -> str | None:
@@ -985,29 +999,73 @@ def users(principal: Principal = Depends(clarity_principal), db: Session = Depen
     if not principal.allows("admin"):
         raise clarity_error(403, "forbidden", "Réservé à l'administration.")
     rows = db.scalars(select(User).where(User.tenant_id == principal.tenant_id)).all()
-    return [{"id": row.id, "email": row.email, "name": row.full_name, "role": row.role, "mfa_enabled": row.mfa_enabled, "active": row.active} for row in rows]
+    return [_user_view(row) for row in rows]
+
+
+class NewUserBody(BaseModel):
+    family_name: str
+    given_name: str
+    email: str
+    roles: list[str] = []
 
 
 class UserRoleBody(BaseModel):
-    role: str
+    role: str = ""
+    roles: list[str] = []
+
+
+def _keep_bootstrap_admin(row: User, roles: list[str], settings) -> None:
+    protected = row.email in settings.oidc_admin_names or row.email == settings.admin_username
+    if protected and "admin" not in roles:
+        raise clarity_error(422, "invalid_role", "Ce compte conserve le rôle administrateur.")
+
+
+@router.post("/administration/users", status_code=201)
+def create_user(body: NewUserBody, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    if not principal.allows("admin"):
+        raise clarity_error(403, "forbidden", "Réservé à l'administration.")
+    email = body.email.strip().lower()
+    if "@" not in email or not body.given_name.strip() or not body.family_name.strip():
+        raise clarity_error(422, "invalid_user", "Le nom, le prénom et un e-mail sont requis. L'e-mail est l'identifiant.")
+    if db.scalar(select(User).where(User.tenant_id == principal.tenant_id, User.email == email)):
+        raise clarity_error(409, "exists", "Cet e-mail est déjà un membre de l'équipe.")
+    try:
+        stored = serialize_roles(body.roles)
+    except ValueError as exc:
+        raise clarity_error(422, "invalid_role", "Rôle inconnu.") from exc
+    from app.security import hash_password
+    import secrets
+
+    row = User(
+        tenant_id=principal.tenant_id,
+        email=email,
+        full_name=f"{body.given_name.strip()} {body.family_name.strip()}",
+        password_hash=hash_password(secrets.token_urlsafe(24)),
+        role=stored,
+        active=True,
+    )
+    db.add(row)
+    db.flush()
+    audit(db, principal.tenant_id, actor_label(principal), "user.create", "user", row.id, {"roles": parse_roles(row.role)})
+    return _user_view(row)
 
 
 @router.patch("/administration/users/{user_id}")
 def assign_user_role(user_id: str, body: UserRoleBody, request: Request, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
-    from app.oidc import ASSIGNABLE_ROLES
-
     if not principal.allows("admin"):
         raise clarity_error(403, "forbidden", "Réservé à l'administration.")
-    if body.role not in ASSIGNABLE_ROLES:
-        raise clarity_error(422, "invalid_role", "Rôle inconnu.")
+    wanted = body.roles or ([body.role] if body.role else [])
+    try:
+        stored = serialize_roles(wanted)
+    except ValueError as exc:
+        raise clarity_error(422, "invalid_role", "Rôle inconnu.") from exc
     row = db.get(User, user_id)
     if not row or row.tenant_id != principal.tenant_id:
         raise clarity_error(404, "not_found", "Utilisateur introuvable.")
-    if row.email == request.app.state.settings.admin_username and body.role != "admin":
-        raise clarity_error(422, "invalid_role", "Le compte administrateur configuré conserve le rôle admin.")
-    row.role = body.role
-    audit(db, principal.tenant_id, actor_label(principal), "user.role", "user", row.id, {"role": body.role})
-    return {"id": row.id, "email": row.email, "name": row.full_name, "role": row.role, "active": row.active}
+    _keep_bootstrap_admin(row, parse_roles(stored), request.app.state.settings)
+    row.role = stored
+    audit(db, principal.tenant_id, actor_label(principal), "user.role", "user", row.id, {"roles": parse_roles(stored)})
+    return _user_view(row)
 
 
 @router.get("/reports")

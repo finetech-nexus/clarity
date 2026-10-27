@@ -45,6 +45,30 @@ def verify_payload_signature(secret: str, payload: dict, signature: str) -> bool
     return hmac.compare_digest(expected.lower(), signature.lower())
 
 
+KNOWN_ROLES = ("admin", "checker", "investigator", "analyst", "pending")
+
+
+def parse_roles(value: str | None) -> list[str]:
+    found: list[str] = []
+    for item in str(value or "").split(","):
+        role = item.strip()
+        if role in KNOWN_ROLES and role not in found:
+            found.append(role)
+    if any(role != "pending" for role in found):
+        found = [role for role in found if role != "pending"]
+    return found or ["pending"]
+
+
+def serialize_roles(roles: list[str]) -> str:
+    unknown = [role for role in roles if role not in KNOWN_ROLES]
+    if unknown:
+        raise ValueError(unknown[0])
+    chosen = [role for role in KNOWN_ROLES if role in roles and role != "pending"]
+    if not chosen and "pending" in roles:
+        chosen = ["pending"]
+    return ",".join(chosen or ["pending"])
+
+
 @dataclass(frozen=True)
 class Principal:
     tenant_id: str
@@ -55,6 +79,7 @@ class Principal:
     credential_id: str | None = None
 
     def allows(self, *roles: str) -> bool:
-        if self.role == "admin":
+        held = set(parse_roles(self.role))
+        if "admin" in held:
             return True
-        return self.role in roles
+        return bool(held.intersection(roles))

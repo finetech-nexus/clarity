@@ -1517,6 +1517,83 @@ def test_oidc_user_stays_pending_until_an_admin_assigns_a_role(tmp_path):
         oidc.discover, oidc.PyJWKClient, oidc.httpx.post = original
 
 
+def test_keycloak_mifos_is_admin_and_can_give_several_roles(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    import jwt
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    import app.oidc as oidc
+
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'kc.db'}",
+        seed_demo=True,
+        env="test",
+        flowable_url="",
+        upload_dir=str(tmp_path / "uploads"),
+        jwt_secret="test-secret-test-secret-test-secret",
+        oidc_issuer="https://idp.test/realms/internal",
+        oidc_client_id="web-app",
+        oidc_admins="mifos",
+    )
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    now = datetime.now(timezone.utc)
+    token = jwt.encode(
+        {
+            "iss": settings.oidc_issuer,
+            "azp": "web-app",
+            "preferred_username": "mifos",
+            "given_name": "Mi",
+            "family_name": "Fos",
+            "iat": now,
+            "exp": now + timedelta(minutes=5),
+        },
+        key,
+        algorithm="RS256",
+    )
+
+    class FakeJwk:
+        def __init__(self, uri: str):
+            self.uri = uri
+
+        def get_signing_key_from_jwt(self, raw: str):
+            public = key.public_key()
+
+            class Signing:
+                pass
+
+            Signing.key = public
+            return Signing()
+
+    original = oidc.PyJWKClient
+    oidc.PyJWKClient = FakeJwk
+    try:
+        with TestClient(create_app(settings)) as client:
+            headers = {"Authorization": f"Bearer {token}"}
+            me = client.get("/api/clarity/v1/me", headers=headers)
+            assert me.status_code == 200, me.text
+            assert "admin" in me.json()["roles"]
+            assert client.get("/api/clarity/v1/customers", headers=headers).status_code == 200
+            created = client.post(
+                "/api/clarity/v1/administration/users",
+                headers=headers,
+                json={"given_name": "Nora", "family_name": "Diallo", "email": "Nora.Diallo@bank.test", "roles": ["analyst", "checker"]},
+            )
+            assert created.status_code == 201, created.text
+            assert created.json()["email"] == "nora.diallo@bank.test"
+            assert set(created.json()["roles"]) == {"analyst", "checker"}
+            listed = client.get("/api/clarity/v1/administration/users", headers=headers)
+            mifos = next(row for row in listed.json() if row["email"] == "mifos")
+            refused = client.patch(
+                f"/api/clarity/v1/administration/users/{mifos['id']}",
+                headers=headers,
+                json={"roles": ["analyst"]},
+            )
+            assert refused.status_code == 422
+    finally:
+        oidc.PyJWKClient = original
+
+
 def normalize_template(path: str) -> str:
     import re
 

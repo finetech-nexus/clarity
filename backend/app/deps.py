@@ -4,7 +4,7 @@ from collections.abc import Iterator
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
 
-from app.security import Principal, decode_jwt
+from app.security import Principal, decode_jwt, parse_roles
 from app.services import ApiFailure, credential_for_token, user_by_email
 
 _WINDOWS: dict[str, list[float]] = {}
@@ -82,13 +82,24 @@ def clarity_principal(request: Request, db: Session = Depends(db_session)) -> Pr
         raise ApiFailure(401, {"code": "unauthorized", "message": "Authentification requise."})
     rate_limit(f"clarity:{token[:12]}")
     settings = request.app.state.settings
+    user = None
     try:
         payload = decode_jwt(settings.jwt_secret, token)
-    except Exception as exc:  # noqa: BLE001
-        raise ApiFailure(401, {"code": "unauthorized", "message": "Jeton invalide."}) from exc
-    user = user_by_email(db, payload["tenant_id"], payload["email"])
-    if not user:
-        raise ApiFailure(401, {"code": "unauthorized", "message": "Utilisateur introuvable."})
-    if user.role == "pending" and not request.url.path.rstrip("/").endswith("/me"):
+        user = user_by_email(db, payload["tenant_id"], payload["email"])
+        if not user:
+            raise ApiFailure(401, {"code": "unauthorized", "message": "Utilisateur introuvable."})
+    except ApiFailure:
+        raise
+    except Exception:
+        from app.oidc import claims_from_keycloak, enabled, provision_oidc_user
+
+        if not enabled(settings):
+            raise ApiFailure(401, {"code": "unauthorized", "message": "Jeton invalide."})
+        try:
+            claims = claims_from_keycloak(settings, token)
+        except Exception as exc:  # noqa: BLE001
+            raise ApiFailure(401, {"code": "unauthorized", "message": "Jeton Keycloak invalide."}) from exc
+        user = provision_oidc_user(db, claims)
+    if parse_roles(user.role) == ["pending"] and not request.url.path.rstrip("/").endswith("/me"):
         raise ApiFailure(403, {"code": "role_pending", "message": "Un administrateur doit vous attribuer un rôle."})
     return Principal(user.tenant_id, "clarity", user.id, user.email, user.role)

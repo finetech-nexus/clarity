@@ -10,7 +10,8 @@ import StudioDesk from "./StudioDesk";
 import WorkflowEditor from "./WorkflowEditor";
 import { AdminBoard, AlertBoard, AuditBoard, IntegrationBoard, ReportBoard, ReviewBoard, RiskBoard, TransactionBoard } from "./Workboards";
 import { QueryStack } from "./QueryStack";
-import { API_URL, api, searchPage } from "../lib/api";
+import { api, searchPage } from "../lib/api";
+import { login as keycloakLogin, logout as keycloakLogout, startKeycloak } from "../lib/keycloak";
 
 const GROUPS = [
   {
@@ -119,27 +120,34 @@ const CLIENT_RISKS = [
 export default function Workspace({ section, customerId }: { section: string; customerId?: string }) {
   const pathname = usePathname();
   const [token, setToken] = useState<string | null>(null);
-  const [account, setAccount] = useState<{ name?: string; role?: string } | null>(null);
-  const [oidc, setOidc] = useState(false);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [ready, setReady] = useState(false);
+  const [account, setAccount] = useState<{ name?: string; role?: string; roles?: string[] } | null>(null);
   const [error, setError] = useState("");
   const [data, setData] = useState<unknown>(null);
   const [profile, setProfile] = useState<Record<string, unknown> | null>(null);
 
   useEffect(() => {
-    const hash = new URLSearchParams(window.location.hash.slice(1));
-    const session = hash.get("session");
-    const params = new URLSearchParams(window.location.search);
-    if (session) {
-      sessionStorage.setItem("clarity_token", session);
-      window.history.replaceState(null, "", window.location.pathname + window.location.search);
-      setToken(session);
-      return;
-    }
-    if (params.get("oidc_error")) setError("La connexion OpenID a été refusée.");
-    setToken(sessionStorage.getItem("clarity_token"));
-    void api<{ enabled: boolean }>("/api/clarity/v1/auth/oidc").then((body) => setOidc(body.enabled)).catch(() => setOidc(false));
+    let cancelled = false;
+    void startKeycloak()
+      .then((client) => {
+        if (cancelled) return;
+        if (client.token) {
+          sessionStorage.setItem("clarity_token", client.token);
+          setToken(client.token);
+        } else {
+          sessionStorage.removeItem("clarity_token");
+          setToken(null);
+        }
+        setReady(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setError("Keycloak est indisponible.");
+        setReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -176,32 +184,29 @@ export default function Workspace({ section, customerId }: { section: string; cu
     void load();
   }, [token, section, customerId]);
 
-  async function login(event: FormEvent) {
-    event.preventDefault();
-    setError("");
-    try {
-      const body = await api<{ access_token: string }>("/api/clarity/v1/auth/login", {
-        method: "POST",
-        body: JSON.stringify({ email, password }),
-      });
-      sessionStorage.setItem("clarity_token", body.access_token);
-      setToken(body.access_token);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Connexion refusée");
-    }
+  function quit() {
+    sessionStorage.removeItem("clarity_token");
+    setToken(null);
+    void keycloakLogout();
+  }
+
+  if (!ready) {
+    return (
+      <section className="login home">
+        <img className="mark" src="/logo.svg" alt="" width={72} height={72} />
+        <p className="lede">Connexion…</p>
+      </section>
+    );
   }
 
   if (!token) {
     return (
-      <form className="login" onSubmit={login}>
-        <div className="brand">Clarity<span>KYC et AML bancaires</span></div>
-        <p className="lede">Les comptes et les listes de cet environnement sont synthétiques.</p>
-        <input aria-label="Identifiant" value={email} onChange={(event) => setEmail(event.target.value)} />
-        <input aria-label="Mot de passe" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
-        {error && <p className="error">{error}</p>}
-        <button type="submit">Entrer</button>
-        {oidc ? <a className="oidc" href={`${API_URL}/api/clarity/v1/auth/oidc/start`}>Se connecter avec OpenID</a> : null}
-      </form>
+      <section className="login home">
+        <img className="mark" src="/logo.svg" alt="" width={72} height={72} />
+        <div className="brand">ClarityCheck<span>KYC · KYB · AML · Conformité</span></div>
+        {error ? <p className="error">{error}</p> : null}
+        <button type="button" onClick={() => void keycloakLogin()}>Se connecter</button>
+      </section>
     );
   }
 
@@ -214,12 +219,13 @@ export default function Workspace({ section, customerId }: { section: string; cu
     );
   }
 
-  if (account.role === "pending") {
+  if (account.role === "pending" || (account.roles?.length === 1 && account.roles[0] === "pending")) {
     return (
       <section className="login">
-        <div className="brand">Clarity<span>KYC et AML bancaires</span></div>
+        <img className="mark" src="/logo.svg" alt="" width={72} height={72} />
+        <div className="brand">ClarityCheck<span>KYC · KYB · AML · Conformité</span></div>
         <p className="lede">Le compte {account.name} est créé. Un administrateur doit lui attribuer un rôle.</p>
-        <button type="button" onClick={() => { sessionStorage.removeItem("clarity_token"); setToken(null); }}>Quitter</button>
+        <button type="button" onClick={quit}>Quitter</button>
       </section>
     );
   }
@@ -227,7 +233,7 @@ export default function Workspace({ section, customerId }: { section: string; cu
   return (
     <div className="shell">
       <aside className="nav">
-        <Link href="/" className="brand">Clarity<span>KYC et AML</span></Link>
+        <Link href="/" className="brand"><img src="/logo.svg" alt="" width={28} height={28} /><span className="title">ClarityCheck<span>KYC · KYB · AML</span></span></Link>
         <nav aria-label="Navigation">
           {GROUPS.map((group) => (
             <div key={group.id}>
@@ -244,10 +250,7 @@ export default function Workspace({ section, customerId }: { section: string; cu
         </nav>
         <button
           className="ghost nav-exit"
-          onClick={() => {
-            sessionStorage.removeItem("clarity_token");
-            setToken(null);
-          }}
+          onClick={quit}
         >
           Quitter
         </button>
@@ -371,12 +374,14 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
   return (
     <>
       <h1>{title}</h1>
-      <p className="lede">Recherche par nom, cases à cocher pour le statut et le risque. Le tri reste sur les colonnes.</p>
+      <p className="lede">Le nom se cherche à part. Le statut de la vérification et le niveau de risque sont deux filtres distincts.</p>
       <div className="filters">
         <label className="field">Nom
           <input aria-label="Filtrer par nom" placeholder="Rechercher" value={name} onChange={(event) => { setPage(0); setName(event.target.value); }} />
         </label>
-        <div className="checks" role="group" aria-label="Statut">
+        <div className="filter-group">
+          <span className="label">Statut de la vérification</span>
+        <div className="checks" role="group" aria-label="Statut de la vérification">
           {CLIENT_STATUSES.map((item) => (
             <label key={item.value}>
               <input
@@ -391,7 +396,10 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
             </label>
           ))}
         </div>
-        <div className="checks" role="group" aria-label="Risque">
+        </div>
+        <div className="filter-group">
+          <span className="label">Niveau de risque</span>
+        <div className="checks" role="group" aria-label="Niveau de risque">
           {CLIENT_RISKS.map((item) => (
             <label key={item.value}>
               <input
@@ -405,6 +413,7 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
               {item.label}
             </label>
           ))}
+        </div>
         </div>
       </div>
       <table className="inbox sheet">

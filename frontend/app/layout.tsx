@@ -2,8 +2,8 @@ import "./globals.css";
 import type { ReactNode } from "react";
 
 export const metadata = {
-  title: "Clarity",
-  description: "Plateforme bancaire KYC et AML",
+  title: "ClarityCheck",
+  description: "KYC, KYB, AML et conformité",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

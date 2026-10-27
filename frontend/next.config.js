@@ -2,6 +2,7 @@
 const upstream = process.env.CLARITY_API_UPSTREAM || "";
 const nextConfig = {
   reactStrictMode: true,
+  transpilePackages: ["keycloak-js"],
   experimental: { proxyTimeout: 180_000 },
   async rewrites() {
     if (!upstream) return [];
