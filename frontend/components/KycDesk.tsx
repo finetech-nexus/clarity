@@ -113,7 +113,7 @@ export default function KycDesk() {
       if (prefer) return prefer;
       if (requested && body.items.some((row) => row.id === requested)) return requested;
       if (current && body.items.some((row) => row.id === current)) return current;
-      return "";
+      return body.items[0]?.id || "";
     });
   }
 
@@ -399,11 +399,6 @@ export function VerificationPreview({ runtimeId }: { runtimeId: string }) {
     <div className="verify-preview">
       <aside className="verify-side">
         <h3>{detail.customer?.display_name || detail.case.name}</h3>
-        <div className="actions">
-          <button className="ghost" type="button" disabled>Demander les renvois</button>
-          <button className="ghost" type="button" disabled>Rejeter</button>
-          <button type="button" disabled>Approuver</button>
-        </div>
         <div className="tabs">
           {PREVIEW_TABS.map((item) => (
             <button className={tab === item ? "active" : ""} key={item} type="button" onClick={() => setTab(item)}>{item}</button>

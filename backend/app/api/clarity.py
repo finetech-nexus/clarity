@@ -2,6 +2,7 @@ import json
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, File, Request, UploadFile
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -170,7 +171,7 @@ def health(request: Request):
 
 @router.post("/auth/login")
 def login(body: LoginBody, request: Request, db: Session = Depends(db_session)):
-    user = db.scalar(select(User).where(User.email == body.email, User.active.is_(True)))
+    user = db.scalar(select(User).where(User.email == body.email.strip(), User.active.is_(True)))
     if not user or not verify_password(body.password, user.password_hash):
         raise clarity_error(401, "unauthorized", "Identifiants invalides.")
     token = encode_jwt(
@@ -185,6 +186,51 @@ def login(body: LoginBody, request: Request, db: Session = Depends(db_session)):
         "user": {"id": user.id, "email": user.email, "name": user.full_name, "role": user.role, "mfa_enabled": user.mfa_enabled},
         "demo_password_hint": DEMO_PASSWORD if request.app.state.settings.env == "development" else None,
     }
+
+
+@router.get("/auth/oidc")
+def oidc_status(request: Request):
+    from app.oidc import enabled
+
+    return {"enabled": enabled(request.app.state.settings)}
+
+
+@router.get("/auth/oidc/start")
+def oidc_start(request: Request):
+    from app.oidc import authorization_redirect, enabled
+
+    settings = request.app.state.settings
+    if not enabled(settings):
+        raise clarity_error(404, "oidc_disabled", "OpenID n'est pas configuré.")
+    try:
+        return RedirectResponse(authorization_redirect(settings), status_code=302)
+    except ApiFailure as exc:
+        target = f"{settings.public_app_url.rstrip('/')}/?oidc_error=unavailable"
+        if exc.status < 500:
+            raise
+        return RedirectResponse(target, status_code=302)
+
+
+@router.get("/auth/oidc/callback")
+def oidc_callback(request: Request, code: str = "", state: str = "", db: Session = Depends(db_session)):
+    from app.oidc import identity_from_callback, provision_oidc_user
+
+    settings = request.app.state.settings
+    refused = RedirectResponse(f"{settings.public_app_url.rstrip('/')}/?oidc_error=rejected", status_code=302)
+    if not code or not state:
+        return refused
+    try:
+        claims = identity_from_callback(settings, code, state)
+        user = provision_oidc_user(db, claims)
+    except ApiFailure:
+        return refused
+    token = encode_jwt(
+        settings.jwt_secret,
+        {"tenant_id": user.tenant_id, "email": user.email, "role": user.role},
+        settings.jwt_ttl_minutes,
+    )
+    audit(db, user.tenant_id, user.email, "auth.oidc", "user", user.id, {"role": user.role})
+    return RedirectResponse(f"{settings.public_app_url.rstrip('/')}/#session={token}", status_code=302)
 
 
 @router.get("/me")
@@ -940,6 +986,28 @@ def users(principal: Principal = Depends(clarity_principal), db: Session = Depen
         raise clarity_error(403, "forbidden", "Réservé à l'administration.")
     rows = db.scalars(select(User).where(User.tenant_id == principal.tenant_id)).all()
     return [{"id": row.id, "email": row.email, "name": row.full_name, "role": row.role, "mfa_enabled": row.mfa_enabled, "active": row.active} for row in rows]
+
+
+class UserRoleBody(BaseModel):
+    role: str
+
+
+@router.patch("/administration/users/{user_id}")
+def assign_user_role(user_id: str, body: UserRoleBody, request: Request, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    from app.oidc import ASSIGNABLE_ROLES
+
+    if not principal.allows("admin"):
+        raise clarity_error(403, "forbidden", "Réservé à l'administration.")
+    if body.role not in ASSIGNABLE_ROLES:
+        raise clarity_error(422, "invalid_role", "Rôle inconnu.")
+    row = db.get(User, user_id)
+    if not row or row.tenant_id != principal.tenant_id:
+        raise clarity_error(404, "not_found", "Utilisateur introuvable.")
+    if row.email == request.app.state.settings.admin_username and body.role != "admin":
+        raise clarity_error(422, "invalid_role", "Le compte administrateur configuré conserve le rôle admin.")
+    row.role = body.role
+    audit(db, principal.tenant_id, actor_label(principal), "user.role", "user", row.id, {"role": body.role})
+    return {"id": row.id, "email": row.email, "name": row.full_name, "role": row.role, "active": row.active}
 
 
 @router.get("/reports")

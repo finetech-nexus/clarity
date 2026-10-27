@@ -89,4 +89,6 @@ def clarity_principal(request: Request, db: Session = Depends(db_session)) -> Pr
     user = user_by_email(db, payload["tenant_id"], payload["email"])
     if not user:
         raise ApiFailure(401, {"code": "unauthorized", "message": "Utilisateur introuvable."})
+    if user.role == "pending" and not request.url.path.rstrip("/").endswith("/me"):
+        raise ApiFailure(403, {"code": "role_pending", "message": "Un administrateur doit vous attribuer un rôle."})
     return Principal(user.tenant_id, "clarity", user.id, user.email, user.role)

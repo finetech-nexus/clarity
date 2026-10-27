@@ -152,6 +152,16 @@ h2 { font-size: 1.05rem; margin: 0.2rem 0 0.45rem; }
   display: grid;
   gap: 0.8rem;
 }
+.login a.oidc {
+  display: inline-flex;
+  justify-content: center;
+  padding: 0.7rem 1rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  text-decoration: none;
+  font-weight: 700;
+}
 .tabs { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.8rem 0 1rem; }
 .tabs button { background: #fff; color: var(--muted); border: 1px solid var(--line); }
 .tabs button.active, .tabs button.active:hover { color: #155d52; border-color: #a8e4d7; background: var(--accent-soft); box-shadow: none; }

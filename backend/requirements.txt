@@ -16,4 +16,5 @@ Pillow>=10
 jsonschema>=4.23
 pytest>=8.3
 pyjwt>=2.9
+cryptography>=43
 psycopg[binary]>=3.2

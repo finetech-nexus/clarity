@@ -1398,6 +1398,125 @@ def test_admin_can_purge_clients_and_verifications(tmp_path):
         assert client.get("/api/clarity/v1/administration/users", headers=admin).json()
 
 
+def test_oidc_user_stays_pending_until_an_admin_assigns_a_role(tmp_path):
+    from datetime import datetime, timedelta, timezone
+    from urllib.parse import parse_qs, urlparse
+
+    import jwt
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    import app.oidc as oidc
+
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'oidc.db'}",
+        seed_demo=True,
+        env="test",
+        flowable_url="",
+        upload_dir=str(tmp_path / "uploads"),
+        jwt_secret="test-secret-test-secret-test-secret",
+        public_app_url="http://clarity.test",
+        oidc_issuer="https://idp.test/realms/internal",
+        oidc_client_id="clarity",
+        admin_username="admin",
+        admin_password="password",
+    )
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    holder: dict[str, str] = {}
+
+    def fake_discover(issuer: str) -> dict:
+        return {
+            "issuer": issuer,
+            "authorization_endpoint": "https://idp.test/auth",
+            "token_endpoint": "https://idp.test/token",
+            "jwks_uri": "https://idp.test/certs",
+        }
+
+    class FakeJwk:
+        def __init__(self, uri: str):
+            self.uri = uri
+
+        def get_signing_key_from_jwt(self, token: str):
+            public = key.public_key()
+
+            class Signing:
+                pass
+
+            Signing.key = public
+            return Signing()
+
+    def fake_post(url, data=None, timeout=None):
+        pending = jwt.decode(holder["state"], settings.jwt_secret, algorithms=["HS256"])
+        now = datetime.now(timezone.utc)
+        token = jwt.encode(
+            {
+                "iss": settings.oidc_issuer,
+                "aud": settings.oidc_client_id,
+                "nonce": pending["nonce"],
+                "email": "Nina.Morel@bank.test",
+                "name": "Nina Morel",
+                "iat": now,
+                "exp": now + timedelta(minutes=5),
+            },
+            key,
+            algorithm="RS256",
+        )
+        assert data["code_verifier"] == pending["verifier"]
+
+        class Response:
+            status_code = 200
+
+            def json(self):
+                return {"id_token": token}
+
+        return Response()
+
+    original = (oidc.discover, oidc.PyJWKClient, oidc.httpx.post)
+    oidc.discover = fake_discover
+    oidc.PyJWKClient = FakeJwk
+    oidc.httpx.post = fake_post
+    try:
+        with TestClient(create_app(settings)) as client:
+            assert client.get("/api/clarity/v1/auth/oidc").json()["enabled"] is True
+            started = client.get("/api/clarity/v1/auth/oidc/start", follow_redirects=False)
+            assert started.status_code == 302, started.text
+            holder["state"] = parse_qs(urlparse(started.headers["location"]).query)["state"][0]
+            assert "code_challenge_method=S256" in started.headers["location"]
+            callback = client.get(
+                "/api/clarity/v1/auth/oidc/callback",
+                params={"code": "one-time-code", "state": holder["state"]},
+                follow_redirects=False,
+            )
+            assert callback.status_code == 302, callback.text
+            session = callback.headers["location"].split("#session=", 1)[1]
+            headers = {"Authorization": f"Bearer {session}"}
+            me = client.get("/api/clarity/v1/me", headers=headers)
+            assert me.status_code == 200, me.text
+            assert me.json()["email"] == "nina.morel@bank.test"
+            assert me.json()["role"] == "pending"
+            assert client.get("/api/clarity/v1/customers", headers=headers).status_code == 403
+            admin = client.post("/api/clarity/v1/auth/login", json={"email": "admin", "password": "password"})
+            assert admin.status_code == 200, admin.text
+            admin_headers = {"Authorization": f"Bearer {admin.json()['access_token']}"}
+            listed = client.get("/api/clarity/v1/administration/users", headers=admin_headers)
+            nina = next(row for row in listed.json() if row["email"] == "nina.morel@bank.test")
+            bootstrap = next(row for row in listed.json() if row["email"] == "admin")
+            refused = client.patch(
+                f"/api/clarity/v1/administration/users/{bootstrap['id']}",
+                headers=admin_headers,
+                json={"role": "analyst"},
+            )
+            assert refused.status_code == 422
+            assigned = client.patch(
+                f"/api/clarity/v1/administration/users/{nina['id']}",
+                headers=admin_headers,
+                json={"role": "analyst"},
+            )
+            assert assigned.status_code == 200, assigned.text
+            assert client.get("/api/clarity/v1/customers", headers=headers).status_code == 200
+    finally:
+        oidc.discover, oidc.PyJWKClient, oidc.httpx.post = original
+
+
 def normalize_template(path: str) -> str:
     import re
 

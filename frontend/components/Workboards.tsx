@@ -349,8 +349,17 @@ export function AdminBoard() {
       setError(err instanceof Error ? err.message : "Enregistrement refusé");
     }
   }
+  async function assignRole(id: string, role: string) {
+    setError("");
+    try {
+      const updated = await api<Row>(`/api/clarity/v1/administration/users/${id}`, { method: "PATCH", body: JSON.stringify({ role }) });
+      setRows((current) => current.map((row) => (row.id === id ? { ...row, role: updated.role } : row)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Attribution refusée");
+    }
+  }
   return (
-    <Board title="Administration" lede={me ? `Session ${String(me.name)} · ${String(me.role)}. Le MFA est un indicateur, pas une preuve d'enrôlement.` : "Comptes du tenant."}>
+    <Board title="Administration" lede={me ? `Session ${String(me.name)} · ${String(me.role)}. Un compte OpenID reste en attente tant qu'un rôle ne lui est pas attribué.` : "Comptes du tenant."}>
       {error ? <p className="error">{error}</p> : null}
       {saved ? <p className="label">{saved}</p> : null}
       <form className="form" onSubmit={(event) => void savePolicy(event)}>
@@ -368,7 +377,15 @@ export function AdminBoard() {
             <tr key={String(row.id)}>
               <td>{String(row.name)}</td>
               <td>{String(row.email)}</td>
-              <td>{String(row.role)}</td>
+              <td>
+                <select aria-label={`Rôle de ${String(row.name)}`} value={String(row.role)} onChange={(event) => void assignRole(String(row.id), event.target.value)}>
+                  <option value="pending">En attente</option>
+                  <option value="analyst">Analyste</option>
+                  <option value="checker">Checker</option>
+                  <option value="investigator">Investigateur</option>
+                  <option value="admin">Administrateur</option>
+                </select>
+              </td>
               <td>{row.mfa_enabled ? "indiqué" : "non"}</td>
               <td>{row.active ? "oui" : "non"}</td>
             </tr>

@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     ocr_url: str = ""
     public_app_url: str = "http://localhost:3010"
     core_banking_hook_url: str = ""
+    admin_username: str = "admin"
+    admin_password: str = "password"
+    oidc_issuer: str = ""
+    oidc_client_id: str = ""
+    oidc_client_secret: str = ""
+    oidc_redirect_uri: str = ""
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -64,12 +64,32 @@ def ensure_demo_logins(db: Session) -> None:
     db.flush()
 
 
+def ensure_env_admin(db: Session) -> None:
+    """Keep the local administrator on the username and password from the environment."""
+    from app.config import current_settings
+
+    settings = current_settings()
+    username = settings.admin_username.strip()
+    if not username or not settings.admin_password or db.get(Tenant, TENANT_ID) is None:
+        return
+    digest = hash_password(settings.admin_password)
+    user = db.scalar(select(User).where(User.tenant_id == TENANT_ID, User.email == username))
+    if user is None:
+        db.add(User(tenant_id=TENANT_ID, email=username, full_name="Administrateur", password_hash=digest, role="admin", active=True, mfa_enabled=False))
+    else:
+        user.password_hash = digest
+        user.role = "admin"
+        user.active = True
+    db.flush()
+
+
 def seed_demo(db: Session, engine=None, seed_clients: bool = True) -> None:
     if db.get(Tenant, TENANT_ID):
         from app.catalog import ensure_studio
 
         ensure_studio(db)
         ensure_demo_logins(db)
+        ensure_env_admin(db)
         ensure_risk_score_case(db, engine, seed_clients=seed_clients)
         if seed_clients:
             ensure_review_pack(db, engine)
@@ -103,6 +123,7 @@ def seed_demo(db: Session, engine=None, seed_clients: bool = True) -> None:
         db.add(user)
         db.flush()
         user_ids[email] = user.id
+    ensure_env_admin(db)
     for surface, token, name in (
         ("marble", MARBLE_API_KEY, "Démonstration Marble"),
         ("ballerine", BALLERINE_API_KEY, "Démonstration Ballerine"),

@@ -10,14 +10,7 @@ import StudioDesk from "./StudioDesk";
 import WorkflowEditor from "./WorkflowEditor";
 import { AdminBoard, AlertBoard, AuditBoard, IntegrationBoard, ReportBoard, ReviewBoard, RiskBoard, TransactionBoard } from "./Workboards";
 import { QueryStack } from "./QueryStack";
-import { api, searchPage } from "../lib/api";
-
-const ACCOUNTS = [
-  ["Camille Morel", "camille.morel@clarity.bank", "Analyste : instruit le dossier, ne peut pas l'approuver"],
-  ["Hugo Bernard", "hugo.bernard@clarity.bank", "Checker : approuve le dossier"],
-  ["Léa Martin", "lea.martin@clarity.bank", "Investigateur"],
-  ["Aline Bernard", "aline.bernard@clarity.bank", "Administrateur"],
-];
+import { API_URL, api, searchPage } from "../lib/api";
 
 const GROUPS = [
   {
@@ -126,15 +119,36 @@ const CLIENT_RISKS = [
 export default function Workspace({ section, customerId }: { section: string; customerId?: string }) {
   const pathname = usePathname();
   const [token, setToken] = useState<string | null>(null);
-  const [email, setEmail] = useState("camille.morel@clarity.bank");
-  const [password, setPassword] = useState("Clarity-demo-2026!");
+  const [account, setAccount] = useState<{ name?: string; role?: string } | null>(null);
+  const [oidc, setOidc] = useState(false);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [data, setData] = useState<unknown>(null);
   const [profile, setProfile] = useState<Record<string, unknown> | null>(null);
 
   useEffect(() => {
+    const hash = new URLSearchParams(window.location.hash.slice(1));
+    const session = hash.get("session");
+    const params = new URLSearchParams(window.location.search);
+    if (session) {
+      sessionStorage.setItem("clarity_token", session);
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      setToken(session);
+      return;
+    }
+    if (params.get("oidc_error")) setError("La connexion OpenID a été refusée.");
     setToken(sessionStorage.getItem("clarity_token"));
+    void api<{ enabled: boolean }>("/api/clarity/v1/auth/oidc").then((body) => setOidc(body.enabled)).catch(() => setOidc(false));
   }, []);
+
+  useEffect(() => {
+    if (!token) {
+      setAccount(null);
+      return;
+    }
+    void api<{ name: string; role: string }>("/api/clarity/v1/me").then(setAccount).catch((err: Error) => setError(err.message));
+  }, [token]);
 
   useEffect(() => {
     if (!token) return;
@@ -182,25 +196,31 @@ export default function Workspace({ section, customerId }: { section: string; cu
       <form className="login" onSubmit={login}>
         <div className="brand">Clarity<span>KYC et AML bancaires</span></div>
         <p className="lede">Les comptes et les listes de cet environnement sont synthétiques.</p>
-        <input aria-label="E-mail" value={email} onChange={(event) => setEmail(event.target.value)} />
+        <input aria-label="Identifiant" value={email} onChange={(event) => setEmail(event.target.value)} />
         <input aria-label="Mot de passe" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
         {error && <p className="error">{error}</p>}
         <button type="submit">Entrer</button>
-        <table className="accounts">
-          <thead>
-            <tr><th>Nom</th><th>E-mail</th><th>Rôle</th></tr>
-          </thead>
-          <tbody>
-            {ACCOUNTS.map(([name, mail, role]) => (
-              <tr key={mail}>
-                <td>{name}</td>
-                <td><button className="linkish" type="button" onClick={() => setEmail(mail)}>{mail}</button></td>
-                <td>{role}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        {oidc ? <a className="oidc" href={`${API_URL}/api/clarity/v1/auth/oidc/start`}>Se connecter avec OpenID</a> : null}
       </form>
+    );
+  }
+
+  if (!account) {
+    return (
+      <section className="login">
+        <p className="lede">Chargement de la session…</p>
+        {error ? <p className="error">{error}</p> : null}
+      </section>
+    );
+  }
+
+  if (account.role === "pending") {
+    return (
+      <section className="login">
+        <div className="brand">Clarity<span>KYC et AML bancaires</span></div>
+        <p className="lede">Le compte {account.name} est créé. Un administrateur doit lui attribuer un rôle.</p>
+        <button type="button" onClick={() => { sessionStorage.removeItem("clarity_token"); setToken(null); }}>Quitter</button>
+      </section>
     );
   }
 
