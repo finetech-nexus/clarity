@@ -48,6 +48,7 @@ type Detail = {
 };
 
 const TABS = ["Informations saisies", "Documents", "Données du document", "Résultats", "Criblage"] as const;
+const PREVIEW_TABS = ["Informations saisies", "Documents", "Données du document", "Résultats", "Score", "Criblage"] as const;
 
 const STEP_LABEL: Record<string, string> = {
   collect: "Collecte",
@@ -94,9 +95,9 @@ export default function KycDesk() {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState("status:active");
   const [nameQuery, setNameQuery] = useState("");
-  const [statuses, setStatuses] = useState<string[]>([]);
+  const [statuses, setStatuses] = useState<string[]>(["active"]);
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const [tab, setTab] = useState<(typeof TABS)[number]>("Informations saisies");
@@ -108,8 +109,12 @@ export default function KycDesk() {
     setQueue(body.items);
     setTotal(body.total);
     const requested = new URLSearchParams(window.location.search).get("case") || "";
-    const next = prefer && body.items.some((row) => row.id === prefer) ? prefer : requested || body.items[0]?.id || "";
-    setSelected(next);
+    setSelected((current) => {
+      if (prefer) return prefer;
+      if (requested && body.items.some((row) => row.id === requested)) return requested;
+      if (current && body.items.some((row) => row.id === current)) return current;
+      return "";
+    });
   }
 
   useEffect(() => {
@@ -117,7 +122,10 @@ export default function KycDesk() {
   }, [query, page]);
 
   useEffect(() => {
-    if (!selected) return;
+    if (!selected) {
+      setDetail(null);
+      return;
+    }
     void api<Detail>(`/api/clarity/v1/desks/kyc/${selected}`).then(setDetail).catch((err: Error) => setError(err.message));
   }, [selected]);
 
@@ -366,7 +374,7 @@ export default function KycDesk() {
               </article>
             ) : null}
           </div>
-        ) : <p>Chargement du dossier…</p>}
+        ) : selected ? <p>Chargement du dossier…</p> : null}
       </div>
     </>
   );
@@ -375,7 +383,7 @@ export default function KycDesk() {
 export function VerificationPreview({ runtimeId }: { runtimeId: string }) {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState<(typeof TABS)[number]>("Informations saisies");
+  const [tab, setTab] = useState<(typeof PREVIEW_TABS)[number]>("Informations saisies");
 
   useEffect(() => {
     setDetail(null);
@@ -391,18 +399,13 @@ export function VerificationPreview({ runtimeId }: { runtimeId: string }) {
     <div className="verify-preview">
       <aside className="verify-side">
         <h3>{detail.customer?.display_name || detail.case.name}</h3>
-        <div className="score-chip">
-          <span className="label">Score de risque</span>
-          <strong>{detail.customer?.risk ? detail.customer.risk.score : "—"}</strong>
-          <span className="label">{detail.customer?.risk?.tier || "non calculé"}</span>
-        </div>
         <div className="actions">
           <button className="ghost" type="button" disabled>Demander les renvois</button>
           <button className="ghost" type="button" disabled>Rejeter</button>
           <button type="button" disabled>Approuver</button>
         </div>
         <div className="tabs">
-          {TABS.map((item) => (
+          {PREVIEW_TABS.map((item) => (
             <button className={tab === item ? "active" : ""} key={item} type="button" onClick={() => setTab(item)}>{item}</button>
           ))}
         </div>
@@ -444,6 +447,15 @@ export function VerificationPreview({ runtimeId }: { runtimeId: string }) {
           <article className="card">
             {detail.documents.map((item) => (
               <p key={item.id}><strong>{item.title}</strong> · {item.decision || item.status || "en attente"}</p>
+            ))}
+          </article>
+        ) : null}
+        {tab === "Score" ? (
+          <article className="card">
+            <div className="metric">{detail.customer?.risk ? detail.customer.risk.score : "—"}</div>
+            <p>{detail.customer?.risk?.tier || "Score non calculé"}</p>
+            {(detail.customer?.risk?.factors || []).map((factor) => (
+              <p className="factor" key={factor.code}>{factor.points} pts — {factor.explanation}</p>
             ))}
           </article>
         ) : null}

@@ -424,10 +424,7 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
 }
 
 function CustomerView({ profile, onChange }: { profile: Record<string, unknown>; onChange: (next: Record<string, unknown>) => void }) {
-  const checks = ((profile.verification_checks as Array<Record<string, unknown>>) || []).filter((check) => check.status !== "not_a_production_verification");
   const cycles = (profile.kyc_cycles as KycCycle[]) || [];
-  const screening = (profile.screening as Array<Record<string, unknown>>) || [];
-  const risk = profile.risk as Record<string, unknown> | null;
   const [openId, setOpenId] = useState(cycles[0]?.id || "");
   const [requestCycle, setRequestCycle] = useState<KycCycle | null>(null);
   const [chosen, setChosen] = useState<string[]>([]);
@@ -516,35 +513,7 @@ function CustomerView({ profile, onChange }: { profile: Record<string, unknown>;
           </form>
         </div>
       ) : null}
-      <p className="label">À l'expiration, une relance automatique est enregistrée. Trente jours plus tard, overdue s'ajoute à pending. La relance manuelle reste disponible.</p>
-      <div className="split">
-        <section>
-          <h2>Contrôles</h2>
-          {checks.map((check) => (
-            <p className="factor" key={String(check.id)}>
-              {String(check.kind)} · {String(check.status)}
-            </p>
-          ))}
-          <h2>Criblage</h2>
-          {screening.flatMap((item) => ((item.matches as Array<Record<string, unknown>>) || []).map((match) => (
-            <p className="factor" key={String(match.id)}>
-              {String(match.status)} · score {String(match.score)} · {String(match.entity_id)} · synthétique {String(match.synthetic)}
-            </p>
-          )))}
-        </section>
-        <section className="card">
-          <h2>Score</h2>
-          {risk ? (
-            <>
-              <div className="metric">{String(risk.score)}</div>
-              <p>{String(risk.tier)} · {String(risk.methodology_version)} · source {String(risk.source)}</p>
-              {((risk.factors as Array<Record<string, unknown>>) || []).map((factor, index) => (
-                <p className="factor" key={index}>{String(factor.points)} pts — {String(factor.explanation)}</p>
-              ))}
-            </>
-          ) : <p>Pas encore de score.</p>}
-        </section>
-      </div>
+      <p className="label">À l'expiration, une nouvelle vérification est créée pour mettre à jour le client. Une relance automatique est enregistrée sur la vérification expirée. Trente jours plus tard, cette vérification expirée passe en retard. La relance manuelle reste disponible.</p>
     </>
   );
 }

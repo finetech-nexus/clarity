@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     ai_model: str = "gpt-4o-mini"
     ocr_url: str = ""
     public_app_url: str = "http://localhost:3010"
+    core_banking_hook_url: str = ""
 
     @property
     def cors_origin_list(self) -> list[str]:
@@ -56,6 +57,10 @@ def set_runtime_overlay(values: dict[str, str]) -> None:
         _runtime_overlay[key] = value
         if _bound_settings is not None:
             setattr(_bound_settings, key, value)
+
+
+def current_settings() -> Settings:
+    return _bound_settings or get_settings()
 
 
 def get_settings() -> Settings:

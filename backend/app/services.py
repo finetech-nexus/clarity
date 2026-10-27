@@ -179,7 +179,12 @@ def refresh_kyc_cycles(db: Session, tenant_id: str) -> None:
                 row.reminded_at = now
                 customer = db.get(Customer, row.customer_id)
                 name = customer.display_name if customer else row.customer_id
-                notify(db, tenant_id, "Relance KYC", f"{name} : la vérification est expirée. Relance automatique enregistrée.")
+                notify(db, tenant_id, "Relance KYC", f"{name} : la vérification est expirée. Une nouvelle vérification est ouverte.")
+            pending = db.scalar(
+                select(KycCycle).where(KycCycle.customer_id == row.customer_id, KycCycle.id != row.id, KycCycle.status == "pending")
+            )
+            if pending is None:
+                db.add(KycCycle(tenant_id=row.tenant_id, customer_id=row.customer_id, status="pending"))
         if row.status == "expired" and expires + timedelta(days=KYC_OVERDUE_DAYS) <= now:
             row.status = "overdue"
 
@@ -1316,6 +1321,118 @@ def assess_customer(db: Session, tenant: Tenant, customer: Customer, source: str
     return assessment
 
 
+def _account_hook_payload(db: Session, workflow: WorkflowInstance, customer: Customer) -> dict:
+    """Payload the core-banking onboarding hook already accepts."""
+    entity = dict((workflow.context or {}).get("entity") or {})
+    stored = dict(entity.get("data") or {})
+    individual = customer.individual
+    data = {
+        "email": stored.get("email") or (individual.email if individual else "") or "",
+        "phone": stored.get("phone") or stored.get("phoneNumber") or (individual.phone if individual else "") or "",
+        "country": stored.get("country") or (individual.nationality if individual else "") or (individual.residence_country if individual else "") or "",
+        "lastName": stored.get("lastName") or (individual.family_name if individual else "") or "",
+        "firstName": stored.get("firstName") or (individual.given_name if individual else "") or "",
+        "dateOfBirth": stored.get("dateOfBirth") or (individual.date_of_birth if individual else "") or "",
+    }
+    documents = []
+    rows = db.scalars(select(IdentityDocument).where(IdentityDocument.customer_id == customer.id)).all()
+    owned = [document for document in rows if document.workflow_id == workflow.id] or list(rows)
+    for document in owned:
+        props = dict(document.properties or {})
+        category = "proof_of_identity" if document.doc_type in {"passport", "id_card", "drivers_license"} else document.category
+        decision = document.decision or "pending"
+        if decision == "revisions":
+            decision = "revision"
+        documents.append(
+            {
+                "id": document.id,
+                "type": document.doc_type,
+                "version": document.version or 1,
+                "category": category,
+                "decision": {"status": decision, "revisionReason": document.decision_reason, "rejectionReason": None},
+                "metadata": {},
+                "properties": {
+                    "sex": props.get("sex") or props.get("gender") or "",
+                    "expires": document.expiry or props.get("expiry") or "",
+                    "lastName": props.get("lastName") or data["lastName"],
+                    "firstName": props.get("firstName") or data["firstName"],
+                    "dateOfBirth": props.get("dateOfBirth") or data["dateOfBirth"],
+                },
+                "issuer": {"country": document.issuing_country or "ZZ"},
+                "issuingVersion": document.issuing_version or 1,
+            }
+        )
+    return {
+        "id": str(uuid.uuid4()),
+        "eventName": "workflow.completed",
+        "apiVersion": "1",
+        "timestamp": iso(utcnow()),
+        "workflowCreatedAt": iso(workflow.created_at),
+        "workflowResolvedAt": iso(workflow.resolved_at),
+        "workflowDefinitionId": workflow.definition_key,
+        "workflowRuntimeId": workflow.ballerine_runtime_id,
+        "workflowStatus": workflow.status,
+        "workflowFinalState": workflow.state,
+        "ballerineEntityId": customer.id,
+        "correlationId": customer.external_ref or customer.id,
+        "data": {
+            "entity": {
+                "id": entity.get("id") or customer.external_ref or customer.id,
+                "type": entity.get("type") or customer.kind,
+                "ballerineEntityId": customer.id,
+                "data": data,
+            },
+            "documents": documents,
+            "metadata": {"customerId": customer.id, "customerName": customer.display_name},
+        },
+    }
+
+
+def deliver_account_hook(db: Session, workflow: WorkflowInstance, customer: Customer) -> None:
+    """Tell core banking that an approved client can be created. A delivery failure does not undo the approval."""
+    import httpx
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.config import current_settings
+    from app.security import sign_payload
+
+    payload = _account_hook_payload(db, workflow, customer)
+    settings = current_settings()
+    targets = [settings.core_banking_hook_url.strip()] if settings.core_banking_hook_url.strip() else []
+    for subscription in (workflow.config or {}).get("subscriptions") or []:
+        if not isinstance(subscription, dict):
+            continue
+        url = str(subscription.get("url") or "").strip()
+        events = subscription.get("events") or ["workflow.completed"]
+        if url and "workflow.completed" in events:
+            targets.append(url)
+    record: dict = {"event": "workflow.completed", "payload": payload, "delivered": False}
+    if targets:
+        signature = sign_payload(settings.unified_api_shared_secret, payload)
+        for target in targets:
+            try:
+                response = httpx.post(
+                    target,
+                    json=payload,
+                    headers={"Content-Type": "application/json", "x-hmac-signature": signature},
+                    timeout=8,
+                )
+                record["url"] = target
+                record["status"] = response.status_code
+                record["delivered"] = response.status_code < 400
+            except Exception as exc:  # noqa: BLE001
+                record["url"] = target
+                record["error"] = str(exc)
+                record["delivered"] = False
+    else:
+        record["reason"] = "no_subscriber"
+    context = dict(workflow.context or {})
+    context["account_hook"] = record
+    workflow.context = context
+    flag_modified(workflow, "context")
+    audit(db, customer.tenant_id, "clarity", "workflow.account_hook", "workflow", workflow.id, {"delivered": record["delivered"], "event": "workflow.completed"})
+
+
 def advance_workflow(db: Session, engine, tenant: Tenant, principal: Principal, workflow: WorkflowInstance, action: str, rationale: str) -> WorkflowInstance:
     task = db.scalar(select(WorkflowTask).where(WorkflowTask.workflow_id == workflow.id, WorkflowTask.status == "open"))
     if not task:
@@ -1355,6 +1472,7 @@ def advance_workflow(db: Session, engine, tenant: Tenant, principal: Principal, 
         years = tenant.kyc_validity_years or 1
         customer.next_review_at = utcnow() + timedelta(days=365 * years)
         validate_kyc_cycle(db, customer, workflow.id, customer.next_review_at)
+        deliver_account_hook(db, workflow, customer)
     elif customer and workflow.state == "rejected":
         customer.canonical_status = "rejected"
     elif customer and action == "remediate":

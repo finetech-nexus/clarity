@@ -287,13 +287,49 @@ def test_maker_checker_and_tenant_isolation(tmp_path):
             json={"action": "approve", "rationale": "Je ne peux pas me contrôler."},
         )
         assert forbidden.status_code == 403
-        approved = client.post(
-            f"/api/clarity/v1/workflows/{workflow_id}/actions",
-            headers={"Authorization": f"Bearer {checker}"},
-            json={"action": "approve", "rationale": "Contrôle de second niveau favorable."},
-        )
+        import httpx
+
+        from app.config import current_settings
+
+        sent = {}
+
+        def fake_post(url, json=None, headers=None, timeout=None):
+            sent["url"] = url
+            sent["body"] = json
+            sent["signature"] = (headers or {}).get("x-hmac-signature")
+
+            class Response:
+                status_code = 200
+                text = "ok"
+
+            return Response()
+
+        current_settings().core_banking_hook_url = "http://core-banking.test/api/kyc/onboarding"
+        original = httpx.post
+        httpx.post = fake_post
+        try:
+            approved = client.post(
+                f"/api/clarity/v1/workflows/{workflow_id}/actions",
+                headers={"Authorization": f"Bearer {checker}"},
+                json={"action": "approve", "rationale": "Contrôle de second niveau favorable."},
+            )
+        finally:
+            httpx.post = original
         assert approved.status_code == 200, approved.text
         assert approved.json()["state"] == "approved"
+        from app.models import WorkflowInstance
+
+        db = client.app.state.database.session_factory()
+        stored = db.get(WorkflowInstance, workflow_id)
+        hook = stored.context["account_hook"]
+        db.close()
+        assert hook["delivered"] is True
+        assert hook["payload"]["eventName"] == "workflow.completed"
+        assert hook["payload"]["workflowFinalState"] == "approved"
+        assert hook["payload"]["data"]["entity"]["data"]["firstName"] == "Luc"
+        assert hook["payload"]["data"]["documents"][0]["category"] == "proof_of_identity"
+        assert sent["url"] == "http://core-banking.test/api/kyc/onboarding"
+        assert sent["signature"]
 
         session = client.app.state.database.session_factory()
         other = Customer(tenant_id="99999999-9999-4999-8999-999999999999", kind="individual", display_name="Autre banque", canonical_status="approved")
@@ -1203,17 +1239,21 @@ def test_kyc_cycles_expire_and_can_be_reminded(tmp_path):
         rows = {row["external_ref"]: row for row in listed.json()["items"]}
         assert rows["cus-claire"]["kyc_status"] == "valid"
         assert rows["cus-claire"]["kyc_validated_at"]
-        assert rows["cus-viktor"]["kyc_status"] == "expired"
-        assert rows["cus-viktor"]["reminder"] == "automatic"
-        assert rows["cus-noah"]["kyc_label"] == "pending · overdue"
+        assert rows["cus-viktor"]["kyc_status"] == "pending"
+        assert rows["cus-noah"]["kyc_status"] == "pending"
         pending = client.get("/api/clarity/v1/customers", headers=headers, params={"kind": "individual", "status": "pending", "limit": 50})
         pending_refs = {row["external_ref"] for row in pending.json()["items"]}
         assert "cus-amina" in pending_refs
         assert "cus-noah" in pending_refs
         assert "cus-claire" not in pending_refs
         detail = client.get(f"/api/clarity/v1/customers/{rows['cus-viktor']['id']}", headers=headers)
-        cycle = detail.json()["kyc_cycles"][0]
+        cycles = detail.json()["kyc_cycles"]
+        cycle = next(item for item in cycles if item["status"] == "expired")
+        assert any(item["status"] == "pending" for item in cycles)
         assert cycle["created_at"] and cycle["expires_at"]
+        assert cycle["reminder"] == "automatic"
+        noah = client.get(f"/api/clarity/v1/customers/{rows['cus-noah']['id']}", headers=headers)
+        assert any(item["status"] == "overdue" for item in noah.json()["kyc_cycles"])
         reminded = client.post(f"/api/clarity/v1/customers/{rows['cus-viktor']['id']}/verifications/{cycle['id']}/remind", headers=headers)
         assert reminded.status_code == 200, reminded.text
         assert reminded.json()["reminder"] == "manual"
