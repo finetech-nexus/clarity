@@ -93,7 +93,7 @@ def clarity_principal(request: Request, db: Session = Depends(db_session)) -> Pr
     except Exception:
         from app.oidc import claims_from_keycloak, enabled, provision_oidc_user
 
-        if not enabled(settings):
+        if settings.resolved_auth_mode == "password" or not enabled(settings):
             raise ApiFailure(401, {"code": "unauthorized", "message": "Jeton invalide."})
         try:
             claims = claims_from_keycloak(settings, token)

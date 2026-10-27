@@ -1,6 +1,7 @@
 import json
 from datetime import timedelta
 from pathlib import Path
+from unittest.mock import Mock, patch
 from xml.etree import ElementTree
 
 import yaml
@@ -1032,12 +1033,23 @@ def test_import_integrations_and_replacement(tmp_path):
         assert stored["documentsSchema"][0]["type"] == "passport"
 
         secret = "clry_test_opensanctions"
+        refused = client.patch("/api/clarity/v1/integrations/sanctions", headers=headers, json={"provider": "complyadvantage", "api_key": secret})
+        assert refused.status_code == 422, refused.text
         saved = client.patch("/api/clarity/v1/integrations/sanctions", headers=headers, json={"api_key": secret})
         assert saved.status_code == 200, saved.text
         assert saved.json()["has_secret"] is True
+        assert saved.json()["provider"] == "opensanctions"
         assert secret not in saved.text
         listed = client.get("/api/clarity/v1/integrations", headers=headers)
         assert secret not in listed.text
+        assert {row["kind"] for row in listed.json()} == {"sanctions", "identity"}
+        providers = client.get("/api/clarity/v1/integrations/providers", headers=headers)
+        assert {row["id"] for row in providers.json()} == {"opensanctions", "veriff"}
+        with patch("app.integrations_store.httpx.get", return_value=Mock(status_code=200)):
+            checked = client.post("/api/clarity/v1/integrations/sanctions/check", headers=headers)
+        assert checked.status_code == 200, checked.text
+        assert checked.json()["connection_status"] == "connected"
+        assert secret not in checked.text
         assert get_settings().opensanctions_api_key == secret
 
         veriff = client.patch(
@@ -1592,6 +1604,49 @@ def test_keycloak_mifos_is_admin_and_can_give_several_roles(tmp_path):
             assert refused.status_code == 422
     finally:
         oidc.PyJWKClient = original
+
+
+def test_password_auth_mode_uses_the_env_admin(tmp_path):
+    with _client(tmp_path) as client:
+        assert client.get("/api/clarity/v1/auth/mode").json() == {"mode": "oidc"}
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'password-auth.db'}",
+        seed_demo=True,
+        env="test",
+        flowable_url="",
+        upload_dir=str(tmp_path / "uploads"),
+        auth_mode="password",
+        admin_username="desk-admin",
+        admin_password="desk-secret",
+    )
+    with TestClient(create_app(settings)) as client:
+        assert client.get("/api/clarity/v1/auth/mode").json() == {"mode": "password"}
+        refused = client.post("/api/clarity/v1/auth/login", json={"email": "desk-admin", "password": "wrong"})
+        assert refused.status_code == 401
+        logged = client.post("/api/clarity/v1/auth/login", json={"email": "desk-admin", "password": "desk-secret"})
+        assert logged.status_code == 200, logged.text
+        assert logged.json()["user"]["role"] == "admin"
+        assert "desk-secret" not in logged.text
+        headers = {"Authorization": f"Bearer {logged.json()['access_token']}"}
+        created = client.post(
+            "/api/clarity/v1/administration/users",
+            headers=headers,
+            json={"given_name": "Lea", "family_name": "Martin", "email": "lea.martin@bank.test", "roles": ["analyst"], "password": "analyst-secret"},
+        )
+        assert created.status_code == 201, created.text
+        assert "analyst-secret" not in created.text
+        member = client.post("/api/clarity/v1/auth/login", json={"email": "lea.martin@bank.test", "password": "analyst-secret"})
+        assert member.status_code == 200, member.text
+        assert member.json()["user"]["role"] == "analyst"
+        missing = client.post(
+            "/api/clarity/v1/administration/users",
+            headers=headers,
+            json={"given_name": "No", "family_name": "Password", "email": "no.password@bank.test", "roles": ["analyst"]},
+        )
+        assert missing.status_code == 422
+        garbage = client.get("/api/clarity/v1/me", headers={"Authorization": "Bearer not-a-jwt"})
+        assert garbage.status_code == 401
+        assert "Keycloak" not in garbage.text
 
 
 def normalize_template(path: str) -> str:

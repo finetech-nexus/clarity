@@ -259,7 +259,6 @@ def seed_demo(db: Session, engine=None, seed_clients: bool = True) -> None:
         ("registry", "Registre des sociétés", "not_configured", False),
         ("storage", "Stockage privé local", "development_filesystem", True),
         ("notification", "Notifications internes", "in_app", True),
-        ("language", "Modèle de langage", "not_configured", False),
     ):
         db.add(
             ProviderConnection(

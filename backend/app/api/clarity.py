@@ -169,6 +169,11 @@ def health(request: Request):
     }
 
 
+@router.get("/auth/mode")
+def auth_mode(request: Request):
+    return {"mode": request.app.state.settings.resolved_auth_mode}
+
+
 @router.post("/auth/login")
 def login(body: LoginBody, request: Request, db: Session = Depends(db_session)):
     user = db.scalar(select(User).where(User.email == body.email.strip(), User.active.is_(True)))
@@ -895,10 +900,10 @@ def audit_log(principal: Principal = Depends(clarity_principal), db: Session = D
 
 
 class IntegrationUpdate(BaseModel):
+    provider: str | None = None
     api_key: str | None = None
     shared_secret: str | None = None
     base_url: str | None = None
-    model: str | None = None
 
 
 class ConfigImport(BaseModel):
@@ -906,35 +911,67 @@ class ConfigImport(BaseModel):
     payload: dict = Field(default_factory=dict)
 
 
-def _language_connection(db: Session, tenant_id: str) -> None:
-    row = db.scalar(select(ProviderConnection).where(ProviderConnection.tenant_id == tenant_id, ProviderConnection.kind == "language"))
-    if row:
-        return
-    db.add(ProviderConnection(tenant_id=tenant_id, kind="language", name="Modèle de langage", mode="not_configured", configured=False, detail={}))
+def _third_parties(db: Session, tenant_id: str) -> None:
+    from app.integrations_store import CATALOG, _DEFAULT
+
+    for kind, provider in _DEFAULT.items():
+        row = db.scalar(select(ProviderConnection).where(ProviderConnection.tenant_id == tenant_id, ProviderConnection.kind == kind))
+        if row:
+            continue
+        db.add(
+            ProviderConnection(
+                tenant_id=tenant_id,
+                kind=kind,
+                name=CATALOG[provider]["name"],
+                mode="not_configured",
+                configured=False,
+                detail={"provider": provider},
+            )
+        )
     db.flush()
+
+
+@router.get("/integrations/providers")
+def integration_providers(_principal: Principal = Depends(clarity_principal)):
+    from app.integrations_store import provider_catalog
+
+    return provider_catalog()
 
 
 @router.get("/integrations")
 def integrations(principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
     from app.integrations_store import public_integration
 
-    _language_connection(db, principal.tenant_id)
+    _third_parties(db, principal.tenant_id)
     rows = db.scalars(select(ProviderConnection).where(ProviderConnection.tenant_id == principal.tenant_id)).all()
-    return [public_integration(row) for row in rows]
+    return [public_integration(row) for row in rows if row.kind in {"sanctions", "identity"}]
 
 
 @router.patch("/integrations/{kind}")
 def update_integration(kind: str, body: IntegrationUpdate, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
     from app.integrations_store import public_integration, save_integration
 
-    if kind not in {"sanctions", "identity", "language"}:
+    if kind not in {"sanctions", "identity"}:
         raise clarity_error(404, "not_found", "Ce connecteur ne se configure pas ici.")
-    _language_connection(db, principal.tenant_id)
+    _third_parties(db, principal.tenant_id)
     row = db.scalar(select(ProviderConnection).where(ProviderConnection.tenant_id == principal.tenant_id, ProviderConnection.kind == kind))
     if not row:
         raise clarity_error(404, "not_found", "Connecteur introuvable.")
     save_integration(db, row, body.model_dump(exclude_none=True))
-    audit(db, principal.tenant_id, actor_label(principal), "integration.update", "provider", kind, {"configured": row.configured})
+    audit(db, principal.tenant_id, actor_label(principal), "integration.update", "provider", kind, {"configured": row.configured, "provider": (row.detail or {}).get("provider")})
+    return public_integration(row)
+
+
+@router.post("/integrations/{kind}/check")
+def check_saved_integration(kind: str, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    from app.integrations_store import check_integration, public_integration
+
+    if kind not in {"sanctions", "identity"}:
+        raise clarity_error(404, "not_found", "Ce connecteur ne se vérifie pas ici.")
+    row = db.scalar(select(ProviderConnection).where(ProviderConnection.tenant_id == principal.tenant_id, ProviderConnection.kind == kind))
+    if not row:
+        raise clarity_error(404, "not_found", "Connecteur introuvable.")
+    check_integration(db, row)
     return public_integration(row)
 
 
@@ -1007,6 +1044,7 @@ class NewUserBody(BaseModel):
     given_name: str
     email: str
     roles: list[str] = []
+    password: str | None = None
 
 
 class UserRoleBody(BaseModel):
@@ -1033,14 +1071,22 @@ def create_user(body: NewUserBody, principal: Principal = Depends(clarity_princi
         stored = serialize_roles(body.roles)
     except ValueError as exc:
         raise clarity_error(422, "invalid_role", "Rôle inconnu.") from exc
+    from app.config import current_settings
     from app.security import hash_password
     import secrets
 
+    if current_settings().resolved_auth_mode == "password":
+        secret = (body.password or "").strip()
+        if len(secret) < 8:
+            raise clarity_error(422, "invalid_user", "Un mot de passe d'au moins 8 caractères est requis.")
+        digest = hash_password(secret)
+    else:
+        digest = hash_password(secrets.token_urlsafe(24))
     row = User(
         tenant_id=principal.tenant_id,
         email=email,
         full_name=f"{body.given_name.strip()} {body.family_name.strip()}",
-        password_hash=hash_password(secrets.token_urlsafe(24)),
+        password_hash=digest,
         role=stored,
         active=True,
     )

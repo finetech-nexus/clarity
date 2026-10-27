@@ -32,11 +32,16 @@ class Settings(BaseSettings):
     core_banking_hook_url: str = ""
     admin_username: str = "admin"
     admin_password: str = "password"
+    auth_mode: str = "oidc"
     oidc_issuer: str = ""
     oidc_client_id: str = "web-app"
     oidc_client_secret: str = ""
     oidc_redirect_uri: str = ""
     oidc_admins: str = "mifos"
+
+    @property
+    def resolved_auth_mode(self) -> str:
+        return "password" if self.auth_mode.strip().lower() == "password" else "oidc"
 
     @property
     def oidc_admin_names(self) -> set[str]:

@@ -232,26 +232,29 @@ export function AuditBoard() {
   );
 }
 
-const CONNECTORS = [
-  { kind: "sanctions", title: "OpenSanctions", fields: [{ key: "api_key", label: "Clé API", secret: true }] },
-  { kind: "identity", title: "Veriff", fields: [{ key: "api_key", label: "Clé API", secret: true }, { key: "shared_secret", label: "Secret partagé", secret: true }, { key: "base_url", label: "URL de base", secret: false }] },
-  { kind: "language", title: "Modèle de langage", fields: [{ key: "api_key", label: "Clé API", secret: true }, { key: "base_url", label: "URL de base", secret: false }, { key: "model", label: "Modèle", secret: false }] },
+const PURPOSES = [
+  ["sanctions", "Sanctions"],
+  ["identity", "Identité"],
 ] as const;
+
+type ProviderField = { key: string; label: string; secret: boolean };
+type ProviderSpec = { id: string; purpose: string; name: string; hint: string; fields: ProviderField[] };
 
 export function IntegrationBoard() {
   const [rows, setRows] = useState<Row[]>([]);
-  const [report, setReport] = useState<Row | null>(null);
+  const [catalog, setCatalog] = useState<ProviderSpec[]>([]);
+  const [chosen, setChosen] = useState<Record<string, string>>({});
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
   async function load() {
-    const [connections, compatibility] = await Promise.all([
+    const [connections, providers] = await Promise.all([
       api<Row[]>("/api/clarity/v1/integrations"),
-      api<Row>("/api/clarity/v1/compatibility"),
+      api<ProviderSpec[]>("/api/clarity/v1/integrations/providers"),
     ]);
     setRows(connections);
-    setReport(compatibility);
+    setCatalog(providers);
   }
 
   useEffect(() => {
@@ -262,63 +265,94 @@ export function IntegrationBoard() {
     return drafts[`${kind}.${key}`] || "";
   }
 
+  function providerFor(kind: string) {
+    const options = catalog.filter((item) => item.purpose === kind);
+    const row = rows.find((item) => item.kind === kind);
+    const selected = chosen[kind] || String(row?.provider || options[0]?.id || "");
+    return { options, provider: options.find((item) => item.id === selected) || options[0], row };
+  }
+
   async function save(event: FormEvent, kind: string) {
     event.preventDefault();
     setError("");
-    const body: Record<string, string> = {};
+    const { provider } = providerFor(kind);
+    if (!provider) return;
+    const body: Record<string, string> = { provider: provider.id };
     for (const [key, item] of Object.entries(drafts)) {
       if (key.startsWith(`${kind}.`) && item) body[key.slice(kind.length + 1)] = item;
     }
     try {
       await api(`/api/clarity/v1/integrations/${kind}`, { method: "PATCH", body: JSON.stringify(body) });
+      const checked = await api<Row>(`/api/clarity/v1/integrations/${kind}/check`, { method: "POST" });
       setDrafts((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${kind}.`))));
-      setMessage("Connecteur enregistré. La clé n'est pas renvoyée par l'API.");
+      setMessage(String(checked.connection_message || "Connecteur enregistré."));
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Enregistrement refusé");
     }
   }
 
-  const marble = (report?.marble_public || {}) as Row;
-  const ballerine = (report?.ballerine || {}) as Row;
-  const consoleReport = (report?.marble_console || {}) as Row;
+  async function check(kind: string) {
+    setError("");
+    try {
+      const checked = await api<Row>(`/api/clarity/v1/integrations/${kind}/check`, { method: "POST" });
+      setMessage(String(checked.connection_message || ""));
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Vérification impossible");
+    }
+  }
 
   return (
-    <Board title="Intégrations" lede="Les clés saisies ici remplacent les variables d'environnement vides. Un connecteur sans clé reste hors production.">
+    <Board title="Intégrations" lede="Pour chaque usage, choisissez un fournisseur dans la liste connue. La clé enregistrée n'est pas renvoyée. Sans clé, le criblage reste sur la liste de démonstration.">
       {error ? <p className="error">{error}</p> : null}
       {message ? <p>{message}</p> : null}
-      <div className="grid">
-        {CONNECTORS.map((connector) => {
-          const row = rows.find((item) => item.kind === connector.kind);
+      <div className="connectors">
+        {PURPOSES.map(([kind, title]) => {
+          const { options, provider, row } = providerFor(kind);
+          if (!provider) return null;
+          const connected = row?.connection_status === "connected";
+          const rejected = row?.connection_status === "rejected";
+          const status = connected ? "Connecté" : rejected ? "Refusé" : row?.has_secret ? "Clé enregistrée" : "Non configuré";
           return (
-            <form className="card form" key={connector.kind} onSubmit={(event) => void save(event, connector.kind)}>
-              <div className="label">{connector.kind}</div>
-              <h2>{connector.title}</h2>
-              <span className={row?.configured ? "tag" : "tag warn"}>{row?.has_secret ? "clé enregistrée" : "non configuré"}</span>
-              {connector.fields.map((field) => (
+            <form className="card connector" key={kind} onSubmit={(event) => void save(event, kind)}>
+              <header>
+                <div>
+                  <div className="label">{title}</div>
+                  <h2>{provider.name}</h2>
+                </div>
+                <span className={connected ? "tag" : "tag warn"}>{status}</span>
+              </header>
+              <label>
+                Fournisseur
+                <select value={provider.id} onChange={(event) => setChosen((current) => ({ ...current, [kind]: event.target.value }))}>
+                  {options.map((option) => (
+                    <option key={option.id} value={option.id}>{option.name}</option>
+                  ))}
+                </select>
+              </label>
+              {provider.fields.map((field) => (
                 <label key={field.key}>
                   {field.label}
                   <input
                     type={field.secret ? "password" : "text"}
                     autoComplete="off"
                     placeholder={field.secret && row?.has_secret ? "laisser vide pour conserver" : ""}
-                    value={value(connector.kind, field.key)}
-                    onChange={(event) => setDrafts((current) => ({ ...current, [`${connector.kind}.${field.key}`]: event.target.value }))}
+                    value={value(kind, field.key)}
+                    onChange={(event) => setDrafts((current) => ({ ...current, [`${kind}.${field.key}`]: event.target.value }))}
                   />
                 </label>
               ))}
-              <button type="submit">Enregistrer</button>
+              <p>{provider.hint}</p>
+              {row?.connection_message ? <p>{String(row.connection_message)}</p> : null}
+              <div className="actions">
+                <button type="submit">Enregistrer</button>
+                <button type="button" className="ghost" onClick={() => void check(kind)}>Vérifier</button>
+              </div>
             </form>
           );
         })}
       </div>
-      <article className="card">
-        <h2>Remplacement des API</h2>
-        <p>Marble public : {String(marble.expected || 0)} opérations, {marble.replaces ? "toutes servies" : `${(marble.missing as unknown[] | undefined)?.length || 0} manquante(s)`}.</p>
-        <p>Console Marble : {String(consoleReport.expected || 0)} opérations, {consoleReport.replaces ? "toutes servies" : `${String(consoleReport.missing_count || 0)} manquante(s)`}.</p>
-        <p>Ballerine : {String(ballerine.expected || 0)} opérations d'intégration, {ballerine.replaces ? "toutes servies" : `${(ballerine.missing as unknown[] | undefined)?.length || 0} manquante(s)`}.</p>
-        <p>{String(report?.note || "")}</p>
-      </article>
     </Board>
   );
 }
@@ -345,11 +379,14 @@ export function AdminBoard() {
   const [givenName, setGivenName] = useState("");
   const [familyName, setFamilyName] = useState("");
   const [email, setEmail] = useState("");
+  const [memberPassword, setMemberPassword] = useState("");
+  const [passwordMode, setPasswordMode] = useState(false);
   const [chosen, setChosen] = useState<string[]>(["analyst"]);
   useEffect(() => {
     void api<Row>("/api/clarity/v1/me").then(setMe);
     void api<Row[]>("/api/clarity/v1/administration/users").then(setRows).catch((err: Error) => setError(err.message));
     void api<{ kyc_validity_years: number }>("/api/clarity/v1/administration/kyc").then((body) => setYears(String(body.kyc_validity_years))).catch(() => undefined);
+    void api<{ mode: string }>("/api/clarity/v1/auth/mode").then((body) => setPasswordMode(body.mode === "password")).catch(() => undefined);
   }, []);
   async function savePolicy(event: FormEvent) {
     event.preventDefault();
@@ -381,12 +418,13 @@ export function AdminBoard() {
     try {
       const created = await api<Row>("/api/clarity/v1/administration/users", {
         method: "POST",
-        body: JSON.stringify({ given_name: givenName, family_name: familyName, email, roles: chosen }),
+        body: JSON.stringify({ given_name: givenName, family_name: familyName, email, roles: chosen, password: passwordMode ? memberPassword : undefined }),
       });
       setRows((current) => [...current, created]);
       setGivenName("");
       setFamilyName("");
       setEmail("");
+      setMemberPassword("");
       setChosen(["analyst"]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ajout refusé");
@@ -415,6 +453,7 @@ export function AdminBoard() {
             <label>Prénom<input value={givenName} onChange={(event) => setGivenName(event.target.value)} required /></label>
             <label>Nom<input value={familyName} onChange={(event) => setFamilyName(event.target.value)} required /></label>
             <label>E-mail<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
+            {passwordMode ? <label>Mot de passe<input type="password" autoComplete="new-password" minLength={8} value={memberPassword} onChange={(event) => setMemberPassword(event.target.value)} required /></label> : null}
             <div className="checks" role="group" aria-label="Rôles du nouveau membre">
               {TEAM_ROLES.map(([value, label]) => (
                 <label key={value}>
@@ -427,7 +466,7 @@ export function AdminBoard() {
                 </label>
               ))}
             </div>
-            <p className="label">L'identifiant est l'e-mail. La personne se connecte ensuite avec Keycloak.</p>
+            <p className="label">{passwordMode ? "L'identifiant est l'e-mail. La personne se connecte avec ce mot de passe." : "L'identifiant est l'e-mail. La personne se connecte ensuite avec Keycloak."}</p>
             <button type="submit">Ajouter</button>
           </form>
           <table className="inbox">

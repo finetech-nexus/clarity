@@ -120,6 +120,9 @@ const CLIENT_RISKS = [
 export default function Workspace({ section, customerId }: { section: string; customerId?: string }) {
   const pathname = usePathname();
   const [token, setToken] = useState<string | null>(null);
+  const [authMode, setAuthMode] = useState<"" | "oidc" | "password">("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [account, setAccount] = useState<{ name?: string; role?: string; roles?: string[] } | null>(null);
   const [error, setError] = useState("");
   const [data, setData] = useState<unknown>(null);
@@ -127,8 +130,16 @@ export default function Workspace({ section, customerId }: { section: string; cu
 
   useEffect(() => {
     let cancelled = false;
-    void startKeycloak()
-      .then((client) => {
+    void api<{ mode: string }>("/api/clarity/v1/auth/mode")
+      .then(async (body) => {
+        if (cancelled) return;
+        const mode = body.mode === "password" ? "password" : "oidc";
+        setAuthMode(mode);
+        if (mode === "password") {
+          setToken(sessionStorage.getItem("clarity_token"));
+          return;
+        }
+        const client = await startKeycloak();
         if (cancelled) return;
         if (client.token) {
           sessionStorage.setItem("clarity_token", client.token);
@@ -140,7 +151,7 @@ export default function Workspace({ section, customerId }: { section: string; cu
       })
       .catch(() => {
         if (cancelled) return;
-        setError("Keycloak est indisponible.");
+        setError("L'authentification est indisponible.");
       });
     return () => {
       cancelled = true;
@@ -152,7 +163,14 @@ export default function Workspace({ section, customerId }: { section: string; cu
       setAccount(null);
       return;
     }
-    void api<{ name: string; role: string }>("/api/clarity/v1/me").then(setAccount).catch((err: Error) => setError(err.message));
+    void api<{ name: string; role: string }>("/api/clarity/v1/me")
+      .then(setAccount)
+      .catch((err: Error) => {
+        sessionStorage.removeItem("clarity_token");
+        setToken(null);
+        setAccount(null);
+        setError(err.message);
+      });
   }, [token]);
 
   useEffect(() => {
@@ -184,7 +202,46 @@ export default function Workspace({ section, customerId }: { section: string; cu
   function quit() {
     sessionStorage.removeItem("clarity_token");
     setToken(null);
+    setAccount(null);
+    if (authMode === "password") return;
     void keycloakLogout();
+  }
+
+  async function enter(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    try {
+      const body = await api<{ access_token: string }>("/api/clarity/v1/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      });
+      sessionStorage.setItem("clarity_token", body.access_token);
+      setPassword("");
+      setToken(body.access_token);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Identifiants invalides.");
+    }
+  }
+
+  if (!token && authMode === "password") {
+    return (
+      <section className="login">
+        <img className="mark" src="/logo.svg" alt="" width={72} height={72} />
+        <div className="brand">ClarityCheck<span>KYC · KYB · AML · Conformité</span></div>
+        <form onSubmit={(event) => void enter(event)}>
+          <label>
+            Identifiant
+            <input value={email} autoComplete="username" onChange={(event) => setEmail(event.target.value)} required />
+          </label>
+          <label>
+            Mot de passe
+            <input type="password" value={password} autoComplete="current-password" onChange={(event) => setPassword(event.target.value)} required />
+          </label>
+          <button type="submit">Entrer</button>
+        </form>
+        {error ? <p className="error">{error}</p> : null}
+      </section>
+    );
   }
 
   if (!token) {

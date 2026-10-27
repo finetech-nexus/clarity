@@ -122,6 +122,13 @@ h1 { font-weight: 800; font-size: 1.85rem; letter-spacing: -0.045em; margin: 0 0
 h2 { font-size: 1.05rem; margin: 0.2rem 0 0.45rem; }
 .lede { color: var(--muted); max-width: 52rem; margin-top: 0; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.7rem; margin: 0.8rem 0; }
+.connectors { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 1rem; align-items: start; margin: 0.8rem 0; }
+.connector { display: grid; gap: 0.75rem; align-content: start; }
+.connector header { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; }
+.connector h2 { margin: 0; }
+.connector label { display: grid; gap: 0.3rem; color: var(--muted); font-size: 0.85rem; }
+.connector .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.connector p { margin: 0; color: var(--muted); font-size: 0.88rem; }
 .card, .list, .split > * {
   background: rgba(255, 255, 255, .91);
   border: 1px solid rgba(225, 232, 235, .96);
@@ -143,6 +150,8 @@ h2 { font-size: 1.05rem; margin: 0.2rem 0 0.45rem; }
 .login .brand span { display: block; color: var(--muted); font-family: "Avenir Next", sans-serif; font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; margin-top: 0.3rem; }
 .login.home { justify-items: start; }
 .login .mark { width: 72px; height: 72px; }
+.login form { display: grid; gap: 0.7rem; }
+.login form label { display: grid; gap: 0.3rem; color: var(--muted); font-size: 0.85rem; }
 .accounts { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
 .accounts th, .accounts td { text-align: left; vertical-align: top; padding: 0.4rem 0.35rem; border-bottom: 1px solid var(--line); }
 .accounts th { color: var(--muted); font-size: 0.75rem; font-weight: 700; }
