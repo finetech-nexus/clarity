@@ -21,6 +21,8 @@ jobs:
           - image: clarity-api
             context: .
             file: ./Dockerfile
+            build_args: |
+              PPOCR_RELEASE=https://github.com/finetech-nexus/clarity/releases/download/ppocr-v3.9.2
           - image: clarity-web
             context: ./frontend
             file: ./frontend/Dockerfile
@@ -57,6 +59,8 @@ jobs:
           file: ${{ matrix.file }}
           platforms: linux/amd64,linux/arm64
           push: true
+          secrets: |
+            ppocr_token=${{ secrets.GITHUB_TOKEN }}
           build-args: ${{ matrix.build_args }}
           tags: |
             ${{ env.DOCKER_ORGANIZATION }}/${{ matrix.image }}:latest
