@@ -67,6 +67,18 @@ const STEP_LABEL: Record<string, string> = {
   closed: "Clôturé",
 };
 
+function FaceScale({ score }: { score: number | null | undefined }) {
+  const value = score == null ? null : Math.max(0, Math.min(100, Math.round(score <= 1 ? score * 100 : score)));
+  return (
+    <div className="face-scale">
+      <div className="face-track">
+        {value != null ? <span className="face-cursor" style={{ left: `${value}%` }}>{value}</span> : null}
+      </div>
+      <div className="face-bounds"><span>0</span><span>100</span></div>
+    </div>
+  );
+}
+
 function stepLabel(state: string | null | undefined, fallback: string) {
   if (!state) return fallback;
   return STEP_LABEL[state] || state;
@@ -349,7 +361,7 @@ export default function KycDesk() {
                 <span className="label">{detail.customer?.risk?.tier || "non calculé"}</span>
               </div>
             </header>
-            <div className="tabs">
+            <div className="tabs case-tabs">
               {TABS.map((item) => (
                 <button className={tab === item ? "active" : ""} key={item} type="button" onClick={() => setTab(item)}>{item}</button>
               ))}
@@ -397,7 +409,7 @@ export default function KycDesk() {
             ) : null}
             {tab === "Reconnaissance faciale" ? (
               <article className="card">
-                <div className="metric">{detail.face_match?.score == null ? "—" : Math.round(detail.face_match.score * 100)}</div>
+                <FaceScale score={detail.face_match?.score} />
                 <p>{detail.face_match ? (detail.face_match.match ? "Correspondance" : "Pas de correspondance") : comparing ? "Comparaison des visages…" : "Comparaison non faite"}</p>
                 <p className="label">{detail.face_match?.source === "video" ? "Visage extrait de la vidéo, comparé à la photo de la pièce." : "Selfie comparé à la photo de la pièce."}</p>
                 {detail.face_match?.detail ? <p className="label">{detail.face_match.detail}</p> : null}
@@ -428,39 +440,41 @@ export default function KycDesk() {
                 {detail.alert_reasons?.includes("screening") ? <p className="alert-line">Le criblage remonte une alerte.</p> : null}
                 {canDecide ? (
                   <>
-                    <form className="form" onSubmit={(event) => void requestDocuments(event, "resubmit", resubmitId)}>
-                      <label>
-                        Demander un renvoi
-                        <select value={resubmitId} onChange={(event) => setResubmitId(event.target.value)} required>
-                          <option value="">Pièce déjà envoyée</option>
-                          {sentDocuments.map((document) => (
-                            <option key={document.id} value={document.id}>{document.title || document.type}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <input value={askReason} onChange={(event) => setAskReason(event.target.value)} placeholder="Motif" />
-                      <button type="submit">Demander le renvoi</button>
-                    </form>
-                    <form className="form" onSubmit={(event) => void requestDocuments(event, "additional", complementTarget)}>
-                      <label>
-                        Demander un complément
-                        <select value={complementTarget} onChange={(event) => setComplementTarget(event.target.value)} required>
-                          <option value="">Pièce complémentaire</option>
-                          {complements.map((row) => (
-                            <option key={`${row.type}-${row.category}`} value={`${row.type}|${row.category}|${row.country || "ZZ"}`}>
-                              {row.label?.fr || row.type}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <button type="submit">Demander le complément</button>
-                    </form>
-                    <div className="actions">
+                    <div className="action-lead">
                       <button className="ghost" type="button" disabled={!canDecide} onClick={() => void decideCase("reject")}>Rejeter</button>
                       <button type="button" disabled={!canApprove} onClick={() => void decideCase("approve")}>{TASK_ACTION[taskKey] || "Transmettre au contrôle"}</button>
                     </div>
                     {!piecesApproved ? <p className="label">Approuvez chaque pièce pour activer la validation.</p> : null}
                     {screeningPending ? <p className="label">Vérifiez chaque correspondance de criblage avant de valider.</p> : null}
+                    <div className="action-grid">
+                      <form className="form" onSubmit={(event) => void requestDocuments(event, "resubmit", resubmitId)}>
+                        <label>
+                          Demander un renvoi
+                          <select value={resubmitId} onChange={(event) => setResubmitId(event.target.value)} required>
+                            <option value="">Pièce déjà envoyée</option>
+                            {sentDocuments.map((document) => (
+                              <option key={document.id} value={document.id}>{document.title || document.type}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <input value={askReason} onChange={(event) => setAskReason(event.target.value)} placeholder="Motif" />
+                        <button type="submit">Demander le renvoi</button>
+                      </form>
+                      <form className="form" onSubmit={(event) => void requestDocuments(event, "additional", complementTarget)}>
+                        <label>
+                          Demander un complément
+                          <select value={complementTarget} onChange={(event) => setComplementTarget(event.target.value)} required>
+                            <option value="">Pièce complémentaire</option>
+                            {complements.map((row) => (
+                              <option key={`${row.type}-${row.category}`} value={`${row.type}|${row.category}|${row.country || "ZZ"}`}>
+                                {row.label?.fr || row.type}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <button type="submit">Demander le complément</button>
+                      </form>
+                    </div>
                   </>
                 ) : <p className="label">Aucune action ouverte sur ce dossier.</p>}
                 {detail.requested_documents?.length ? (
@@ -539,7 +553,7 @@ export function VerificationPreview({ runtimeId }: { runtimeId: string }) {
         ) : null}
         {tab === "Reconnaissance faciale" ? (
           <article className="card">
-            <div className="metric">{detail.face_match?.score == null ? "—" : Math.round(detail.face_match.score * 100)}</div>
+            <FaceScale score={detail.face_match?.score} />
             <p>{detail.face_match ? (detail.face_match.match ? "Correspondance" : "Pas de correspondance") : "Comparaison non faite"}</p>
             <p className="label">{detail.face_match?.source === "video" ? "Visage extrait de la vidéo, comparé à la photo de la pièce." : "Selfie comparé à la photo de la pièce."}</p>
           </article>

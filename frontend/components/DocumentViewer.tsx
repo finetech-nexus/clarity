@@ -41,7 +41,17 @@ function DocumentCard({
     setError("");
     void fetch(`${API_URL}${document.url}`, { headers: authHeader() })
       .then(async (response) => {
-        if (!response.ok) throw new Error(await response.text());
+        if (!response.ok) {
+          const text = await response.text();
+          let message = text || "Fichier introuvable.";
+          try {
+            const body = JSON.parse(text) as { message?: string };
+            if (body.message) message = body.message;
+          } catch {
+            message = text || "Fichier introuvable.";
+          }
+          throw new Error(message);
+        }
         return response.blob();
       })
       .then((blob) => {

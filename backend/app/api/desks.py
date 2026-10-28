@@ -2,14 +2,15 @@
 
 import re
 import unicodedata
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.catalog import list_docs
-from app.config import ROOT
+from app.config import ROOT, current_settings
 from app.deps import clarity_principal, db_session
 from app.engine import process_steps
 from app.face import compare_case_faces, stored_face_match
@@ -648,9 +649,9 @@ def decide_document(document_id: str, body: dict, principal: Principal = Depends
 @router.get("/documents/{document_id}/content")
 def document_content(document_id: str, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
     document = db.get(IdentityDocument, document_id)
-    if not document or document.tenant_id != principal.tenant_id or not document.storage_path:
+    if not document or document.tenant_id != principal.tenant_id:
         raise clarity_error(404, "not_found", "Fichier introuvable.")
-    return FileResponse(document.storage_path, media_type=(document.properties or {}).get("mime") or "application/octet-stream", filename=(document.properties or {}).get("fileName"))
+    return _stored_response(document.storage_path, document.tenant_id, (document.properties or {}).get("fileName"), (document.properties or {}).get("mime"))
 
 
 def _case_row(db: Session, case: CaseRecord) -> dict:
@@ -742,7 +743,52 @@ def file_content(file_id: str, principal: Principal = Depends(clarity_principal)
     row = db.get(Evidence, file_id)
     if not row or row.tenant_id != principal.tenant_id:
         raise clarity_error(404, "not_found", "Fichier introuvable.")
-    return FileResponse(row.storage_path, filename=row.file_name)
+    return _stored_response(row.storage_path, row.tenant_id, row.file_name, None)
+
+
+def _stored_response(storage_path: str | None, tenant_id: str, file_name: str | None, mime: str | None) -> Response:
+    path = _resolve_stored_file(storage_path, tenant_id)
+    if path is None:
+        raise clarity_error(404, "not_found", "Fichier introuvable.")
+    name = _safe_filename(file_name or path.name)
+    media = _safe_mime(mime, name)
+    return Response(content=path.read_bytes(), media_type=media, headers={"Content-Disposition": f'inline; filename="{name}"'})
+
+
+def _resolve_stored_file(storage_path: str | None, tenant_id: str) -> Path | None:
+    if not storage_path:
+        return None
+    path = Path(storage_path)
+    if path.is_file():
+        return path
+    name = path.name
+    for root in (Path(current_settings().upload_dir), ROOT / "data" / "uploads"):
+        candidate = root / tenant_id / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _safe_filename(name: str) -> str:
+    cleaned = Path(str(name)).name.replace('"', "").replace("\n", "").replace("\r", "").strip()
+    return cleaned or "document.bin"
+
+
+def _safe_mime(mime: str | None, filename: str) -> str:
+    text = str(mime or "").split(";", 1)[0].strip().lower()
+    if text.startswith("image/") or text.startswith("video/") or text in {"application/pdf", "application/octet-stream"}:
+        return text
+    if filename.lower().endswith((".jpg", ".jpeg")):
+        return "image/jpeg"
+    if filename.lower().endswith(".png"):
+        return "image/png"
+    if filename.lower().endswith(".webp"):
+        return "image/webp"
+    if filename.lower().endswith(".svg"):
+        return "image/svg+xml"
+    if filename.lower().endswith(".pdf"):
+        return "application/pdf"
+    return "application/octet-stream"
 
 
 @router.post("/cases/{case_id}/comment")

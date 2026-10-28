@@ -1827,6 +1827,50 @@ def test_face_match_compares_the_selfie_with_the_identity_photo(tmp_path):
         assert again.json()["face_match"]["match"] is True
 
 
+def test_document_image_is_served_and_a_missing_file_is_not_a_server_error(tmp_path):
+    jpeg = b"\xff\xd8\xff\xd9"
+    with _client(tmp_path) as client:
+        analyst = {"Authorization": f"Bearer {_login(client, ANALYST_EMAIL)}"}
+        ballerine = {"Authorization": f"Bearer {BALLERINE_API_KEY}"}
+        queue = client.get("/api/clarity/v1/desks/kyc", headers=analyst)
+        amina = next(row for row in queue.json() if row["name"] == "Amina El Fassi")
+        uploaded = client.post(
+            "/api/v1/external/documents",
+            headers=ballerine,
+            data={
+                "metadata": "{}",
+                "properties": '{"fileName":"carte.jpg","mime":"image/jpeg"}',
+                "category": "proof_of_identity",
+                "type": "id_card",
+                "issuingVersion": "1",
+                "issuingCountry": "FR",
+                "version": "1",
+                "status": "provided",
+                "workflowRuntimeDataId": amina["id"],
+            },
+            files={"file": ("carte.jpg", jpeg, "image/jpeg")},
+        )
+        assert uploaded.status_code == 200, uploaded.text
+        document_id = uploaded.json()[0]["id"]
+        image = client.get(f"/api/clarity/v1/desks/documents/{document_id}/content", headers=analyst)
+        assert image.status_code == 200, image.text
+        assert image.content == jpeg
+        assert image.headers["content-type"].startswith("image/jpeg")
+        from app.models import IdentityDocument
+
+        db = client.app.state.database.session_factory()
+        try:
+            row = db.get(IdentityDocument, document_id)
+            row.storage_path = str(tmp_path / "absent.jpg")
+            db.commit()
+        finally:
+            db.close()
+        missing = client.get(f"/api/clarity/v1/desks/documents/{document_id}/content", headers=analyst)
+        assert missing.status_code == 404, missing.text
+        assert "Internal Server Error" not in missing.text
+        assert missing.json()["message"] == "Fichier introuvable."
+
+
 def normalize_template(path: str) -> str:
     import re
 
