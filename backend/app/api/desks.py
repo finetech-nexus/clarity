@@ -427,11 +427,17 @@ def _kyc_card(db: Session, workflow: WorkflowInstance) -> dict:
 
 
 @router.get("/kyc")
-def kyc_queue(q: str = "", limit: int | None = None, offset: int | None = None, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+def kyc_queue(q: str = "", kind: str = "", limit: int | None = None, offset: int | None = None, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
     rows = db.scalars(
         select(WorkflowInstance).where(WorkflowInstance.tenant_id == principal.tenant_id).order_by(WorkflowInstance.created_at.desc())
     ).all()
-    listed = [_kyc_card(db, row) for row in rows]
+    listed = []
+    for row in rows:
+        if kind == "business":
+            customer = db.get(Customer, row.customer_id) if row.customer_id else None
+            if not customer or customer.kind != "business":
+                continue
+        listed.append(_kyc_card(db, row))
     return present(listed, q, lambda row: {"name": row["name"], "status": row["status"], "state": row["state"] or ""}, limit, offset)
 
 

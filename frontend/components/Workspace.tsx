@@ -31,6 +31,7 @@ const GROUPS = [
       ["/kyb", "Vue d'ensemble"],
       ["/businesses", "Clients"],
       ["/kyb-sessions", "Sessions"],
+      ["/kyb-verification", "Vérification"],
     ],
   },
   {
@@ -303,6 +304,7 @@ export default function Workspace({ section, customerId }: { section: string; cu
         {!customerId && section === "kyc-sessions" ? <SessionBoard kind="individual" /> : null}
         {!customerId && section === "kyb-sessions" ? <SessionBoard kind="business" /> : null}
         {!customerId && section === "verification" ? <KycDesk /> : null}
+        {!customerId && section === "kyb-verification" ? <KycDesk kind="business" /> : null}
         {!customerId && section === "screening" ? <ScreeningDesk /> : null}
         {!customerId && section === "risk" ? <RiskBoard /> : null}
         {!customerId && section === "transactions" ? <TransactionBoard /> : null}
@@ -336,7 +338,7 @@ const OVERVIEWS: Record<string, { title: string; lede: string; cards: Array<[str
     cards: [
       ["Clients", "businesses", "/businesses"],
       ["Sessions", "kyb_sessions", "/kyb-sessions"],
-      ["En revue", "businesses_in_review", "/kyb-sessions"],
+      ["En revue", "businesses_in_review", "/kyb-verification"],
     ],
   },
   aml: {

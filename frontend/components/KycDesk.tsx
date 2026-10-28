@@ -121,7 +121,7 @@ const TASK_ACTION: Record<string, string> = {
   investigate: "Clôturer l'instruction",
 };
 
-export default function KycDesk() {
+export default function KycDesk({ kind }: { kind?: "business" }) {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [selected, setSelected] = useState("");
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -142,7 +142,7 @@ export default function KycDesk() {
   const [faceTried, setFaceTried] = useState("");
 
   async function loadQueue(prefer?: string, nextQuery = query, nextPage = page) {
-    const body = await searchPage<QueueItem>("/api/clarity/v1/desks/kyc", nextQuery, nextPage);
+    const body = await searchPage<QueueItem>(kind ? `/api/clarity/v1/desks/kyc?kind=${kind}` : "/api/clarity/v1/desks/kyc", nextQuery, nextPage);
     setQueue(body.items);
     setTotal(body.total);
     const requested = new URLSearchParams(window.location.search).get("case") || "";

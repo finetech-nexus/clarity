@@ -1932,6 +1932,36 @@ def test_document_image_is_served_and_a_missing_file_is_not_a_server_error(tmp_p
         assert missing.json()["message"] == "Fichier introuvable."
 
 
+def test_kyb_verification_lists_only_businesses(tmp_path):
+    with _client(tmp_path) as client:
+        analyst = {"Authorization": f"Bearer {_login(client, ANALYST_EMAIL)}"}
+        opened = client.post(
+            "/api/clarity/v1/onboarding/businesses",
+            headers=analyst,
+            json={
+                "legal_name": "Atelier Nord",
+                "registration_number": "123456789",
+                "jurisdiction": "FR",
+                "legal_form": "SAS",
+                "registered_address": "1 rue de la Paix, Paris",
+                "industry": "Services",
+                "activities": "Conseil",
+                "purpose": "Compte professionnel",
+                "expected_activity": "Virements",
+                "source_of_funds": "Activité",
+                "external_ref": "atelier-nord",
+            },
+        )
+        assert opened.status_code == 200, opened.text
+        businesses = client.get("/api/clarity/v1/desks/kyc", headers=analyst, params={"kind": "business"})
+        assert businesses.status_code == 200, businesses.text
+        names = {row["name"] for row in businesses.json()}
+        assert "Atelier Nord" in names
+        assert "Amina El Fassi" not in names
+        everyone = client.get("/api/clarity/v1/desks/kyc", headers=analyst)
+        assert "Amina El Fassi" in {row["name"] for row in everyone.json()}
+
+
 def normalize_template(path: str) -> str:
     import re
 
