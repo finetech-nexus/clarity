@@ -284,6 +284,7 @@ export default function KycDesk() {
   const screeningPending = matches.some((item) => item.status === "pending");
   const canDecide = taskKey === "analystReview" || taskKey === "checkerReview" || taskKey === "investigate";
   const canApprove = canDecide && piecesApproved && !screeningPending;
+  const finished = !detail || detail.case.status === "failed" || detail.case.state === "approved" || detail.case.state === "rejected" || detail.case.state === "closed";
   const sentDocuments = (detail?.documents || []).filter((document) => document.status !== "requested");
   const complements = (detail?.tracker || []).filter((row) => !row.document_id);
   const screeningFactors = (detail?.customer?.risk?.factors || []).filter((factor) => factor.code === "screening_confirmed");
@@ -453,16 +454,16 @@ export default function KycDesk() {
             ) : null}
             {tab === "Action" ? (
               <div className="stack">
-                {!piecesApproved ? <p className="error">Approuvez chaque pièce pour activer la validation.</p> : null}
                 {detail.alert_reasons?.includes("correspondence") ? <p className="alert-line">Les données lues sur la pièce ne correspondent pas aux informations saisies.</p> : null}
                 {detail.alert_reasons?.includes("screening") ? <p className="alert-line">Le criblage remonte une alerte.</p> : null}
-                {canDecide ? (
+                {finished ? <p className="label">Aucune action ouverte sur ce dossier.</p> : (
                   <>
+                    {canDecide && !piecesApproved ? <p className="error">Approuvez chaque pièce pour activer la validation.</p> : null}
                     <div className="action-lead">
-                      <button className="ghost" type="button" disabled={!canDecide} onClick={() => void decideCase("reject")}>Rejeter</button>
-                      <button type="button" disabled={!canApprove} onClick={() => void decideCase("approve")}>{TASK_ACTION[taskKey] || "Transmettre au contrôle"}</button>
+                      <button className="ghost" type="button" onClick={() => void decideCase("reject")}>Rejeter</button>
+                      {canDecide ? <button type="button" disabled={!canApprove} onClick={() => void decideCase("approve")}>{TASK_ACTION[taskKey] || "Transmettre au contrôle"}</button> : null}
                     </div>
-                    {screeningPending ? <p className="label">Vérifiez chaque correspondance de criblage avant de valider.</p> : null}
+                    {canDecide && screeningPending ? <p className="label">Vérifiez chaque correspondance de criblage avant de valider.</p> : null}
                     <div className="action-grid">
                       <article className="card">
                         <h3>Demande de renvoi</h3>
@@ -499,7 +500,7 @@ export default function KycDesk() {
                       </article>
                     </div>
                   </>
-                ) : <p className="label">Aucune action ouverte sur ce dossier.</p>}
+                )}
                 {detail.requested_documents?.length ? (
                   <ul className="factors">
                     {detail.requested_documents.map((item) => (
