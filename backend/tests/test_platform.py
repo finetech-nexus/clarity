@@ -661,6 +661,81 @@ def test_kyc_and_case_desks_show_documents(tmp_path):
         assert "events" in manager.json()
 
 
+def test_agent_can_ask_for_a_document_and_the_customer_sends_it(tmp_path):
+    with _client(tmp_path) as client:
+        analyst = {"Authorization": f"Bearer {_login(client, ANALYST_EMAIL)}"}
+        ballerine = {"Authorization": f"Bearer {BALLERINE_API_KEY}"}
+        queue = client.get("/api/clarity/v1/desks/kyc", headers=analyst)
+        assert queue.status_code == 200, queue.text
+        amina = next(row for row in queue.json() if row["name"] == "Amina El Fassi")
+        for _ in range(4):
+            if amina["state"] == "analystReview":
+                break
+            stepped = client.post(f"/api/v1/external/workflows/{amina['id']}/event", headers=ballerine, json={"name": "USER_NEXT_STEP"})
+            assert stepped.status_code == 200, stepped.text
+            amina = client.get(f"/api/clarity/v1/desks/kyc/{amina['id']}", headers=analyst).json()["case"]
+        assert amina["state"] == "analystReview"
+        detail = client.get(f"/api/clarity/v1/desks/kyc/{amina['id']}", headers=analyst)
+        passport = next(item for item in detail.json()["documents"] if item["type"] == "passport")
+        definitions = client.get("/api/v1/workflow-definition", headers=ballerine)
+        kyc = next(row for row in definitions.json() if row["name"] == "kyc")
+        saved = client.put(
+            f"/api/v1/workflow-definition/{kyc['id']}/documents-schema",
+            headers=ballerine,
+            json=[{
+                "category": "proof_of_address",
+                "type": "proof_of_address",
+                "issuer": {"country": "FR"},
+                "required": True,
+                "i18n": {"label": {"fr": "Justificatif de domicile", "en": "Proof of address", "ar": "إثبات العنوان"}},
+            }],
+        )
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["documentsSchema"][0]["i18n"]["label"]["en"] == "Proof of address"
+        asked = client.post(
+            f"/api/clarity/v1/desks/kyc/{amina['id']}/document-requests",
+            headers=analyst,
+            json={
+                "reason": "Photo illisible",
+                "items": [
+                    {"document_id": passport["id"]},
+                    {"type": "proof_of_address", "category": "proof_of_address", "country": "FR"},
+                ],
+            },
+        )
+        assert asked.status_code == 200, asked.text
+        body = asked.json()
+        assert body["case"]["state"] == "documentsRequested"
+        labels = {item["type"]: item["label"] for item in body["requested_documents"]}
+        assert labels["passport"]["ar"] == "جواز السفر"
+        assert labels["proof_of_address"]["fr"] == "Justificatif de domicile"
+        runtime = client.get(f"/api/v1/external/workflows/{amina['id']}", headers=ballerine)
+        assert runtime.json()["state"] == "documentsRequested"
+        for item in runtime.json()["context"]["documentsRequested"]:
+            uploaded = client.post(
+                f"/api/v1/external/documents/{amina['id']}/{item['id']}",
+                headers=ballerine,
+                files={"file": ("piece.jpg", b"\xff\xd8\xff piece", "image/jpeg")},
+            )
+            assert uploaded.status_code == 200, uploaded.text
+        again = client.get(f"/api/v1/external/workflows/{amina['id']}", headers=ballerine)
+        assert again.json()["state"] == "analystReview"
+        assert again.json()["context"]["documentsRequested"] == []
+        video = client.post(
+            f"/api/v1/external/workflows/{amina['id']}/liveness",
+            headers=ballerine,
+            files={"file": ("liveness.mp4", b"\x00\x00\x00\x18ftypmp42", "video/mp4")},
+        )
+        assert video.status_code == 200, video.text
+        assert video.json()["type"] == "liveness_video"
+        unknown = client.post(
+            f"/api/clarity/v1/desks/kyc/{amina['id']}/document-requests",
+            headers=analyst,
+            json={"items": [{"type": "passport", "category": "identity"}]},
+        )
+        assert unknown.status_code == 422, unknown.text
+
+
 def test_verification_file_shows_aml_answers_from_the_journey(tmp_path):
     with _client(tmp_path) as client:
         ballerine = {"Authorization": f"Bearer {BALLERINE_API_KEY}"}

@@ -15,6 +15,8 @@ from app.services import (
     customer_view,
     document_record,
     evaluate_transaction,
+    finish_document_request_if_ready,
+    store_liveness_video,
     nest_error,
     start_customer_workflow,
     store_bytes,
@@ -581,6 +583,7 @@ def update_document(document_id: str, body: dict, principal: Principal = Depends
 async def reupload_document_file(
     runtime_id: str,
     file_id: str,
+    request: Request,
     file: UploadFile = File(...),
     principal: Principal = Depends(ballerine_principal),
     db: Session = Depends(db_session),
@@ -596,8 +599,22 @@ async def reupload_document_file(
     document.storage_path = path
     document.sha256 = digest
     document.status = "provided"
+    document.decision = None
     document.version = int(document.version or 1) + 1
+    finish_document_request_if_ready(db, request.app.state.engine, _tenant(db, principal), principal, workflow)
     return [document_record(document)]
+
+
+@router.post("/external/workflows/{runtime_id}/liveness")
+async def upload_liveness_video(
+    runtime_id: str,
+    file: UploadFile = File(...),
+    principal: Principal = Depends(ballerine_principal),
+    db: Session = Depends(db_session),
+):
+    workflow = _workflow(db, principal, runtime_id)
+    document = store_liveness_video(db, principal, workflow, await file.read(), file.filename or "liveness.mp4", file.content_type or "")
+    return document_record(document)
 
 
 @router.delete("/external/documents")

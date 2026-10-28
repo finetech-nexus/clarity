@@ -43,7 +43,8 @@ type Detail = {
   alert?: boolean;
   alert_reasons?: string[];
   documents: Array<ViewerDocument & { extracted?: Field[]; ocr?: OcrRead | null; decision?: string | null; status?: string; type?: string; category?: string }>;
-  tracker: Array<{ id?: string; type: string; category: string; country?: string; required: boolean; status: string; document_id?: string | null }>;
+  tracker: Array<{ id?: string; type: string; category: string; country?: string; required: boolean; status: string; document_id?: string | null; label?: { fr?: string; en?: string; ar?: string } }>;
+  requested_documents?: Array<{ id: string; type: string; mode: string; reason?: string; label?: { fr?: string; en?: string; ar?: string } }>;
   steps?: Array<{ key: string; label: string; status: "done" | "current" | "upcoming" }>;
 };
 
@@ -57,6 +58,7 @@ const STEP_LABEL: Record<string, string> = {
   score: "Évaluation du risque",
   analystReview: "Revue analyste",
   checkerReview: "Contrôle checker",
+  documentsRequested: "Pièces demandées",
   remediate: "Complément",
   investigate: "Investigation",
   approved: "Approuvé",
@@ -103,6 +105,9 @@ export default function KycDesk() {
   const [tab, setTab] = useState<(typeof TABS)[number]>("Informations saisies");
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [reading, setReading] = useState(false);
+  const [askMode, setAskMode] = useState<"resubmit" | "additional">("resubmit");
+  const [askTarget, setAskTarget] = useState("");
+  const [askReason, setAskReason] = useState("");
 
   async function loadQueue(prefer?: string, nextQuery = query, nextPage = page) {
     const body = await searchPage<QueueItem>("/api/clarity/v1/desks/kyc", nextQuery, nextPage);
@@ -195,6 +200,27 @@ export default function KycDesk() {
     }
   }
 
+  async function requestDocuments(event: FormEvent) {
+    event.preventDefault();
+    if (!selected || !askTarget) return;
+    setError("");
+    const item = askMode === "resubmit"
+      ? { document_id: askTarget }
+      : { type: askTarget.split("|")[0], category: askTarget.split("|")[1], country: askTarget.split("|")[2] || "ZZ" };
+    try {
+      setDetail(await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}/document-requests`, {
+        method: "POST",
+        body: JSON.stringify({ reason: askReason, items: [item] }),
+      }));
+      setAskReason("");
+      setAskTarget("");
+      setMessage(askMode === "resubmit" ? "Renvoi demandé au client." : "Pièce complémentaire demandée au client.");
+      await loadQueue(selected);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Demande refusée");
+    }
+  }
+
   async function decideDocument(id: string, decision: "approve" | "reject" | "revision") {
     const updated = await api<ViewerDocument>(`/api/clarity/v1/desks/documents/${id}/decision`, {
       method: "POST",
@@ -211,7 +237,8 @@ export default function KycDesk() {
   const matches = (detail?.customer?.screening || []).flatMap((item) => item.matches || []);
   const piecesApproved = Boolean(detail?.documents.length) && detail!.documents.every((item) => item.decision === "approved");
   const screeningPending = matches.some((item) => item.status === "pending");
-  const canApprove = Boolean(taskKey) && piecesApproved && !screeningPending;
+  const canDecide = taskKey === "analystReview" || taskKey === "checkerReview" || taskKey === "investigate";
+  const canApprove = canDecide && piecesApproved && !screeningPending;
 
   return (
     <>
@@ -294,13 +321,51 @@ export default function KycDesk() {
                 <span className="label">{detail.customer?.risk?.tier || "non calculé"}</span>
               </div>
               <div className="actions">
-                <button className="ghost" type="button" disabled={!revisions || !taskKey} onClick={() => void decideCase("revision")}>Demander les renvois{revisions ? ` (${revisions})` : ""}</button>
-                <button className="ghost" type="button" disabled={!taskKey} onClick={() => void decideCase("reject")}>Rejeter</button>
+                <button className="ghost" type="button" disabled={!canDecide || !revisions} onClick={() => void decideCase("revision")}>Demander les renvois{revisions ? ` (${revisions})` : ""}</button>
+                <button className="ghost" type="button" disabled={!canDecide} onClick={() => void decideCase("reject")}>Rejeter</button>
                 <button type="button" disabled={!canApprove} onClick={() => void decideCase("approve")}>{TASK_ACTION[taskKey] || "Approuver"}</button>
                 {!piecesApproved ? <p className="label">Approuvez chaque pièce pour activer la validation.</p> : null}
                 {screeningPending ? <p className="label">Vérifiez chaque correspondance de criblage avant de valider.</p> : null}
               </div>
             </header>
+            {canDecide ? (
+              <form className="form" onSubmit={(event) => void requestDocuments(event)}>
+                <label>
+                  Demande
+                  <select value={askMode} onChange={(event) => { setAskMode(event.target.value as "resubmit" | "additional"); setAskTarget(""); }}>
+                    <option value="resubmit">Renvoyer une pièce déjà fournie</option>
+                    <option value="additional">Demander une autre pièce du parcours</option>
+                  </select>
+                </label>
+                <label>
+                  Pièce
+                  <select value={askTarget} onChange={(event) => setAskTarget(event.target.value)} required>
+                    <option value="">Choisir</option>
+                    {askMode === "resubmit"
+                      ? detail.documents.map((document) => (
+                        <option key={document.id} value={document.id}>{document.title || document.type}</option>
+                      ))
+                      : (detail.tracker || []).map((row) => (
+                        <option key={`${row.type}-${row.category}`} value={`${row.type}|${row.category}|${row.country || "ZZ"}`}>
+                          {row.label?.fr || row.type}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <label>
+                  Motif
+                  <input value={askReason} onChange={(event) => setAskReason(event.target.value)} placeholder="Pourquoi cette pièce est demandée" />
+                </label>
+                <button type="submit">Demander au client</button>
+              </form>
+            ) : null}
+            {detail.requested_documents?.length ? (
+              <ul className="factors">
+                {detail.requested_documents.map((item) => (
+                  <li key={item.id}>{item.label?.fr || item.type} — {item.mode === "resubmit" ? "à renvoyer" : "pièce complémentaire"}{item.reason ? ` · ${item.reason}` : ""}</li>
+                ))}
+              </ul>
+            ) : null}
             <div className="tabs">
               {TABS.map((item) => (
                 <button className={tab === item ? "active" : ""} key={item} type="button" onClick={() => setTab(item)}>{item}</button>

@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { api } from "../lib/api";
 
 type Definition = { id: string; name: string; displayName?: string; entityType?: string; documentsSchema?: DocumentType[] };
+type Copy = { fr: string; en: string; ar: string };
 type DocumentType = {
   id: string;
   category: string;
@@ -11,6 +12,7 @@ type DocumentType = {
   issuer: { country: string };
   version: number;
   required: boolean;
+  i18n?: { label?: Partial<Copy>; description?: Partial<Copy> };
   propertiesSchema?: { type: string; properties: Record<string, unknown> };
 };
 
@@ -22,6 +24,9 @@ export default function DocumentCatalog() {
   const [type, setType] = useState("residence_permit");
   const [country, setCountry] = useState("FR");
   const [required, setRequired] = useState(true);
+  const [labelFr, setLabelFr] = useState("");
+  const [labelEn, setLabelEn] = useState("");
+  const [labelAr, setLabelAr] = useState("");
   const [message, setMessage] = useState("");
 
   async function load(prefer?: string) {
@@ -55,8 +60,20 @@ export default function DocumentCatalog() {
     event.preventDefault();
     await save([
       ...rows,
-      { id: `doc-${Date.now()}`, category, type, issuer: { country }, version: 1, required, propertiesSchema: { type: "object", properties: {} } },
+      {
+        id: `doc-${Date.now()}`,
+        category,
+        type,
+        issuer: { country },
+        version: 1,
+        required,
+        i18n: { label: { fr: labelFr, en: labelEn, ar: labelAr }, description: { fr: "", en: "", ar: "" } },
+        propertiesSchema: { type: "object", properties: {} },
+      },
     ]);
+    setLabelFr("");
+    setLabelEn("");
+    setLabelAr("");
   }
 
   const current = definitions.find((row) => row.id === selected);
@@ -83,13 +100,16 @@ export default function DocumentCatalog() {
           <input aria-label="Catégorie" value={category} onChange={(event) => setCategory(event.target.value)} />
           <input aria-label="Type" value={type} onChange={(event) => setType(event.target.value)} />
           <input aria-label="Pays" value={country} onChange={(event) => setCountry(event.target.value)} />
+          <input aria-label="Libellé français" placeholder="Libellé français" value={labelFr} onChange={(event) => setLabelFr(event.target.value)} />
+          <input aria-label="English label" placeholder="English label" value={labelEn} onChange={(event) => setLabelEn(event.target.value)} />
+          <input aria-label="التسمية العربية" dir="rtl" placeholder="التسمية العربية" value={labelAr} onChange={(event) => setLabelAr(event.target.value)} />
           <label className="check"><input type="checkbox" checked={required} onChange={(event) => setRequired(event.target.checked)} /> Obligatoire</label>
           <button type="submit">Ajouter le type</button>
         </form>
         <div className="list">
           {rows.map((row) => (
             <div className="row" key={row.id}>
-              <span>{row.type}<div className="label">{row.category} · {row.issuer.country} · {row.required ? "obligatoire" : "facultatif"}</div></span>
+              <span>{row.i18n?.label?.fr || row.type}<div className="label">{row.i18n?.label?.en || row.type} · {row.i18n?.label?.ar || row.type} · {row.category} · {row.issuer.country} · {row.required ? "obligatoire" : "facultatif"}</div></span>
               <button className="ghost" type="button" onClick={() => void save(rows.filter((item) => item.id !== row.id))}>Retirer</button>
             </div>
           ))}

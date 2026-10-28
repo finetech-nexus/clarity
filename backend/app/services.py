@@ -64,6 +64,9 @@ EVENT_ACTIONS = {
     "rejected": "reject",
     "revision": "remediate",
     "remediate": "remediate",
+    "requestDocuments": "requestDocuments",
+    "DOCUMENTS_SUBMITTED": "submit",
+    "submit": "submit",
     "return": "return",
     "close": "close",
     "escalate": "escalate",
@@ -1433,6 +1436,160 @@ def deliver_account_hook(db: Session, workflow: WorkflowInstance, customer: Cust
     audit(db, customer.tenant_id, "clarity", "workflow.account_hook", "workflow", workflow.id, {"delivered": record["delivered"], "event": "workflow.completed"})
 
 
+DOCUMENT_LABELS = {
+    "passport": {"fr": "Passeport", "en": "Passport", "ar": "جواز السفر"},
+    "id_card": {"fr": "Carte d'identité", "en": "Identity card", "ar": "بطاقة التعريف"},
+    "id-card": {"fr": "Carte d'identité", "en": "Identity card", "ar": "بطاقة التعريف"},
+    "drivers_license": {"fr": "Permis de conduire", "en": "Driving licence", "ar": "رخصة السياقة"},
+    "residence_permit": {"fr": "Titre de séjour", "en": "Residence permit", "ar": "بطاقة الإقامة"},
+    "proof_of_residence": {"fr": "Justificatif de résidence", "en": "Proof of residence", "ar": "إثبات الإقامة"},
+    "proof_of_address": {"fr": "Justificatif de domicile", "en": "Proof of address", "ar": "إثبات العنوان"},
+}
+
+
+def document_labels(doc_type: str, spec: dict | None = None) -> dict:
+    base = dict(DOCUMENT_LABELS.get(doc_type) or {"fr": doc_type, "en": doc_type, "ar": doc_type})
+    i18n = (spec or {}).get("i18n") if isinstance((spec or {}).get("i18n"), dict) else {}
+    label = i18n.get("label") if isinstance(i18n.get("label"), dict) else {}
+    for lang in ("fr", "en", "ar"):
+        text = str(label.get(lang) or "").strip()
+        if text:
+            base[lang] = text
+    return base
+
+
+def _document_schema(db: Session, workflow: WorkflowInstance) -> list[dict]:
+    from app.catalog import list_docs
+
+    schema: list[dict] = []
+    for row in list_docs(db, workflow.tenant_id, "workflow_definition"):
+        if row.payload.get("processKey") != workflow.definition_key:
+            continue
+        schema = list(row.payload.get("documentsSchema") or [])
+        if row.name in {"kyc", "kyb", "kyc-demo"}:
+            break
+    return schema
+
+
+def request_documents(db: Session, engine, tenant: Tenant, principal: Principal, workflow: WorkflowInstance, items: list, reason: str) -> list[dict]:
+    if not isinstance(items, list) or not items:
+        raise clarity_error(400, "invalid", "Indiquez au moins une pièce à demander.")
+    task = db.scalar(select(WorkflowTask).where(WorkflowTask.workflow_id == workflow.id, WorkflowTask.status == "open"))
+    if not task or task.task_key not in {"analystReview", "checkerReview"}:
+        raise clarity_error(422, "invalid_state", "Une demande de pièce se fait pendant la revue analyste ou le contrôle.")
+    if task.task_key == "analystReview" and not principal.allows("analyst", "investigator"):
+        raise clarity_error(403, "forbidden", "La revue manuelle exige le rôle analyste ou investigateur.")
+    if task.task_key == "checkerReview" and not principal.allows("checker"):
+        raise clarity_error(403, "forbidden", "Le contrôle exige le rôle checker.")
+    schema = _document_schema(db, workflow)
+    requested = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise clarity_error(400, "invalid", "Chaque demande doit décrire une pièce.")
+        if item.get("document_id"):
+            document = db.get(IdentityDocument, str(item["document_id"]))
+            if not document or document.tenant_id != principal.tenant_id or document.workflow_id != workflow.id:
+                raise clarity_error(404, "not_found", "Pièce introuvable sur ce dossier.")
+            spec = next((row for row in schema if row.get("type") == document.doc_type and row.get("category") == document.category), None)
+            document.status = "requested"
+            document.decision = "revisions"
+            document.decision_reason = reason or "Pièce à renvoyer"
+            mode = "resubmit"
+        else:
+            doc_type = str(item.get("type") or "")
+            category = str(item.get("category") or "")
+            spec = next((row for row in schema if row.get("type") == doc_type and row.get("category") == category), None)
+            if not spec:
+                raise clarity_error(422, "unknown_document", "Ce type n'est pas dans la liste de pièces du parcours.")
+            issuer = spec.get("issuer") if isinstance(spec.get("issuer"), dict) else {}
+            document = IdentityDocument(
+                tenant_id=principal.tenant_id,
+                customer_id=workflow.customer_id,
+                workflow_id=workflow.id,
+                category=category,
+                doc_type=doc_type,
+                issuing_country=str(item.get("country") or issuer.get("country") or "ZZ"),
+                issuing_version=str(spec.get("version") or "1"),
+                status="requested",
+                decision="revisions",
+                decision_reason=reason or "Pièce complémentaire",
+                properties={"title": document_labels(doc_type, spec)["fr"]},
+            )
+            db.add(document)
+            db.flush()
+            mode = "additional"
+        requested.append(
+            {
+                "id": document.id,
+                "type": document.doc_type,
+                "category": document.category,
+                "country": document.issuing_country,
+                "mode": mode,
+                "reason": reason,
+                "label": document_labels(document.doc_type, spec),
+            }
+        )
+    from sqlalchemy.orm.attributes import flag_modified
+
+    context = dict(workflow.context or {})
+    context["documentsRequested"] = requested
+    workflow.context = context
+    flag_modified(workflow, "context")
+    advance_workflow(db, engine, tenant, principal, workflow, "requestDocuments", reason or "Pièces demandées")
+    return requested
+
+
+def store_liveness_video(db: Session, principal: Principal, workflow: WorkflowInstance, content: bytes, filename: str, mime: str) -> IdentityDocument:
+    from app.config import ROOT
+
+    if not content:
+        raise clarity_error(422, "invalid", "La vidéo est vide.")
+    if len(content) > 12 * 1024 * 1024:
+        raise clarity_error(413, "too_large", "La vidéo dépasse 12 Mo. Envoyez un fichier compressé.")
+    allowed = {"video/mp4", "video/webm", "video/quicktime"}
+    name = filename or "liveness.mp4"
+    kind = (mime or "").split(";")[0].strip().lower()
+    if kind not in allowed and not name.lower().endswith((".mp4", ".webm", ".mov")):
+        raise clarity_error(415, "unsupported", "Le fichier doit être une vidéo mp4, webm ou mov.")
+    path, digest = store_bytes(ROOT / "data" / "uploads", principal.tenant_id, name, content)
+    document = IdentityDocument(
+        tenant_id=principal.tenant_id,
+        customer_id=workflow.customer_id,
+        workflow_id=workflow.id,
+        category="biometric",
+        doc_type="liveness_video",
+        issuing_country="ZZ",
+        status="provided",
+        properties={"title": "Liveness", "fileName": name, "mime": kind or "video/mp4"},
+        storage_path=path,
+        sha256=digest,
+    )
+    db.add(document)
+    db.flush()
+    audit(db, principal.tenant_id, actor_label(principal), "liveness.upload", "document", document.id, {"bytes": len(content)})
+    return document
+
+
+def finish_document_request_if_ready(db: Session, engine, tenant: Tenant, principal: Principal, workflow: WorkflowInstance) -> bool:
+    if workflow.state != "documentsRequested":
+        return False
+    requested = list((workflow.context or {}).get("documentsRequested") or [])
+    ids = [str(item.get("id")) for item in requested if item.get("id")]
+    if not ids:
+        return False
+    documents = list(db.scalars(select(IdentityDocument).where(IdentityDocument.id.in_(ids))).all())
+    if len(documents) != len(ids) or any(document.status == "requested" or not document.storage_path for document in documents):
+        return False
+    advance_workflow(db, engine, tenant, principal, workflow, "submit", "Pièces reçues")
+    from sqlalchemy.orm.attributes import flag_modified
+
+    context = dict(workflow.context or {})
+    context["documentsRequested"] = []
+    workflow.context = context
+    flag_modified(workflow, "context")
+    return True
+
+
 def advance_workflow(db: Session, engine, tenant: Tenant, principal: Principal, workflow: WorkflowInstance, action: str, rationale: str) -> WorkflowInstance:
     task = db.scalar(select(WorkflowTask).where(WorkflowTask.workflow_id == workflow.id, WorkflowTask.status == "open"))
     if not task:
@@ -1477,6 +1634,10 @@ def advance_workflow(db: Session, engine, tenant: Tenant, principal: Principal, 
         customer.canonical_status = "rejected"
     elif customer and action == "remediate":
         customer.canonical_status = "remediation"
+    elif customer and action == "requestDocuments":
+        customer.canonical_status = "documents_requested"
+    elif customer and action == "submit" and workflow.state == "analystReview":
+        customer.canonical_status = "in_review"
     audit(db, tenant.id, actor_label(principal), "workflow.action", "workflow", workflow.id, {"action": action, "state": workflow.state})
     return workflow
 

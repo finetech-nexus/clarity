@@ -524,10 +524,14 @@ def _seed_rule(db: Session, rule_id: str, name: str, order: int, score: int, com
     )
 
 
+def _doc_i18n(fr: str, en: str, ar: str) -> dict:
+    return {"label": {"fr": fr, "en": en, "ar": ar}, "description": {"fr": "", "en": "", "ar": ""}}
+
+
 KYC_DOCUMENTS = [
-    {"id": "doc-passport", "category": "identity", "type": "passport", "issuer": {"country": "FR"}, "version": 1, "propertiesSchema": {"type": "object", "properties": {"expiryDate": {"type": "string", "format": "date"}}}, "required": True},
-    {"id": "doc-id-card", "category": "identity", "type": "id_card", "issuer": {"country": "FR"}, "version": 1, "propertiesSchema": {"type": "object", "properties": {}}, "required": False},
-    {"id": "doc-address", "category": "proof_of_address", "type": "proof_of_address", "issuer": {"country": "FR"}, "version": 1, "propertiesSchema": {"type": "object", "properties": {}}, "required": True},
+    {"id": "doc-passport", "category": "identity", "type": "passport", "issuer": {"country": "FR"}, "version": 1, "propertiesSchema": {"type": "object", "properties": {"expiryDate": {"type": "string", "format": "date"}}}, "required": True, "i18n": _doc_i18n("Passeport", "Passport", "جواز السفر")},
+    {"id": "doc-id-card", "category": "identity", "type": "id_card", "issuer": {"country": "FR"}, "version": 1, "propertiesSchema": {"type": "object", "properties": {}}, "required": False, "i18n": _doc_i18n("Carte d'identité", "Identity card", "بطاقة التعريف")},
+    {"id": "doc-address", "category": "proof_of_address", "type": "proof_of_address", "issuer": {"country": "FR"}, "version": 1, "propertiesSchema": {"type": "object", "properties": {}}, "required": True, "i18n": _doc_i18n("Justificatif de domicile", "Proof of address", "إثبات العنوان")},
 ]
 KYB_DOCUMENTS = [
     {"id": "doc-registration", "category": "proof_of_registration", "type": "certificate_of_registration", "issuer": {"country": "ZZ"}, "version": 1, "propertiesSchema": {"type": "object", "properties": {}}, "required": True},

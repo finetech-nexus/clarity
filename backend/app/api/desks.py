@@ -42,8 +42,11 @@ from app.services import (
     case_payload,
     clarity_error,
     customer_view,
+    document_labels,
     document_record,
+    request_documents,
     store_bytes,
+    store_liveness_video,
 )
 from app.timeutil import iso, utcnow
 
@@ -450,6 +453,7 @@ def kyc_case(runtime_id: str, principal: Principal = Depends(clarity_principal),
         "alert": flags["alert"],
         "alert_reasons": flags["alert_reasons"],
         "steps": process_steps(workflow.definition_key, workflow.state),
+        "requested_documents": list((workflow.context or {}).get("documentsRequested") or []),
     }
 
 
@@ -476,6 +480,7 @@ def _document_tracker(db: Session, principal: Principal, workflow: WorkflowInsta
                 "required": bool(spec.get("required", True)),
                 "status": (match.decision or match.status) if match else "missing",
                 "document_id": match.id if match else None,
+                "label": document_labels(str(spec.get("type") or ""), spec),
             }
         )
     for document in documents:
@@ -490,6 +495,7 @@ def _document_tracker(db: Session, principal: Principal, workflow: WorkflowInsta
                 "required": False,
                 "status": document.decision or document.status,
                 "document_id": document.id,
+                "label": document_labels(document.doc_type),
             }
         )
     return items
@@ -503,6 +509,34 @@ def decide_kyc(runtime_id: str, body: dict, request: Request, principal: Princip
     workflow = _workflow(db, principal, runtime_id)
     advance_workflow(db, request.app.state.engine, _tenant(db, principal), principal, workflow, action, str(body.get("rationale") or ""))
     return kyc_case(runtime_id, principal, db)
+
+
+@router.post("/kyc/{runtime_id}/document-requests")
+def ask_documents(runtime_id: str, body: dict, request: Request, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    workflow = _workflow(db, principal, runtime_id)
+    request_documents(
+        db,
+        request.app.state.engine,
+        _tenant(db, principal),
+        principal,
+        workflow,
+        body.get("items"),
+        str(body.get("reason") or ""),
+    )
+    return kyc_case(runtime_id, principal, db)
+
+
+@router.post("/kyc/{runtime_id}/liveness")
+async def upload_liveness_video(
+    runtime_id: str,
+    file: UploadFile = File(...),
+    principal: Principal = Depends(clarity_principal),
+    db: Session = Depends(db_session),
+):
+    """Store a compressed liveness video the same way a document image is stored."""
+    workflow = _workflow(db, principal, runtime_id)
+    document = store_liveness_video(db, principal, workflow, await file.read(), file.filename or "liveness.mp4", file.content_type or "")
+    return document_record(document)
 
 
 @router.patch("/kyc/{runtime_id}/documents/{document_id}")

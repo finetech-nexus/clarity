@@ -126,6 +126,16 @@ def copy_definition(definition_id: str, body: dict, principal: Principal = Depen
     return workflow_definition_dto(row)
 
 
+def _document_i18n(raw) -> dict:
+    source = raw if isinstance(raw, dict) else {}
+
+    def copy(block: str) -> dict:
+        values = source.get(block) if isinstance(source.get(block), dict) else {}
+        return {lang: str(values.get(lang) or "").strip() for lang in ("fr", "en", "ar")}
+
+    return {"label": copy("label"), "description": copy("description")}
+
+
 @router.put("/workflow-definition/{definition_id}/documents-schema")
 def replace_documents_schema(definition_id: str, documents: list = Body(), principal: Principal = Depends(ballerine_principal), db: Session = Depends(db_session)):
     row = _definition_or_404(db, principal, definition_id)
@@ -145,6 +155,7 @@ def replace_documents_schema(definition_id: str, documents: list = Body(), princ
                 "version": int(item.get("version") or 1),
                 "propertiesSchema": item.get("propertiesSchema") if isinstance(item.get("propertiesSchema"), dict) else {"type": "object", "properties": {}},
                 "required": bool(item.get("required", True)),
+                "i18n": _document_i18n(item.get("i18n")),
             }
         )
     row.payload = {**row.payload, "documentsSchema": cleaned}

@@ -14,6 +14,7 @@ PROCESS_CATALOG = {
             "score": "Évaluation du risque",
             "analystReview": "Revue analyste",
             "checkerReview": "Contrôle checker",
+            "documentsRequested": "Pièces demandées",
             "remediate": "Demande de complément",
         },
     },
@@ -27,6 +28,7 @@ PROCESS_CATALOG = {
             "score": "Évaluation du risque",
             "analystReview": "Revue analyste",
             "checkerReview": "Contrôle checker",
+            "documentsRequested": "Pièces demandées",
             "remediate": "Demande de complément",
         },
     },
@@ -46,6 +48,7 @@ PROCESS_CATALOG = {
             "score": "Évaluation du risque",
             "analystReview": "Revue analyste",
             "checkerReview": "Contrôle checker",
+            "documentsRequested": "Pièces demandées",
             "remediate": "Demande de complément",
         },
     },
@@ -57,8 +60,9 @@ ADVANCE = {
         "verify": {"_": "screen"},
         "screen": {"_": "score"},
         "score": {"_": "analystReview"},
-        "analystReview": {"approve": "checkerReview", "reject": "rejected", "remediate": "remediate"},
-        "checkerReview": {"approve": "approved", "reject": "rejected", "return": "analystReview"},
+        "analystReview": {"approve": "checkerReview", "reject": "rejected", "remediate": "remediate", "requestDocuments": "documentsRequested"},
+        "checkerReview": {"approve": "approved", "reject": "rejected", "return": "analystReview", "requestDocuments": "documentsRequested"},
+        "documentsRequested": {"submit": "analystReview"},
         "remediate": {"_": "collect"},
     },
     "clarityKybBusiness": {
@@ -66,8 +70,9 @@ ADVANCE = {
         "verify": {"_": "screen"},
         "screen": {"_": "score"},
         "score": {"_": "analystReview"},
-        "analystReview": {"approve": "checkerReview", "reject": "rejected", "remediate": "remediate"},
-        "checkerReview": {"approve": "approved", "reject": "rejected", "return": "analystReview"},
+        "analystReview": {"approve": "checkerReview", "reject": "rejected", "remediate": "remediate", "requestDocuments": "documentsRequested"},
+        "checkerReview": {"approve": "approved", "reject": "rejected", "return": "analystReview", "requestDocuments": "documentsRequested"},
+        "documentsRequested": {"submit": "analystReview"},
         "remediate": {"_": "collect"},
     },
     "clarityAlertInvestigation": {
@@ -77,8 +82,9 @@ ADVANCE = {
     "risk-score-improvement": {
         "screen": {"_": "score"},
         "score": {"_": "analystReview"},
-        "analystReview": {"approve": "checkerReview", "reject": "rejected", "remediate": "remediate"},
-        "checkerReview": {"approve": "approved", "reject": "rejected", "return": "analystReview"},
+        "analystReview": {"approve": "checkerReview", "reject": "rejected", "remediate": "remediate", "requestDocuments": "documentsRequested"},
+        "checkerReview": {"approve": "approved", "reject": "rejected", "return": "analystReview", "requestDocuments": "documentsRequested"},
+        "documentsRequested": {"submit": "analystReview"},
         "remediate": {"_": "screen"},
     },
 }
@@ -114,6 +120,8 @@ def chart_needs_repair(definition: dict | None, process_key: str) -> bool:
     if (definition or {}).get("initial") not in chart["states"]:
         return True
     for key, routes in ADVANCE[process_key].items():
+        if key not in states:
+            return True
         if routes and not (states.get(key) or {}).get("on"):
             return True
     for routes in ADVANCE[process_key].values():
