@@ -78,11 +78,15 @@ function FaceScale({ score, threshold }: { score: number | null | undefined; thr
   const cut = Math.max(0, Math.min(100, threshold));
   return (
     <div className="face-scale">
-      <div className="face-track" style={{ ["--cut" as string]: `${cut}%` }}>
+      <div className="face-track">
         <span className="face-mark" style={{ left: `${cut}%` }} />
         {value != null ? <span className="face-cursor" style={{ left: `${value}%` }}>{value}</span> : null}
       </div>
-      <div className="face-bounds"><span>KO</span><span>seuil {cut}</span><span>OK</span></div>
+      <div className="face-axis">
+        <span>0</span>
+        <span className="face-threshold-label" style={{ left: `${cut}%` }}>{cut}</span>
+        <span>100</span>
+      </div>
     </div>
   );
 }
@@ -130,7 +134,6 @@ export default function KycDesk() {
   const [complementTarget, setComplementTarget] = useState("");
   const [askReason, setAskReason] = useState("");
   const [comparing, setComparing] = useState(false);
-  const [thresholdDraft, setThresholdDraft] = useState("40");
   const [faceTried, setFaceTried] = useState("");
 
   async function loadQueue(prefer?: string, nextQuery = query, nextPage = page) {
@@ -155,10 +158,7 @@ export default function KycDesk() {
       setDetail(null);
       return;
     }
-    void api<Detail>(`/api/clarity/v1/desks/kyc/${selected}`).then((body) => {
-      setDetail(body);
-      setThresholdDraft(String(body.face_threshold ?? body.face_match?.threshold ?? 40));
-    }).catch((err: Error) => setError(err.message));
+    void api<Detail>(`/api/clarity/v1/desks/kyc/${selected}`).then(setDetail).catch((err: Error) => setError(err.message));
   }, [selected]);
 
   async function decideCase(action: "approve" | "reject" | "revision") {
@@ -246,27 +246,6 @@ export default function KycDesk() {
       await loadQueue(selected);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Demande refusée");
-    }
-  }
-
-  async function saveThreshold(event: FormEvent) {
-    event.preventDefault();
-    const threshold = Number(thresholdDraft);
-    if (!Number.isInteger(threshold) || threshold < 0 || threshold > 100) {
-      setError("Le seuil doit être un nombre entre 0 et 100.");
-      return;
-    }
-    setError("");
-    try {
-      const saved = await api<{ threshold: number }>("/api/clarity/v1/desks/kyc/face-threshold", {
-        method: "PUT",
-        body: JSON.stringify({ threshold }),
-      });
-      setThresholdDraft(String(saved.threshold));
-      if (selected) setDetail(await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}`));
-      setMessage(`Seuil enregistré : ${saved.threshold}. En dessous, KO. À partir de ce score, OK.`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Seuil refusé");
     }
   }
 
@@ -446,13 +425,6 @@ export default function KycDesk() {
                 <p>{detail.face_match?.score == null ? (comparing ? "Comparaison des visages…" : "Comparaison non faite") : detail.face_match.match ? "OK — correspondance" : "KO — pas de correspondance"}</p>
                 <p className="label">{detail.face_match?.source === "video" ? "Visage extrait de la vidéo, comparé à la photo de la pièce." : "Selfie comparé à la photo de la pièce."}</p>
                 {detail.face_match?.detail ? <p className="label">{detail.face_match.detail}</p> : null}
-                <form className="form face-threshold" onSubmit={(event) => void saveThreshold(event)}>
-                  <label>
-                    Seuil OK
-                    <input aria-label="Seuil de correspondance faciale" type="number" min={0} max={100} value={thresholdDraft} onChange={(event) => setThresholdDraft(event.target.value)} />
-                  </label>
-                  <button type="submit">Enregistrer le seuil</button>
-                </form>
                 <button type="button" disabled={comparing} onClick={() => void compareFaces()}>Comparer à nouveau</button>
               </article>
             ) : null}
@@ -475,7 +447,8 @@ export default function KycDesk() {
               </article>
             ) : null}
             {tab === "Action" ? (
-              <article className="card">
+              <div className="stack">
+                {!piecesApproved ? <p className="error">Approuvez chaque pièce pour activer la validation.</p> : null}
                 {detail.alert_reasons?.includes("correspondence") ? <p className="alert-line">Les données lues sur la pièce ne correspondent pas aux informations saisies.</p> : null}
                 {detail.alert_reasons?.includes("screening") ? <p className="alert-line">Le criblage remonte une alerte.</p> : null}
                 {canDecide ? (
@@ -484,36 +457,41 @@ export default function KycDesk() {
                       <button className="ghost" type="button" disabled={!canDecide} onClick={() => void decideCase("reject")}>Rejeter</button>
                       <button type="button" disabled={!canApprove} onClick={() => void decideCase("approve")}>{TASK_ACTION[taskKey] || "Transmettre au contrôle"}</button>
                     </div>
-                    {!piecesApproved ? <p className="label">Approuvez chaque pièce pour activer la validation.</p> : null}
                     {screeningPending ? <p className="label">Vérifiez chaque correspondance de criblage avant de valider.</p> : null}
                     <div className="action-grid">
-                      <form className="form" onSubmit={(event) => void requestDocuments(event, "resubmit", resubmitId)}>
-                        <label>
-                          Demander un renvoi
-                          <select value={resubmitId} onChange={(event) => setResubmitId(event.target.value)} required>
-                            <option value="">Pièce déjà envoyée</option>
-                            {sentDocuments.map((document) => (
-                              <option key={document.id} value={document.id}>{document.title || document.type}</option>
-                            ))}
-                          </select>
-                        </label>
-                        <input value={askReason} onChange={(event) => setAskReason(event.target.value)} placeholder="Motif" />
-                        <button type="submit">Demander le renvoi</button>
-                      </form>
-                      <form className="form" onSubmit={(event) => void requestDocuments(event, "additional", complementTarget)}>
-                        <label>
-                          Demander un complément
-                          <select value={complementTarget} onChange={(event) => setComplementTarget(event.target.value)} required>
-                            <option value="">Pièce complémentaire</option>
-                            {complements.map((row) => (
-                              <option key={`${row.type}-${row.category}`} value={`${row.type}|${row.category}|${row.country || "ZZ"}`}>
-                                {row.label?.fr || row.type}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <button type="submit">Demander le complément</button>
-                      </form>
+                      <article className="card">
+                        <h3>Demande de renvoi</h3>
+                        <form className="form" onSubmit={(event) => void requestDocuments(event, "resubmit", resubmitId)}>
+                          <label>
+                            Pièce déjà envoyée
+                            <select value={resubmitId} onChange={(event) => setResubmitId(event.target.value)} required>
+                              <option value="">Choisir</option>
+                              {sentDocuments.map((document) => (
+                                <option key={document.id} value={document.id}>{document.title || document.type}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <input value={askReason} onChange={(event) => setAskReason(event.target.value)} placeholder="Motif" />
+                          <button type="submit">Demander le renvoi</button>
+                        </form>
+                      </article>
+                      <article className="card">
+                        <h3>Demander un complément</h3>
+                        <form className="form" onSubmit={(event) => void requestDocuments(event, "additional", complementTarget)}>
+                          <label>
+                            Pièce complémentaire
+                            <select value={complementTarget} onChange={(event) => setComplementTarget(event.target.value)} required>
+                              <option value="">Choisir</option>
+                              {complements.map((row) => (
+                                <option key={`${row.type}-${row.category}`} value={`${row.type}|${row.category}|${row.country || "ZZ"}`}>
+                                  {row.label?.fr || row.type}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <button type="submit">Demander le complément</button>
+                        </form>
+                      </article>
                     </div>
                   </>
                 ) : <p className="label">Aucune action ouverte sur ce dossier.</p>}
@@ -524,7 +502,7 @@ export default function KycDesk() {
                     ))}
                   </ul>
                 ) : null}
-              </article>
+              </div>
             ) : null}
           </div>
         ) : selected ? <p>Chargement du dossier…</p> : null}

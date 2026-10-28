@@ -1044,6 +1044,28 @@ def update_kyc_policy(body: KycPolicyBody, principal: Principal = Depends(clarit
     return {"kyc_validity_years": tenant.kyc_validity_years}
 
 
+class FaceThresholdBody(BaseModel):
+    threshold: int = Field(ge=0, le=100)
+
+
+@router.get("/administration/face-threshold")
+def read_face_threshold(principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    from app.face import face_threshold
+
+    return {"threshold": face_threshold(db, principal.tenant_id)}
+
+
+@router.patch("/administration/face-threshold")
+def update_admin_face_threshold(body: FaceThresholdBody, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    if not principal.allows("admin"):
+        raise clarity_error(403, "forbidden", "Réservé à l'administration.")
+    from app.face import set_face_threshold
+
+    saved = set_face_threshold(db, principal.tenant_id, body.threshold)
+    audit(db, principal.tenant_id, actor_label(principal), "face.threshold", "tenant", principal.tenant_id, {"threshold": saved})
+    return {"threshold": saved}
+
+
 @router.post("/administration/purge-clients")
 def purge_client_data(principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
     if not principal.allows("admin"):

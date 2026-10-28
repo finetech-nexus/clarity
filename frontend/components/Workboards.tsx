@@ -418,7 +418,9 @@ export function AdminBoard() {
   const [me, setMe] = useState<Row | null>(null);
   const [error, setError] = useState("");
   const [years, setYears] = useState("1");
+  const [threshold, setThreshold] = useState("40");
   const [saved, setSaved] = useState("");
+  const [thresholdSaved, setThresholdSaved] = useState("");
   const [givenName, setGivenName] = useState("");
   const [familyName, setFamilyName] = useState("");
   const [email, setEmail] = useState("");
@@ -429,6 +431,7 @@ export function AdminBoard() {
     void api<Row>("/api/clarity/v1/me").then(setMe);
     void api<Row[]>("/api/clarity/v1/administration/users").then(setRows).catch((err: Error) => setError(err.message));
     void api<{ kyc_validity_years: number }>("/api/clarity/v1/administration/kyc").then((body) => setYears(String(body.kyc_validity_years))).catch(() => undefined);
+    void api<{ threshold: number }>("/api/clarity/v1/administration/face-threshold").then((body) => setThreshold(String(body.threshold))).catch(() => undefined);
     void api<{ mode: string }>("/api/clarity/v1/auth/mode").then((body) => setPasswordMode(body.mode === "password")).catch(() => undefined);
   }, []);
   async function savePolicy(event: FormEvent) {
@@ -442,6 +445,21 @@ export function AdminBoard() {
       });
       setYears(String(body.kyc_validity_years));
       setSaved("Durée de validité enregistrée.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Enregistrement refusé");
+    }
+  }
+  async function saveThreshold(event: FormEvent) {
+    event.preventDefault();
+    setThresholdSaved("");
+    setError("");
+    try {
+      const body = await api<{ threshold: number }>("/api/clarity/v1/administration/face-threshold", {
+        method: "PATCH",
+        body: JSON.stringify({ threshold: Number(threshold) }),
+      });
+      setThreshold(String(body.threshold));
+      setThresholdSaved("Seuil de correspondance enregistré.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Enregistrement refusé");
     }
@@ -481,15 +499,28 @@ export function AdminBoard() {
       </div>
       {error ? <p className="error">{error}</p> : null}
       {tab === "config" ? (
-        <form className="form" onSubmit={(event) => void savePolicy(event)}>
-          {saved ? <p className="label">{saved}</p> : null}
-          <label>
-            Validité du KYC (années)
-            <input min={1} max={10} type="number" value={years} onChange={(event) => setYears(event.target.value)} />
-          </label>
-          <p className="label">Après approbation, la vérification expire à cette échéance. Une nouvelle vérification est alors créée pour mettre à jour le client.</p>
-          <button type="submit">Enregistrer</button>
-        </form>
+        <div className="action-grid">
+          <form className="form card" onSubmit={(event) => void savePolicy(event)}>
+            <h3>Validité du KYC</h3>
+            {saved ? <p className="label">{saved}</p> : null}
+            <label>
+              Années
+              <input min={1} max={10} type="number" value={years} onChange={(event) => setYears(event.target.value)} />
+            </label>
+            <p className="label">Après approbation, la vérification expire à cette échéance. Une nouvelle vérification est alors créée pour mettre à jour le client.</p>
+            <button type="submit">Enregistrer</button>
+          </form>
+          <form className="form card" onSubmit={(event) => void saveThreshold(event)}>
+            <h3>Correspondance faciale</h3>
+            {thresholdSaved ? <p className="label">{thresholdSaved}</p> : null}
+            <label>
+              Seuil OK
+              <input aria-label="Seuil de correspondance faciale" min={0} max={100} type="number" value={threshold} onChange={(event) => setThreshold(event.target.value)} />
+            </label>
+            <p className="label">Score en dessous du seuil : KO. À partir de ce score : OK. La vérification affiche ce seuil, elle ne le modifie pas.</p>
+            <button type="submit">Enregistrer</button>
+          </form>
+        </div>
       ) : (
         <>
           <form className="form" onSubmit={(event) => void addMember(event)}>

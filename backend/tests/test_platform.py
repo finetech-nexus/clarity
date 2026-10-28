@@ -1831,6 +1831,14 @@ def test_face_match_compares_the_selfie_with_the_identity_photo(tmp_path):
         assert again.json()["face_match"]["match"] is False
         refused = client.put("/api/clarity/v1/desks/kyc/face-threshold", headers=analyst, json={"threshold": 140})
         assert refused.status_code == 422
+        denied = client.patch("/api/clarity/v1/administration/face-threshold", headers=analyst, json={"threshold": 40})
+        assert denied.status_code == 403
+        admin = {"Authorization": f"Bearer {_login(client, ADMIN_EMAIL)}"}
+        restored = client.patch("/api/clarity/v1/administration/face-threshold", headers=admin, json={"threshold": 40})
+        assert restored.status_code == 200, restored.text
+        assert restored.json()["threshold"] == 40
+        listed = client.get("/api/clarity/v1/administration/face-threshold", headers=analyst)
+        assert listed.json()["threshold"] == 40
 
 
 def test_document_image_is_served_and_a_missing_file_is_not_a_server_error(tmp_path):

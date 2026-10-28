@@ -294,7 +294,6 @@ export default function Workspace({ section, customerId }: { section: string; cu
         </button>
       </aside>
       <main className="main">
-        <div className="banner">Données de démonstration synthétiques. Aucun criblage ni aucune vérification d'identité de production n'est connecté.</div>
         {error && <p className="error">{error}</p>}
         {customerId && profile ? <CustomerView profile={profile} onChange={setProfile} /> : null}
         {!customerId && (section === "overview" || section === "kyb" || section === "aml") ? <Overview scope={section === "overview" ? "kyc" : section} data={data as Record<string, unknown> | null} /> : null}
