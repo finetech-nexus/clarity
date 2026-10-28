@@ -1470,6 +1470,53 @@ def test_one_verification_per_client_until_expiry(tmp_path):
         assert len(same) == 2
 
 
+def test_refused_verification_restarts_as_a_new_one(tmp_path):
+    entity = {
+        "type": "individual",
+        "id": "phone-client-refused",
+        "data": {"firstName": "Nadia", "lastName": "Ben Ali", "dateOfBirth": "1992-04-04"},
+    }
+    with _client(tmp_path) as client:
+        headers = {"Authorization": f"Bearer {BALLERINE_API_KEY}"}
+        first = client.post(
+            "/api/v1/external/workflows/run",
+            headers=headers,
+            json={"workflowId": "kyc_collection_flow", "context": {"entity": entity, "documents": []}},
+        )
+        assert first.status_code == 200, first.text
+        runtime_id = first.json()["workflowRuntimeId"]
+        customer_id = first.json()["ballerineEntityId"]
+        review = client.post(
+            "/api/v1/external/workflows/run",
+            headers=headers,
+            json={"workflowId": "risk-score-improvement-dev", "context": {"entity": entity, "documents": []}},
+        )
+        assert review.status_code == 200, review.text
+        assert review.json()["workflowRuntimeId"] == runtime_id
+        analyst = {"Authorization": f"Bearer {_login(client, ANALYST_EMAIL)}"}
+        refused = client.post(
+            f"/api/clarity/v1/desks/kyc/{runtime_id}/decision",
+            headers=analyst,
+            json={"action": "reject", "rationale": "La pièce ne correspond pas."},
+        )
+        assert refused.status_code == 200, refused.text
+        assert refused.json()["case"]["state"] == "rejected"
+        assert refused.json()["case"]["status"] == "failed"
+        restarted = client.post(
+            "/api/v1/external/workflows/run",
+            headers=headers,
+            json={"workflowId": "kyc_collection_flow", "context": {"entity": entity, "documents": []}},
+        )
+        assert restarted.status_code == 200, restarted.text
+        assert restarted.json()["ballerineEntityId"] == customer_id
+        assert restarted.json()["workflowRuntimeId"] != runtime_id
+        profile = client.get(f"/api/clarity/v1/customers/{customer_id}", headers=analyst)
+        cycles = profile.json()["kyc_cycles"]
+        assert [cycle["status"] for cycle in cycles] == ["pending", "rejected"]
+        assert cycles[0]["workflow_runtime_id"] == restarted.json()["workflowRuntimeId"]
+        assert cycles[1]["workflow_runtime_id"] == runtime_id
+
+
 def test_kyc_validity_defaults_to_one_year(tmp_path):
     with _client(tmp_path) as client:
         admin = {"Authorization": f"Bearer {_login(client, ADMIN_EMAIL)}"}

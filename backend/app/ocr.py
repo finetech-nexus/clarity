@@ -840,6 +840,40 @@ def _guess_name(text: str) -> tuple[str, str]:
     return "", ""
 
 
+def _blankish(value: object) -> bool:
+    text = "" if value is None else str(value).strip()
+    return not text or set(text) <= {"-", ".", "/"}
+
+
+def keep_reader_values(document, result: dict) -> None:
+    """Store what the reader found. A blank name sent with the photo is not a value."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    properties = dict(document.properties or {})
+    extracted = dict(properties.get("extracted") or {})
+    parsed = result.get("parsedData") or {}
+    for key in _ACCOUNT:
+        value = str(parsed.get(key) or "").strip()
+        if value:
+            properties[key] = value
+            extracted[key] = value
+            if key == "expiry":
+                document.expiry = value
+            continue
+        if _blankish(properties.get(key)):
+            properties.pop(key, None)
+            extracted.pop(key, None)
+    properties["extracted"] = extracted
+    properties["ocr"] = {
+        "engine": result["engine"],
+        "confidence": result["confidence"],
+        "production": False,
+        "extracted_text": result["extracted_text"][:4000],
+    }
+    document.properties = properties
+    flag_modified(document, "properties")
+
+
 def run_on_document(document) -> dict | None:
     if not document.storage_path or not Path(document.storage_path).is_file():
         return None

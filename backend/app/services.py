@@ -868,7 +868,7 @@ def _complete_active(db: Session, engine, workflow: WorkflowInstance, variables:
             terminal = "closed"
         else:
             terminal = "completed"
-        workflow.status = "completed"
+        workflow.status = "failed" if variables.get("action") == "reject" else "completed"
         workflow.state = terminal if terminal in TERMINAL or terminal == "completed" else terminal
         workflow.resolved_at = utcnow()
         _sync_task(db, workflow, None)
@@ -1471,16 +1471,47 @@ def _document_schema(db: Session, workflow: WorkflowInstance) -> list[dict]:
     return schema
 
 
+def _mark_refused(db: Session, workflow: WorkflowInstance, customer: Customer) -> None:
+    """A refused verification is an échec, not a finished one."""
+    workflow.status = "failed"
+    customer.canonical_status = "rejected"
+    cycle = latest_kyc_cycle(db, customer.id)
+    if cycle and cycle.status == "pending" and cycle.workflow_id in {None, workflow.id}:
+        cycle.status = "rejected"
+
+
+def refuse_verification(db: Session, engine, tenant: Tenant, principal: Principal, workflow: WorkflowInstance, rationale: str) -> WorkflowInstance:
+    """Refuse the case even when it is not sitting on the analyst or checker step."""
+    if not principal.allows("analyst", "investigator", "checker"):
+        raise clarity_error(403, "forbidden", "Le refus exige le rôle analyste, investigateur ou checker.")
+    if workflow.status == "failed" or workflow.state in {"approved", "rejected", "closed"}:
+        raise clarity_error(422, "closed", "Ce dossier est déjà terminé.")
+    from app.engine import ADVANCE
+
+    task = db.scalar(select(WorkflowTask).where(WorkflowTask.workflow_id == workflow.id, WorkflowTask.status == "open"))
+    routes = ADVANCE.get(workflow.definition_key, {}).get(task.task_key, {}) if task else {}
+    if task and "reject" in routes:
+        return advance_workflow(db, engine, tenant, principal, workflow, "reject", rationale)
+    workflow.state = "rejected"
+    workflow.resolved_at = utcnow()
+    _sync_task(db, workflow, None)
+    customer = db.get(Customer, workflow.customer_id) if workflow.customer_id else None
+    if customer:
+        _mark_refused(db, workflow, customer)
+    else:
+        workflow.status = "failed"
+    audit(db, tenant.id, actor_label(principal), "workflow.action", "workflow", workflow.id, {"action": "reject", "state": workflow.state})
+    return workflow
+
+
 def request_documents(db: Session, engine, tenant: Tenant, principal: Principal, workflow: WorkflowInstance, items: list, reason: str) -> list[dict]:
     if not isinstance(items, list) or not items:
         raise clarity_error(400, "invalid", "Indiquez au moins une pièce à demander.")
+    if workflow.status == "failed" or workflow.state in {"approved", "rejected", "closed"}:
+        raise clarity_error(422, "closed", "Ce dossier est déjà terminé.")
+    if not principal.allows("analyst", "investigator", "checker"):
+        raise clarity_error(403, "forbidden", "La demande de pièce exige le rôle analyste, investigateur ou checker.")
     task = db.scalar(select(WorkflowTask).where(WorkflowTask.workflow_id == workflow.id, WorkflowTask.status == "open"))
-    if not task or task.task_key not in {"analystReview", "checkerReview"}:
-        raise clarity_error(422, "invalid_state", "Une demande de pièce se fait pendant la revue analyste ou le contrôle.")
-    if task.task_key == "analystReview" and not principal.allows("analyst", "investigator"):
-        raise clarity_error(403, "forbidden", "La revue manuelle exige le rôle analyste ou investigateur.")
-    if task.task_key == "checkerReview" and not principal.allows("checker"):
-        raise clarity_error(403, "forbidden", "Le contrôle exige le rôle checker.")
     schema = _document_schema(db, workflow)
     requested = []
     for item in items:
@@ -1535,7 +1566,17 @@ def request_documents(db: Session, engine, tenant: Tenant, principal: Principal,
     context["documentsRequested"] = requested
     workflow.context = context
     flag_modified(workflow, "context")
-    advance_workflow(db, engine, tenant, principal, workflow, "requestDocuments", reason or "Pièces demandées")
+    from app.engine import ADVANCE
+
+    routes = ADVANCE.get(workflow.definition_key, {}).get(task.task_key, {}) if task else {}
+    if task and "requestDocuments" in routes:
+        advance_workflow(db, engine, tenant, principal, workflow, "requestDocuments", reason or "Pièces demandées")
+    else:
+        workflow.state = "documentsRequested"
+        customer = db.get(Customer, workflow.customer_id) if workflow.customer_id else None
+        if customer:
+            customer.canonical_status = "documents_requested"
+        audit(db, tenant.id, actor_label(principal), "workflow.action", "workflow", workflow.id, {"action": "requestDocuments", "state": workflow.state})
     return requested
 
 
@@ -1631,7 +1672,7 @@ def advance_workflow(db: Session, engine, tenant: Tenant, principal: Principal, 
         validate_kyc_cycle(db, customer, workflow.id, customer.next_review_at)
         deliver_account_hook(db, workflow, customer)
     elif customer and workflow.state == "rejected":
-        customer.canonical_status = "rejected"
+        _mark_refused(db, workflow, customer)
     elif customer and action == "remediate":
         customer.canonical_status = "remediation"
     elif customer and action == "requestDocuments":

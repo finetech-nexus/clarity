@@ -46,6 +46,7 @@ from app.services import (
     customer_view,
     document_labels,
     document_record,
+    refuse_verification,
     request_documents,
     store_bytes,
     store_liveness_video,
@@ -415,7 +416,7 @@ def _kyc_card(db: Session, workflow: WorkflowInstance) -> dict:
         "workflow_id": workflow.id,
         "name": customer.display_name if customer else workflow.definition_name,
         "definition": _definition_title(db, workflow),
-        "status": workflow.status,
+        "status": "failed" if workflow.state == "rejected" else workflow.status,
         "state": workflow.state,
         "task": None if not task else {"key": task.task_key, "name": task.name},
         "documents": len(documents),
@@ -511,7 +512,12 @@ def decide_kyc(runtime_id: str, body: dict, request: Request, principal: Princip
     if not action:
         raise clarity_error(400, "invalid", "L'action doit être approve, reject ou revision.")
     workflow = _workflow(db, principal, runtime_id)
-    advance_workflow(db, request.app.state.engine, _tenant(db, principal), principal, workflow, action, str(body.get("rationale") or ""))
+    tenant = _tenant(db, principal)
+    rationale = str(body.get("rationale") or "")
+    if action == "reject":
+        refuse_verification(db, request.app.state.engine, tenant, principal, workflow, rationale)
+    else:
+        advance_workflow(db, request.app.state.engine, tenant, principal, workflow, action, rationale)
     return kyc_case(runtime_id, principal, db)
 
 

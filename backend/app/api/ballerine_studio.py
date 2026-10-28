@@ -507,8 +507,68 @@ def _bind_uploaded_files(db: Session, workflow, context: dict) -> None:
             if side:
                 properties["side"] = side
                 properties["title"] = f"{row.doc_type} {side}".strip()
+            for key in ("firstName", "lastName", "dateOfBirth", "nationality", "documentNumber", "expiry", "gender", "address"):
+                text = "" if properties.get(key) is None else str(properties.get(key)).strip()
+                if not text or set(text) <= {"-", ".", "/"}:
+                    properties.pop(key, None)
             row.properties = properties
             flag_modified(row, "properties")
+            _read_identity_photo(db, workflow, row)
+
+
+_IDENTITY_PHOTOS = {"passport", "id_card", "id-card", "drivers_license", "residence_permit"}
+
+
+def _read_identity_photo(db: Session, workflow, document) -> None:
+    """Fill the extracted name from the same reader the desk uses. A blank sent with the photo is ignored."""
+    if document.doc_type not in _IDENTITY_PHOTOS or not document.storage_path:
+        return
+    from pathlib import Path
+
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.models import Customer
+    from app.ocr import keep_reader_values, read_identity
+
+    path = Path(document.storage_path)
+    if not path.is_file():
+        return
+    result = read_identity(path.read_bytes())
+    keep_reader_values(document, result)
+    parsed = result.get("parsedData") or {}
+    first = str(parsed.get("firstName") or "").strip()
+    last = str(parsed.get("lastName") or "").strip()
+    born = str(parsed.get("dateOfBirth") or "").strip()
+    if not any((first, last, born)):
+        return
+    context = dict(workflow.context or {})
+    entity = dict(context.get("entity") or {})
+    data = dict(entity.get("data") or {})
+    changed = False
+    for key, value in (("firstName", first), ("lastName", last), ("dateOfBirth", born)):
+        current = str(data.get(key) or data.get({"firstName": "given_name", "lastName": "family_name", "dateOfBirth": "date_of_birth"}[key]) or "").strip()
+        if value and not current:
+            data[key] = value
+            changed = True
+    if changed:
+        entity["data"] = data
+        context["entity"] = entity
+        workflow.context = context
+        flag_modified(workflow, "context")
+    if not workflow.customer_id:
+        return
+    customer = db.get(Customer, workflow.customer_id)
+    if not customer or customer.individual is None:
+        return
+    person = customer.individual
+    if first and not (person.given_name or "").strip():
+        person.given_name = first
+    if last and not (person.family_name or "").strip():
+        person.family_name = last
+    if born and not (person.date_of_birth or "").strip():
+        person.date_of_birth = born
+    if (not customer.display_name or customer.display_name == "Personne physique") and (person.given_name or person.family_name):
+        customer.display_name = " ".join(part for part in (person.given_name, person.family_name) if part)
 
 
 def _stored_file(document: IdentityDocument) -> dict:

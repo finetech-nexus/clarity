@@ -102,6 +102,11 @@ const STATUS_FILTERS = [
   { value: "failed", label: "Échec" },
 ];
 
+function statusLabel(status: string, state?: string | null) {
+  if (status === "failed" || state === "rejected") return "Échec";
+  return STATUS_FILTERS.find((item) => item.value === status)?.label || stepLabel(state, status);
+}
+
 function filtersQuery(name: string, statuses: string[]) {
   const parts: string[] = [];
   const trimmed = name.trim().replaceAll('"', "");
@@ -342,7 +347,7 @@ export default function KycDesk() {
           {queue.map((item) => (
             <button className={`${item.id === selected ? "active" : "ghost"}${item.alert ? " alert" : ""}`} key={item.id} type="button" onClick={() => setSelected(item.id)}>
               <span>{item.name}</span>
-              <span className="label">{stepLabel(item.state, item.status)} · {item.documents} pièce(s){item.revisions ? ` · ${item.revisions} à renvoyer` : ""}</span>
+              <span className="label">{item.status === "active" ? stepLabel(item.state, item.status) : statusLabel(item.status, item.state)} · {item.documents} pièce(s){item.revisions ? ` · ${item.revisions} à renvoyer` : ""}</span>
             </button>
           ))}
         </div>
@@ -351,7 +356,7 @@ export default function KycDesk() {
             <header className="case-bar">
               <div>
                 <h2>{detail.customer?.display_name || detail.case.name}</h2>
-                <p className="label">{detail.case.definition} · {detail.case.status} · {detail.task?.name || stepLabel(detail.case.state, "sans tâche ouverte")}</p>
+                <p className="label">{detail.case.definition} · {statusLabel(detail.case.status, detail.case.state)} · {detail.task?.name || stepLabel(detail.case.state, "sans tâche ouverte")}</p>
                 {detail.steps?.length ? (
                   <ol className="stepper">
                     {detail.steps.map((step) => (
