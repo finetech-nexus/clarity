@@ -45,11 +45,12 @@ type Detail = {
   documents: Array<ViewerDocument & { extracted?: Field[]; ocr?: OcrRead | null; decision?: string | null; status?: string; type?: string; category?: string }>;
   tracker: Array<{ id?: string; type: string; category: string; country?: string; required: boolean; status: string; document_id?: string | null; label?: { fr?: string; en?: string; ar?: string } }>;
   requested_documents?: Array<{ id: string; type: string; mode: string; reason?: string; label?: { fr?: string; en?: string; ar?: string } }>;
+  face_match?: { score: number | null; match: boolean | null; source?: string; detail?: string } | null;
   steps?: Array<{ key: string; label: string; status: "done" | "current" | "upcoming" }>;
 };
 
-const TABS = ["Informations saisies", "Documents", "Données du document", "Résultats", "Criblage"] as const;
-const PREVIEW_TABS = ["Informations saisies", "Documents", "Données du document", "Résultats", "Score", "Criblage"] as const;
+const TABS = ["Informations saisies", "Documents", "Données du document", "Reconnaissance faciale", "Criblage", "Action"] as const;
+const PREVIEW_TABS = ["Informations saisies", "Documents", "Données du document", "Reconnaissance faciale", "Score", "Criblage"] as const;
 
 const STEP_LABEL: Record<string, string> = {
   collect: "Collecte",
@@ -105,9 +106,11 @@ export default function KycDesk() {
   const [tab, setTab] = useState<(typeof TABS)[number]>("Informations saisies");
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [reading, setReading] = useState(false);
-  const [askMode, setAskMode] = useState<"resubmit" | "additional">("resubmit");
-  const [askTarget, setAskTarget] = useState("");
+  const [resubmitId, setResubmitId] = useState("");
+  const [complementTarget, setComplementTarget] = useState("");
   const [askReason, setAskReason] = useState("");
+  const [comparing, setComparing] = useState(false);
+  const [faceTried, setFaceTried] = useState("");
 
   async function loadQueue(prefer?: string, nextQuery = query, nextPage = page) {
     const body = await searchPage<QueueItem>("/api/clarity/v1/desks/kyc", nextQuery, nextPage);
@@ -200,24 +203,38 @@ export default function KycDesk() {
     }
   }
 
-  async function requestDocuments(event: FormEvent) {
+  async function requestDocuments(event: FormEvent, mode: "resubmit" | "additional", target: string) {
     event.preventDefault();
-    if (!selected || !askTarget) return;
+    if (!selected || !target) return;
     setError("");
-    const item = askMode === "resubmit"
-      ? { document_id: askTarget }
-      : { type: askTarget.split("|")[0], category: askTarget.split("|")[1], country: askTarget.split("|")[2] || "ZZ" };
+    const item = mode === "resubmit"
+      ? { document_id: target }
+      : { type: target.split("|")[0], category: target.split("|")[1], country: target.split("|")[2] || "ZZ" };
     try {
       setDetail(await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}/document-requests`, {
         method: "POST",
         body: JSON.stringify({ reason: askReason, items: [item] }),
       }));
       setAskReason("");
-      setAskTarget("");
-      setMessage(askMode === "resubmit" ? "Renvoi demandé au client." : "Pièce complémentaire demandée au client.");
+      setResubmitId("");
+      setComplementTarget("");
+      setMessage(mode === "resubmit" ? "Renvoi demandé au client." : "Pièce complémentaire demandée au client.");
       await loadQueue(selected);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Demande refusée");
+    }
+  }
+
+  async function compareFaces() {
+    if (!selected) return;
+    setError("");
+    setComparing(true);
+    try {
+      setDetail(await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}/face-match`, { method: "POST" }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Comparaison des visages refusée");
+    } finally {
+      setComparing(false);
     }
   }
 
@@ -233,12 +250,25 @@ export default function KycDesk() {
   }
 
   const taskKey = detail?.task?.key || "";
-  const revisions = detail?.documents.filter((item) => item.decision === "revisions").length || 0;
   const matches = (detail?.customer?.screening || []).flatMap((item) => item.matches || []);
   const piecesApproved = Boolean(detail?.documents.length) && detail!.documents.every((item) => item.decision === "approved");
   const screeningPending = matches.some((item) => item.status === "pending");
   const canDecide = taskKey === "analystReview" || taskKey === "checkerReview" || taskKey === "investigate";
   const canApprove = canDecide && piecesApproved && !screeningPending;
+  const sentDocuments = (detail?.documents || []).filter((document) => document.status !== "requested");
+  const complements = (detail?.tracker || []).filter((row) => !row.document_id);
+  const screeningFactors = (detail?.customer?.risk?.factors || []).filter((factor) => factor.code === "screening_confirmed");
+  const otherFactors = (detail?.customer?.risk?.factors || []).filter((factor) => factor.code !== "screening_confirmed");
+
+  useEffect(() => {
+    setFaceTried("");
+  }, [selected]);
+
+  useEffect(() => {
+    if (tab !== "Reconnaissance faciale" || !selected || !detail || detail.face_match || faceTried === selected || comparing) return;
+    setFaceTried(selected);
+    void compareFaces();
+  }, [tab, selected, detail, faceTried, comparing]);
 
   return (
     <>
@@ -305,11 +335,9 @@ export default function KycDesk() {
                     ))}
                   </ol>
                 ) : null}
-                {detail.alert_reasons?.includes("correspondence") ? <p className="alert-line">Les données lues sur la pièce ne correspondent pas aux informations saisies.</p> : null}
-                {detail.alert_reasons?.includes("screening") ? <p className="alert-line">Le criblage remonte une alerte.</p> : null}
-                {detail.customer?.risk?.factors?.length ? (
+                {otherFactors.length ? (
                   <ul className="factors">
-                    {detail.customer.risk.factors.map((factor) => (
+                    {otherFactors.map((factor) => (
                       <li key={factor.code}>{factor.points} pts — {factor.explanation}</li>
                     ))}
                   </ul>
@@ -320,52 +348,7 @@ export default function KycDesk() {
                 <strong>{detail.customer?.risk ? detail.customer.risk.score : "—"}</strong>
                 <span className="label">{detail.customer?.risk?.tier || "non calculé"}</span>
               </div>
-              <div className="actions">
-                <button className="ghost" type="button" disabled={!canDecide || !revisions} onClick={() => void decideCase("revision")}>Demander les renvois{revisions ? ` (${revisions})` : ""}</button>
-                <button className="ghost" type="button" disabled={!canDecide} onClick={() => void decideCase("reject")}>Rejeter</button>
-                <button type="button" disabled={!canApprove} onClick={() => void decideCase("approve")}>{TASK_ACTION[taskKey] || "Approuver"}</button>
-                {!piecesApproved ? <p className="label">Approuvez chaque pièce pour activer la validation.</p> : null}
-                {screeningPending ? <p className="label">Vérifiez chaque correspondance de criblage avant de valider.</p> : null}
-              </div>
             </header>
-            {canDecide ? (
-              <form className="form" onSubmit={(event) => void requestDocuments(event)}>
-                <label>
-                  Demande
-                  <select value={askMode} onChange={(event) => { setAskMode(event.target.value as "resubmit" | "additional"); setAskTarget(""); }}>
-                    <option value="resubmit">Renvoyer une pièce déjà fournie</option>
-                    <option value="additional">Demander une autre pièce du parcours</option>
-                  </select>
-                </label>
-                <label>
-                  Pièce
-                  <select value={askTarget} onChange={(event) => setAskTarget(event.target.value)} required>
-                    <option value="">Choisir</option>
-                    {askMode === "resubmit"
-                      ? detail.documents.map((document) => (
-                        <option key={document.id} value={document.id}>{document.title || document.type}</option>
-                      ))
-                      : (detail.tracker || []).map((row) => (
-                        <option key={`${row.type}-${row.category}`} value={`${row.type}|${row.category}|${row.country || "ZZ"}`}>
-                          {row.label?.fr || row.type}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-                <label>
-                  Motif
-                  <input value={askReason} onChange={(event) => setAskReason(event.target.value)} placeholder="Pourquoi cette pièce est demandée" />
-                </label>
-                <button type="submit">Demander au client</button>
-              </form>
-            ) : null}
-            {detail.requested_documents?.length ? (
-              <ul className="factors">
-                {detail.requested_documents.map((item) => (
-                  <li key={item.id}>{item.label?.fr || item.type} — {item.mode === "resubmit" ? "à renvoyer" : "pièce complémentaire"}{item.reason ? ` · ${item.reason}` : ""}</li>
-                ))}
-              </ul>
-            ) : null}
             <div className="tabs">
               {TABS.map((item) => (
                 <button className={tab === item ? "active" : ""} key={item} type="button" onClick={() => setTab(item)}>{item}</button>
@@ -412,19 +395,20 @@ export default function KycDesk() {
                 ) : <p className="label">Aucune carte d'identité ou passeport sur ce dossier.</p>}
               </article>
             ) : null}
-            {tab === "Résultats" ? (
+            {tab === "Reconnaissance faciale" ? (
               <article className="card">
-                {detail.documents.map((item) => (
-                  <p key={item.id}><strong>{item.title}</strong> · {item.decision || item.status || "en attente"}</p>
-                ))}
-                {(detail.customer?.verification_checks || []).filter((check) => check.status !== "not_a_production_verification").map((check) => (
-                  <p className="factor" key={String(check.id)}>{String(check.kind)} · {String(check.status)}</p>
-                ))}
-                {!detail.documents.length && !(detail.customer?.verification_checks || []).length ? <p className="label">Aucun résultat sur ce dossier.</p> : null}
+                <div className="metric">{detail.face_match?.score == null ? "—" : Math.round(detail.face_match.score * 100)}</div>
+                <p>{detail.face_match ? (detail.face_match.match ? "Correspondance" : "Pas de correspondance") : comparing ? "Comparaison des visages…" : "Comparaison non faite"}</p>
+                <p className="label">{detail.face_match?.source === "video" ? "Visage extrait de la vidéo, comparé à la photo de la pièce." : "Selfie comparé à la photo de la pièce."}</p>
+                {detail.face_match?.detail ? <p className="label">{detail.face_match.detail}</p> : null}
+                <button type="button" disabled={comparing} onClick={() => void compareFaces()}>Comparer à nouveau</button>
               </article>
             ) : null}
             {tab === "Criblage" ? (
               <article className="card">
+                {screeningFactors.map((factor) => (
+                  <p className="factor" key={factor.code}>{factor.points} pts — {factor.explanation}</p>
+                ))}
                 {matches.length ? matches.map((match) => (
                   <p className="file-row" key={match.id}>
                     <span>{match.name || "Correspondance"} · score {match.score} · {match.status}</span>
@@ -436,6 +420,56 @@ export default function KycDesk() {
                     ) : <span className="tag">{match.status === "no_hit" ? "Écartée" : "Confirmée"}</span>}
                   </p>
                 )) : <p className="label">Aucune correspondance sur ce dossier.</p>}
+              </article>
+            ) : null}
+            {tab === "Action" ? (
+              <article className="card">
+                {detail.alert_reasons?.includes("correspondence") ? <p className="alert-line">Les données lues sur la pièce ne correspondent pas aux informations saisies.</p> : null}
+                {detail.alert_reasons?.includes("screening") ? <p className="alert-line">Le criblage remonte une alerte.</p> : null}
+                {canDecide ? (
+                  <>
+                    <form className="form" onSubmit={(event) => void requestDocuments(event, "resubmit", resubmitId)}>
+                      <label>
+                        Demander un renvoi
+                        <select value={resubmitId} onChange={(event) => setResubmitId(event.target.value)} required>
+                          <option value="">Pièce déjà envoyée</option>
+                          {sentDocuments.map((document) => (
+                            <option key={document.id} value={document.id}>{document.title || document.type}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <input value={askReason} onChange={(event) => setAskReason(event.target.value)} placeholder="Motif" />
+                      <button type="submit">Demander le renvoi</button>
+                    </form>
+                    <form className="form" onSubmit={(event) => void requestDocuments(event, "additional", complementTarget)}>
+                      <label>
+                        Demander un complément
+                        <select value={complementTarget} onChange={(event) => setComplementTarget(event.target.value)} required>
+                          <option value="">Pièce complémentaire</option>
+                          {complements.map((row) => (
+                            <option key={`${row.type}-${row.category}`} value={`${row.type}|${row.category}|${row.country || "ZZ"}`}>
+                              {row.label?.fr || row.type}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <button type="submit">Demander le complément</button>
+                    </form>
+                    <div className="actions">
+                      <button className="ghost" type="button" disabled={!canDecide} onClick={() => void decideCase("reject")}>Rejeter</button>
+                      <button type="button" disabled={!canApprove} onClick={() => void decideCase("approve")}>{TASK_ACTION[taskKey] || "Transmettre au contrôle"}</button>
+                    </div>
+                    {!piecesApproved ? <p className="label">Approuvez chaque pièce pour activer la validation.</p> : null}
+                    {screeningPending ? <p className="label">Vérifiez chaque correspondance de criblage avant de valider.</p> : null}
+                  </>
+                ) : <p className="label">Aucune action ouverte sur ce dossier.</p>}
+                {detail.requested_documents?.length ? (
+                  <ul className="factors">
+                    {detail.requested_documents.map((item) => (
+                      <li key={item.id}>{item.label?.fr || item.type} — {item.mode === "resubmit" ? "à renvoyer" : "pièce complémentaire"}{item.reason ? ` · ${item.reason}` : ""}</li>
+                    ))}
+                  </ul>
+                ) : null}
               </article>
             ) : null}
           </div>
@@ -503,11 +537,11 @@ export function VerificationPreview({ runtimeId }: { runtimeId: string }) {
             ) : <p className="label">Aucune carte d'identité ou passeport sur ce dossier.</p>}
           </article>
         ) : null}
-        {tab === "Résultats" ? (
+        {tab === "Reconnaissance faciale" ? (
           <article className="card">
-            {detail.documents.map((item) => (
-              <p key={item.id}><strong>{item.title}</strong> · {item.decision || item.status || "en attente"}</p>
-            ))}
+            <div className="metric">{detail.face_match?.score == null ? "—" : Math.round(detail.face_match.score * 100)}</div>
+            <p>{detail.face_match ? (detail.face_match.match ? "Correspondance" : "Pas de correspondance") : "Comparaison non faite"}</p>
+            <p className="label">{detail.face_match?.source === "video" ? "Visage extrait de la vidéo, comparé à la photo de la pièce." : "Selfie comparé à la photo de la pièce."}</p>
           </article>
         ) : null}
         {tab === "Score" ? (
@@ -521,6 +555,9 @@ export function VerificationPreview({ runtimeId }: { runtimeId: string }) {
         ) : null}
         {tab === "Criblage" ? (
           <article className="card">
+            {(detail.customer?.risk?.factors || []).filter((factor) => factor.code === "screening_confirmed").map((factor) => (
+              <p className="factor" key={factor.code}>{factor.points} pts — {factor.explanation}</p>
+            ))}
             {matches.length ? matches.map((match) => (
               <p className="file-row" key={match.id}>
                 <span>{match.name || "Correspondance"} · score {match.score} · {match.status}</span>

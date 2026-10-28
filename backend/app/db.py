@@ -19,6 +19,7 @@ class Database:
 
         Base.metadata.create_all(bind=self.engine)
         self._ensure_tenant_columns()
+        self._ensure_field_columns()
 
     def _ensure_tenant_columns(self) -> None:
         if self.engine.dialect.name != "sqlite":
@@ -30,6 +31,19 @@ class Database:
                 connection.exec_driver_sql(
                     "ALTER TABLE tenants ADD COLUMN kyc_validity_years INTEGER NOT NULL DEFAULT 1"
                 )
+
+    def _ensure_field_columns(self) -> None:
+        if self.engine.dialect.name != "sqlite":
+            return
+        with self.engine.begin() as connection:
+            rows = connection.exec_driver_sql("PRAGMA table_info(data_model_fields)").fetchall()
+            names = {row[1] for row in rows}
+            if not names:
+                return
+            if "data_type" not in names:
+                connection.exec_driver_sql("ALTER TABLE data_model_fields ADD COLUMN data_type VARCHAR(40) NOT NULL DEFAULT ''")
+            if "description" not in names:
+                connection.exec_driver_sql("ALTER TABLE data_model_fields ADD COLUMN description TEXT NOT NULL DEFAULT ''")
 
     def session(self) -> Iterator[Session]:
         db = self.session_factory()

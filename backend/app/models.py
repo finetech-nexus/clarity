@@ -378,6 +378,8 @@ class DataModelField(Base):
     object_type: Mapped[str] = mapped_column(String(80))
     name: Mapped[str] = mapped_column(String(80))
     required: Mapped[bool] = mapped_column(Boolean, default=False)
+    data_type: Mapped[str] = mapped_column(String(40), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
 
 
 class RiskAssessment(Base):

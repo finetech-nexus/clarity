@@ -12,6 +12,7 @@ from app.catalog import list_docs
 from app.config import ROOT
 from app.deps import clarity_principal, db_session
 from app.engine import process_steps
+from app.face import compare_case_faces, stored_face_match
 from app.ocr import run_on_document
 from app.models import (
     Alert,
@@ -454,6 +455,7 @@ def kyc_case(runtime_id: str, principal: Principal = Depends(clarity_principal),
         "alert_reasons": flags["alert_reasons"],
         "steps": process_steps(workflow.definition_key, workflow.state),
         "requested_documents": list((workflow.context or {}).get("documentsRequested") or []),
+        "face_match": stored_face_match(workflow),
     }
 
 
@@ -577,6 +579,13 @@ def _case_documents(db: Session, workflow: WorkflowInstance) -> list[IdentityDoc
     if workflow.customer_id and not documents:
         documents = list(db.scalars(select(IdentityDocument).where(IdentityDocument.customer_id == workflow.customer_id)).all())
     return documents
+
+
+@router.post("/kyc/{runtime_id}/face-match")
+def match_faces(runtime_id: str, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    workflow = _workflow(db, principal, runtime_id)
+    compare_case_faces(workflow, _case_documents(db, workflow))
+    return kyc_case(runtime_id, principal, db)
 
 
 @router.post("/kyc/{runtime_id}/identity/ocr")

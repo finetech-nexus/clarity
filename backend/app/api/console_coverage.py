@@ -961,6 +961,7 @@ def patch_table(request, principal, db, params, body):
     if meta:
         meta.payload = {**meta.payload, "description": body.get("description", meta.payload.get("description"))}
         touch(meta)
+        table = {**table, "description": meta.payload.get("description") or ""}
     return table
 
 
@@ -975,14 +976,36 @@ def delete_table(request, principal, db, params, body):
 
 
 def patch_field(request, principal, db, params, body):
+    from app.catalog import _field_dto
+
     row = db.get(DataModelField, params["fieldId"])
     if not row or row.tenant_id != principal.tenant_id:
         raise marble_error(404, "not_found", "field not found")
+    if body.get("name"):
+        field_name = str(body["name"]).strip()
+        if field_name != row.name:
+            if row.name in {"object_id", "updated_at"}:
+                raise marble_error(422, "invalid_payload", "object_id et updated_at ne se renomment pas.")
+            taken = db.scalar(
+                select(DataModelField).where(
+                    DataModelField.tenant_id == principal.tenant_id,
+                    DataModelField.object_type == row.object_type,
+                    DataModelField.name == field_name,
+                )
+            )
+            if taken:
+                raise marble_error(422, "invalid_payload", "Cette colonne existe déjà.")
+            row.name = field_name
+    data_type = body.get("data_type") or body.get("type")
+    if data_type:
+        row.data_type = str(data_type)
+    if "description" in body:
+        row.description = str(body.get("description") or "")
     if "nullable" in body:
         row.required = not bool(body["nullable"])
-    if body.get("name"):
-        row.name = str(body["name"])
-    return {"id": row.id, "name": row.name, "nullable": not row.required}
+    elif "is_nullable" in body:
+        row.required = not bool(body["is_nullable"])
+    return _field_dto(principal.tenant_id, row)
 
 
 def delete_field(request, principal, db, params, body):

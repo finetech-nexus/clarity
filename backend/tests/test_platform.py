@@ -1742,6 +1742,91 @@ def test_password_auth_mode_uses_the_env_admin(tmp_path):
         assert "Keycloak" not in garbage.text
 
 
+def test_table_columns_can_be_added_and_edited(tmp_path):
+    with _client(tmp_path) as client:
+        headers = {"X-API-KEY": MARBLE_API_KEY}
+        created = client.post(
+            "/data-model/tables",
+            headers=headers,
+            json={"name": "cards", "semantic_type": "transactions", "description": "Cartes"},
+        )
+        assert created.status_code == 200, created.text
+        table = created.json()
+        names = {field["name"] for field in table["fields"].values()}
+        assert {"object_id", "updated_at"} <= names
+        added = client.post(
+            f"/data-model/tables/{table['id']}/fields",
+            headers=headers,
+            json={"name": "pan_country", "data_type": "String", "nullable": True, "description": "Pays"},
+        )
+        assert added.status_code == 200, added.text
+        edited = client.patch(
+            f"/data-model/fields/{added.json()['id']}",
+            headers=headers,
+            json={"name": "issuer_country", "data_type": "String", "nullable": False, "description": "Pays émetteur"},
+        )
+        assert edited.status_code == 200, edited.text
+        model = client.get("/data-model", headers=headers)
+        field = model.json()["tables"]["cards"]["fields"]["issuer_country"]
+        assert field["data_type"] == "String"
+        assert field["nullable"] is False
+        assert field["description"] == "Pays émetteur"
+        assert "pan_country" not in model.json()["tables"]["cards"]["fields"]
+        duplicate = client.post(
+            f"/data-model/tables/{table['id']}/fields",
+            headers=headers,
+            json={"name": "issuer_country", "data_type": "String", "nullable": True},
+        )
+        assert duplicate.status_code == 422
+
+
+def test_face_match_compares_the_selfie_with_the_identity_photo(tmp_path):
+    from app.config import current_settings
+
+    jpeg = b"\xff\xd8\xff\xd9"
+    with _client(tmp_path) as client:
+        current_settings().face_api_url = "http://ai.test"
+        analyst = {"Authorization": f"Bearer {_login(client, ANALYST_EMAIL)}"}
+        ballerine = {"Authorization": f"Bearer {BALLERINE_API_KEY}"}
+        queue = client.get("/api/clarity/v1/desks/kyc", headers=analyst)
+        amina = next(row for row in queue.json() if row["name"] == "Amina El Fassi")
+        for doc_type, name in (("passport", "id.jpg"), ("selfie", "selfie.jpg")):
+            uploaded = client.post(
+                "/api/v1/external/documents",
+                headers=ballerine,
+                data={
+                    "metadata": "{}",
+                    "properties": "{}",
+                    "category": "proof_of_identity",
+                    "type": doc_type,
+                    "issuingVersion": "1",
+                    "issuingCountry": "FR",
+                    "version": "1",
+                    "status": "provided",
+                    "workflowRuntimeDataId": amina["id"],
+                },
+                files={"file": (name, jpeg, "image/jpeg")},
+            )
+            assert uploaded.status_code == 200, uploaded.text
+
+        class Response:
+            status_code = 200
+
+            def json(self):
+                return {"face_match_score": 0.82, "face_verification_details": {"verified": True, "confidence": 0.82}}
+
+        with patch("app.face.httpx.post", return_value=Response()) as called:
+            matched = client.post(f"/api/clarity/v1/desks/kyc/{amina['id']}/face-match", headers=analyst)
+        assert matched.status_code == 200, matched.text
+        face = matched.json()["face_match"]
+        assert face["score"] == 0.82
+        assert face["match"] is True
+        assert face["source"] == "selfie"
+        assert called.call_args.args[0] == "http://ai.test/api/v1/kyc/verify"
+        again = client.get(f"/api/clarity/v1/desks/kyc/{amina['id']}", headers=analyst)
+        assert again.json()["face_match"]["match"] is True
+
+
 def normalize_template(path: str) -> str:
     import re
 

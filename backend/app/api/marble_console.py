@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.catalog import (
+    _field_dto,
     add_doc,
     commit_iteration,
     data_model_dto,
@@ -466,10 +467,27 @@ def add_field(table_id: str, body: dict, principal: Principal = Depends(marble_p
     name = _table_name(db, principal.tenant_id, table_id)
     if not body.get("name"):
         raise marble_error(422, "invalid_payload", "name is required")
-    row = DataModelField(tenant_id=principal.tenant_id, object_type=name, name=str(body["name"]), required=not bool(body.get("nullable", True)))
+    field_name = str(body["name"]).strip()
+    taken = db.scalar(
+        select(DataModelField).where(
+            DataModelField.tenant_id == principal.tenant_id,
+            DataModelField.object_type == name,
+            DataModelField.name == field_name,
+        )
+    )
+    if taken:
+        raise marble_error(422, "invalid_payload", "Cette colonne existe déjà.")
+    row = DataModelField(
+        tenant_id=principal.tenant_id,
+        object_type=name,
+        name=field_name,
+        required=not bool(body.get("nullable", True)),
+        data_type=str(body.get("data_type") or body.get("type") or "String"),
+        description=str(body.get("description") or ""),
+    )
     db.add(row)
     db.flush()
-    return {"id": row.id, "name": row.name, "table_id": table_id, "data_type": body.get("data_type") or "String", "nullable": not row.required, "description": body.get("description") or "", "is_enum": False, "unicity_constraint": "no_unicity_constraint"}
+    return _field_dto(principal.tenant_id, row)
 
 
 def _table_name(db: Session, tenant_id: str, raw_id: str) -> str:

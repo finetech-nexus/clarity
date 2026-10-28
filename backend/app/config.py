@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     veriff_api_key: str = ""
     veriff_shared_secret: str = ""
     veriff_base_url: str = "https://stationapi.veriff.com"
+    face_api_url: str = ""
     ai_api_key: str = ""
     ai_base_url: str = "https://api.openai.com/v1"
     ai_model: str = "gpt-4o-mini"

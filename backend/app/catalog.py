@@ -218,8 +218,8 @@ def data_model_dto(db: Session, tenant_id: str) -> dict:
 def _field_dto(tenant_id: str, field: DataModelField) -> dict:
     return {
         "id": field.id,
-        "data_type": FIELD_TYPES.get(field.name, "String"),
-        "description": "",
+        "data_type": field.data_type or FIELD_TYPES.get(field.name, "String"),
+        "description": field.description or "",
         "is_enum": False,
         "name": field.name,
         "nullable": not field.required,

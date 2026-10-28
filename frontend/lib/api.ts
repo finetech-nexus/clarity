@@ -24,8 +24,9 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     const text = await response.text();
     let message = text || response.statusText;
     try {
-      const body = JSON.parse(text) as { message?: string };
+      const body = JSON.parse(text) as { message?: string; messages?: string[] };
       if (body.message) message = body.message;
+      else if (body.messages?.[0]) message = body.messages[0];
     } catch {
       message = text || response.statusText;
     }
