@@ -8,6 +8,9 @@ import { api } from "../lib/api";
 
 const TABS = ["Scénarios", "Modèle", "Import", "Workflows", "Pièces", "IA", "Listes"] as const;
 
+type DataField = { id: string; name: string; data_type: string; nullable: boolean };
+type DataTable = { id: string; name: string; description?: string; fields: Record<string, DataField> };
+
 export default function StudioDesk() {
   const [tab, setTab] = useState<(typeof TABS)[number]>("Scénarios");
   const [model, setModel] = useState<Record<string, unknown> | null>(null);
@@ -58,7 +61,7 @@ export default function StudioDesk() {
     setAi(saved);
   }
 
-  const tables = Object.keys(((model || {}) as { tables?: Record<string, unknown> }).tables || {});
+  const tables = ((model || {}) as { tables?: Record<string, DataTable> }).tables || {};
   const provider = (providers?.providers || {}) as Record<string, boolean>;
 
   return (
@@ -78,7 +81,37 @@ export default function StudioDesk() {
             <input value={table} onChange={(event) => setTable(event.target.value)} />
             <button type="submit">Ajouter la table</button>
           </form>
-          <div className="list">{tables.map((item) => <div className="row" key={item}><span>{item}</span></div>)}</div>
+          <div className="stack">
+            {Object.values(tables).map((item) => {
+              const fields = Object.values(item.fields || {}).sort((left, right) => left.name.localeCompare(right.name));
+              return (
+                <article className="card" key={item.id || item.name}>
+                  <h3>{item.name}</h3>
+                  {item.description ? <p className="label">{item.description}</p> : null}
+                  <table className="inbox">
+                    <thead>
+                      <tr>
+                        <th>Colonne</th>
+                        <th>Type</th>
+                        <th>Nullable</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {fields.map((field) => (
+                        <tr key={field.id || field.name}>
+                          <td>{field.name}</td>
+                          <td>{field.data_type}</td>
+                          <td>{field.nullable ? "oui" : "non"}</td>
+                        </tr>
+                      ))}
+                      {!fields.length ? <tr><td colSpan={3}>Aucune colonne.</td></tr> : null}
+                    </tbody>
+                  </table>
+                </article>
+              );
+            })}
+            {!Object.keys(tables).length ? <p className="label">Aucune table dans le modèle.</p> : null}
+          </div>
         </>
       ) : null}
       {tab === "Import" ? (
