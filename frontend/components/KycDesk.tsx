@@ -45,7 +45,8 @@ type Detail = {
   documents: Array<ViewerDocument & { extracted?: Field[]; ocr?: OcrRead | null; decision?: string | null; status?: string; type?: string; category?: string }>;
   tracker: Array<{ id?: string; type: string; category: string; country?: string; required: boolean; status: string; document_id?: string | null; label?: { fr?: string; en?: string; ar?: string } }>;
   requested_documents?: Array<{ id: string; type: string; mode: string; reason?: string; label?: { fr?: string; en?: string; ar?: string } }>;
-  face_match?: { score: number | null; match: boolean | null; source?: string; detail?: string } | null;
+  face_match?: { score: number | null; match: boolean | null; threshold?: number; source?: string; detail?: string } | null;
+  face_threshold?: number;
   steps?: Array<{ key: string; label: string; status: "done" | "current" | "upcoming" }>;
 };
 
@@ -67,14 +68,21 @@ const STEP_LABEL: Record<string, string> = {
   closed: "Clôturé",
 };
 
-function FaceScale({ score }: { score: number | null | undefined }) {
-  const value = score == null ? null : Math.max(0, Math.min(100, Math.round(score <= 1 ? score * 100 : score)));
+function facePercent(score: number | null | undefined) {
+  if (score == null) return null;
+  return Math.max(0, Math.min(100, Math.round(score <= 1 ? score * 100 : score)));
+}
+
+function FaceScale({ score, threshold }: { score: number | null | undefined; threshold: number }) {
+  const value = facePercent(score);
+  const cut = Math.max(0, Math.min(100, threshold));
   return (
     <div className="face-scale">
-      <div className="face-track">
+      <div className="face-track" style={{ ["--cut" as string]: `${cut}%` }}>
+        <span className="face-mark" style={{ left: `${cut}%` }} />
         {value != null ? <span className="face-cursor" style={{ left: `${value}%` }}>{value}</span> : null}
       </div>
-      <div className="face-bounds"><span>0</span><span>100</span></div>
+      <div className="face-bounds"><span>KO</span><span>seuil {cut}</span><span>OK</span></div>
     </div>
   );
 }
@@ -122,6 +130,7 @@ export default function KycDesk() {
   const [complementTarget, setComplementTarget] = useState("");
   const [askReason, setAskReason] = useState("");
   const [comparing, setComparing] = useState(false);
+  const [thresholdDraft, setThresholdDraft] = useState("40");
   const [faceTried, setFaceTried] = useState("");
 
   async function loadQueue(prefer?: string, nextQuery = query, nextPage = page) {
@@ -146,7 +155,10 @@ export default function KycDesk() {
       setDetail(null);
       return;
     }
-    void api<Detail>(`/api/clarity/v1/desks/kyc/${selected}`).then(setDetail).catch((err: Error) => setError(err.message));
+    void api<Detail>(`/api/clarity/v1/desks/kyc/${selected}`).then((body) => {
+      setDetail(body);
+      setThresholdDraft(String(body.face_threshold ?? body.face_match?.threshold ?? 40));
+    }).catch((err: Error) => setError(err.message));
   }, [selected]);
 
   async function decideCase(action: "approve" | "reject" | "revision") {
@@ -234,6 +246,27 @@ export default function KycDesk() {
       await loadQueue(selected);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Demande refusée");
+    }
+  }
+
+  async function saveThreshold(event: FormEvent) {
+    event.preventDefault();
+    const threshold = Number(thresholdDraft);
+    if (!Number.isInteger(threshold) || threshold < 0 || threshold > 100) {
+      setError("Le seuil doit être un nombre entre 0 et 100.");
+      return;
+    }
+    setError("");
+    try {
+      const saved = await api<{ threshold: number }>("/api/clarity/v1/desks/kyc/face-threshold", {
+        method: "PUT",
+        body: JSON.stringify({ threshold }),
+      });
+      setThresholdDraft(String(saved.threshold));
+      if (selected) setDetail(await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}`));
+      setMessage(`Seuil enregistré : ${saved.threshold}. En dessous, KO. À partir de ce score, OK.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Seuil refusé");
     }
   }
 
@@ -409,10 +442,17 @@ export default function KycDesk() {
             ) : null}
             {tab === "Reconnaissance faciale" ? (
               <article className="card">
-                <FaceScale score={detail.face_match?.score} />
-                <p>{detail.face_match ? (detail.face_match.match ? "Correspondance" : "Pas de correspondance") : comparing ? "Comparaison des visages…" : "Comparaison non faite"}</p>
+                <FaceScale score={detail.face_match?.score} threshold={detail.face_threshold ?? detail.face_match?.threshold ?? 40} />
+                <p>{detail.face_match?.score == null ? (comparing ? "Comparaison des visages…" : "Comparaison non faite") : detail.face_match.match ? "OK — correspondance" : "KO — pas de correspondance"}</p>
                 <p className="label">{detail.face_match?.source === "video" ? "Visage extrait de la vidéo, comparé à la photo de la pièce." : "Selfie comparé à la photo de la pièce."}</p>
                 {detail.face_match?.detail ? <p className="label">{detail.face_match.detail}</p> : null}
+                <form className="form face-threshold" onSubmit={(event) => void saveThreshold(event)}>
+                  <label>
+                    Seuil OK
+                    <input aria-label="Seuil de correspondance faciale" type="number" min={0} max={100} value={thresholdDraft} onChange={(event) => setThresholdDraft(event.target.value)} />
+                  </label>
+                  <button type="submit">Enregistrer le seuil</button>
+                </form>
                 <button type="button" disabled={comparing} onClick={() => void compareFaces()}>Comparer à nouveau</button>
               </article>
             ) : null}
@@ -553,8 +593,8 @@ export function VerificationPreview({ runtimeId }: { runtimeId: string }) {
         ) : null}
         {tab === "Reconnaissance faciale" ? (
           <article className="card">
-            <FaceScale score={detail.face_match?.score} />
-            <p>{detail.face_match ? (detail.face_match.match ? "Correspondance" : "Pas de correspondance") : "Comparaison non faite"}</p>
+            <FaceScale score={detail.face_match?.score} threshold={detail.face_threshold ?? detail.face_match?.threshold ?? 40} />
+            <p>{detail.face_match?.score == null ? "Comparaison non faite" : detail.face_match.match ? "OK — correspondance" : "KO — pas de correspondance"}</p>
             <p className="label">{detail.face_match?.source === "video" ? "Visage extrait de la vidéo, comparé à la photo de la pièce." : "Selfie comparé à la photo de la pièce."}</p>
           </article>
         ) : null}

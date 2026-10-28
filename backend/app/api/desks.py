@@ -13,7 +13,7 @@ from app.catalog import list_docs
 from app.config import ROOT, current_settings
 from app.deps import clarity_principal, db_session
 from app.engine import process_steps
-from app.face import compare_case_faces, stored_face_match
+from app.face import compare_case_faces, face_threshold, set_face_threshold, stored_face_match
 from app.ocr import run_on_document
 from app.models import (
     Alert,
@@ -456,7 +456,8 @@ def kyc_case(runtime_id: str, principal: Principal = Depends(clarity_principal),
         "alert_reasons": flags["alert_reasons"],
         "steps": process_steps(workflow.definition_key, workflow.state),
         "requested_documents": list((workflow.context or {}).get("documentsRequested") or []),
-        "face_match": stored_face_match(workflow),
+        "face_match": stored_face_match(db, workflow),
+        "face_threshold": face_threshold(db, principal.tenant_id),
     }
 
 
@@ -585,8 +586,14 @@ def _case_documents(db: Session, workflow: WorkflowInstance) -> list[IdentityDoc
 @router.post("/kyc/{runtime_id}/face-match")
 def match_faces(runtime_id: str, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
     workflow = _workflow(db, principal, runtime_id)
-    compare_case_faces(workflow, _case_documents(db, workflow))
+    compare_case_faces(db, workflow, _case_documents(db, workflow))
     return kyc_case(runtime_id, principal, db)
+
+
+@router.put("/kyc/face-threshold")
+def update_face_threshold(body: dict, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    saved = set_face_threshold(db, principal.tenant_id, body.get("threshold"))
+    return {"threshold": saved}
 
 
 @router.post("/kyc/{runtime_id}/identity/ocr")

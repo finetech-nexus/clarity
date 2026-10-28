@@ -1820,11 +1820,17 @@ def test_face_match_compares_the_selfie_with_the_identity_photo(tmp_path):
         assert matched.status_code == 200, matched.text
         face = matched.json()["face_match"]
         assert face["score"] == 0.82
+        assert face["threshold"] == 40
         assert face["match"] is True
         assert face["source"] == "selfie"
         assert called.call_args.args[0] == "http://ai.test/api/v1/kyc/verify"
+        raised = client.put("/api/clarity/v1/desks/kyc/face-threshold", headers=analyst, json={"threshold": 90})
+        assert raised.status_code == 200, raised.text
         again = client.get(f"/api/clarity/v1/desks/kyc/{amina['id']}", headers=analyst)
-        assert again.json()["face_match"]["match"] is True
+        assert again.json()["face_threshold"] == 90
+        assert again.json()["face_match"]["match"] is False
+        refused = client.put("/api/clarity/v1/desks/kyc/face-threshold", headers=analyst, json={"threshold": 140})
+        assert refused.status_code == 422
 
 
 def test_document_image_is_served_and_a_missing_file_is_not_a_server_error(tmp_path):
