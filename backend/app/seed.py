@@ -121,12 +121,20 @@ def ensure_oidc_admins(db: Session) -> None:
 def seed_demo(db: Session, engine=None, seed_clients: bool = True) -> None:
     if db.get(Tenant, TENANT_ID):
         from app.catalog import ensure_studio
+        from app.services import purge_clients
 
         ensure_studio(db)
         ensure_demo_logins(db)
         ensure_env_admin(db)
         ensure_risk_score_case(db, engine, seed_clients=seed_clients)
         if seed_clients:
+            has_tn = db.scalar(select(Customer).where(Customer.tenant_id == TENANT_ID, Customer.external_ref.like("tn-%")))
+            if not has_tn:
+                purge_clients(db, TENANT_ID)
+                tenant = db.get(Tenant, TENANT_ID)
+                user_ids = {row.email: row.id for row in db.scalars(select(User).where(User.tenant_id == TENANT_ID)).all()}
+                if tenant:
+                    seed_tunisian_cases(db, engine, tenant, user_ids)
             ensure_kyc_cycles(db)
         return
     tenant = Tenant(
