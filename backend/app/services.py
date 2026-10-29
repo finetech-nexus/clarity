@@ -113,11 +113,15 @@ KYC_OVERDUE_DAYS = 30
 
 
 def kyc_label(status: str) -> str:
-    if status == "overdue":
-        return "pending · overdue"
-    if status == "approved-partially":
-        return "Approuvé partiellement"
-    return status
+    labels = {
+        "overdue": "Relance",
+        "approved-partially": "Approuvé partiellement",
+        "rejected": "Rejeté",
+        "pending": "En attente",
+        "valid": "Valide",
+        "expired": "Expiré",
+    }
+    return labels.get(status, status)
 
 
 def kyc_cycle_view(row: KycCycle, runtime_id: str | None = None, documents: list | None = None) -> dict:

@@ -94,6 +94,18 @@ function FaceScale({ score, threshold }: { score: number | null | undefined; thr
   );
 }
 
+function faceMatchLabel(match: boolean | null | undefined, comparing: boolean) {
+  if (match == null) return comparing ? "Comparaison des visages…" : "Comparaison non faite";
+  return match ? "Résultat de correspondance : OK" : "Résultat de correspondance : KO";
+}
+
+function formatNoteDate(value?: string) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+}
+
 function stepLabel(state: string | null | undefined, fallback: string) {
   if (!state) return fallback;
   return STEP_LABEL[state] || state;
@@ -147,31 +159,31 @@ function NotesHistory({
   canAdd: boolean;
 }) {
   return (
-    <div className="stack">
+    <article className="card notes-panel">
+      <h3>Historique des notes</h3>
       {canAdd ? (
-        <article className="card">
-          <h3>Ajouter une note</h3>
-          <div className="form">
-            <textarea value={freeNote} onChange={(event) => onFreeNote(event.target.value)} placeholder="Note sur le dossier" />
-            <button type="button" disabled={!freeNote.trim()} onClick={onAddNote}>Enregistrer la note</button>
+        <div className="note-compose">
+          <textarea value={freeNote} onChange={(event) => onFreeNote(event.target.value)} placeholder="Écrire une note…" rows={3} />
+          <div className="note-compose-actions">
+            <button type="button" disabled={!freeNote.trim()} onClick={onAddNote}>Ajouter</button>
           </div>
-        </article>
+        </div>
       ) : null}
       {notes.length ? (
         <ul className="notes-list">
           {[...notes].reverse().map((note) => (
             <li key={note.id}>
               <p className="note-meta">
-                {note.actor || "Équipe"}
-                {note.created_at ? ` · ${note.created_at}` : ""}
-                {note.action ? ` · ${NOTE_ACTION_LABEL[note.action] || note.action}` : ""}
+                <strong>{note.actor || "Équipe"}</strong>
+                {note.created_at ? <span>{formatNoteDate(note.created_at)}</span> : null}
+                {note.action ? <span>{NOTE_ACTION_LABEL[note.action] || note.action}</span> : null}
               </p>
-              <p>{note.comment}</p>
+              <p className="note-body">{note.comment}</p>
             </li>
           ))}
         </ul>
       ) : <p className="label">Aucune note sur ce dossier.</p>}
-    </div>
+    </article>
   );
 }
 
@@ -636,7 +648,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
             {tab === "Reconnaissance faciale" ? (
               <article className="card">
                 <FaceScale score={detail.face_match?.score} threshold={detail.face_threshold ?? detail.face_match?.threshold ?? 40} />
-                <p>{detail.face_match?.score == null ? (comparing ? "Comparaison des visages…" : "Comparaison non faite") : detail.face_match.match ? "OK — correspondance" : "KO — pas de correspondance"}</p>
+                <p>{faceMatchLabel(detail.face_match?.match, comparing)}</p>
                 <p className="label">{detail.face_match?.source === "video" ? "Visage extrait de la vidéo, comparé à la photo de la pièce." : "Selfie comparé à la photo de la pièce."}</p>
                 {detail.face_match?.detail ? <p className="label">{detail.face_match.detail}</p> : null}
                 <button type="button" disabled={comparing} onClick={() => void compareFaces()}>Comparer à nouveau</button>
@@ -882,7 +894,7 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
         {tab === "Reconnaissance faciale" ? (
           <article className="card">
             <FaceScale score={detail.face_match?.score} threshold={detail.face_threshold ?? detail.face_match?.threshold ?? 40} />
-            <p>{detail.face_match?.score == null ? (comparing ? "Comparaison des visages…" : "Comparaison non faite") : detail.face_match.match ? "OK — correspondance" : "KO — pas de correspondance"}</p>
+            <p>{faceMatchLabel(detail.face_match?.match, comparing)}</p>
             <p className="label">{detail.face_match?.source === "video" ? "Visage extrait de la vidéo, comparé à la photo de la pièce." : "Selfie comparé à la photo de la pièce."}</p>
             {detail.face_match?.detail ? <p className="label">{detail.face_match.detail}</p> : null}
             <button type="button" disabled={comparing} onClick={() => void compareFaces()}>Comparer à nouveau</button>

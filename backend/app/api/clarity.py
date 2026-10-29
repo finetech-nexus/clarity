@@ -336,14 +336,28 @@ def list_customers(
         wanted = {item.strip() for item in status.split(",") if item.strip()}
         if "pending" in wanted:
             wanted.add("overdue")
-        listed = [row for row in listed if row["kyc_status"] in wanted]
+        listed = [
+            row
+            for row in listed
+            if row["kyc_status"] in wanted or ("rejected" in wanted and row["status"] == "rejected")
+        ]
     if name:
         listed = [row for row in listed if name.lower() in row["display_name"].lower()]
     if risk:
         wanted = {item.strip() for item in risk.split(",") if item.strip()}
         listed = [row for row in listed if (row["risk_tier"] or "") in wanted]
     sort_key = sort if sort in {"display_name", "kyc_label", "risk_tier", "kyc_created_at", "kyc_validated_at", "kyc_expires_at"} else "display_name"
-    listed.sort(key=lambda row: (row.get(sort_key) is None, str(row.get(sort_key) or "").lower()), reverse=direction == "desc")
+    descending = direction.strip().lower() == "desc"
+
+    def sort_value(row: dict):
+        value = row.get(sort_key)
+        if value is None or value == "":
+            return ("",) if descending else ("\uffff",)
+        if sort_key.endswith("_at"):
+            return (str(value),)
+        return (str(value).casefold(),)
+
+    listed.sort(key=sort_value, reverse=descending)
     return present(listed, q, lambda row: {"name": row["display_name"], "status": row["kyc_label"], "kind": row["kind"], "risk": row["risk_tier"] or ""}, limit, offset)
 
 

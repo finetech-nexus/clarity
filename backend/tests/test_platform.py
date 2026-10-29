@@ -2163,6 +2163,22 @@ def test_verifications_reuse_the_same_client_by_email_or_phone(tmp_path):
         assert second.json()["entity"]["id"] == "user-session-two"
 
 
+def test_customers_can_be_sorted_and_filtered_as_rejected(tmp_path):
+    with _client(tmp_path) as client:
+        headers = {"Authorization": f"Bearer {_login(client, ANALYST_EMAIL)}"}
+        asc = client.get("/api/clarity/v1/customers", headers=headers, params={"kind": "individual", "sort": "display_name", "direction": "asc", "limit": 50})
+        desc = client.get("/api/clarity/v1/customers", headers=headers, params={"kind": "individual", "sort": "display_name", "direction": "desc", "limit": 50})
+        assert asc.status_code == 200 and desc.status_code == 200
+        asc_names = [row["display_name"] for row in asc.json()["items"]]
+        desc_names = [row["display_name"] for row in desc.json()["items"]]
+        assert asc_names and desc_names
+        assert asc_names == sorted(asc_names, key=str.casefold)
+        assert desc_names == list(reversed(asc_names))
+        refused = client.get("/api/clarity/v1/customers", headers=headers, params={"kind": "individual", "status": "rejected", "limit": 50})
+        assert refused.status_code == 200
+        assert all(row["kyc_status"] == "rejected" or row["status"] == "rejected" for row in refused.json()["items"])
+
+
 def normalize_template(path: str) -> str:
     import re
 

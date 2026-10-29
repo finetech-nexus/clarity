@@ -110,6 +110,7 @@ const CLIENT_STATUSES = [
   { value: "expired", label: "Expiré" },
   { value: "overdue", label: "Relance" },
   { value: "approved-partially", label: "Approuvé partiellement" },
+  { value: "rejected", label: "Rejeté" },
 ];
 
 const CLIENT_RISKS = [
@@ -414,46 +415,47 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
   return (
     <>
       <h1>{title}</h1>
-      <p className="lede">Le nom se cherche à part. Le statut de la vérification et le niveau de risque sont deux filtres distincts.</p>
+      <p className="lede">Filtrez par nom, statut de vérification ou niveau de risque. Cliquez une colonne pour trier.</p>
       <div className="filters">
-        <label className="field">Nom
+        <div className="filter-group">
+          <span className="label">Nom</span>
           <input aria-label="Filtrer par nom" placeholder="Rechercher" value={name} onChange={(event) => { setPage(0); setName(event.target.value); }} />
-        </label>
+        </div>
         <div className="filter-group">
           <span className="label">Statut de la vérification</span>
-        <div className="checks" role="group" aria-label="Statut de la vérification">
-          {CLIENT_STATUSES.map((item) => (
-            <label key={item.value}>
-              <input
-                type="checkbox"
-                checked={statuses.includes(item.value)}
-                onChange={() => {
-                  setPage(0);
-                  setStatuses((current) => current.includes(item.value) ? current.filter((value) => value !== item.value) : [...current, item.value]);
-                }}
-              />
-              {item.label}
-            </label>
-          ))}
-        </div>
+          <div className="checks" role="group" aria-label="Statut de la vérification">
+            {CLIENT_STATUSES.map((item) => (
+              <label key={item.value}>
+                <input
+                  type="checkbox"
+                  checked={statuses.includes(item.value)}
+                  onChange={() => {
+                    setPage(0);
+                    setStatuses((current) => current.includes(item.value) ? current.filter((value) => value !== item.value) : [...current, item.value]);
+                  }}
+                />
+                {item.label}
+              </label>
+            ))}
+          </div>
         </div>
         <div className="filter-group">
           <span className="label">Niveau de risque</span>
-        <div className="checks" role="group" aria-label="Niveau de risque">
-          {CLIENT_RISKS.map((item) => (
-            <label key={item.value}>
-              <input
-                type="checkbox"
-                checked={risks.includes(item.value)}
-                onChange={() => {
-                  setPage(0);
-                  setRisks((current) => current.includes(item.value) ? current.filter((value) => value !== item.value) : [...current, item.value]);
-                }}
-              />
-              {item.label}
-            </label>
-          ))}
-        </div>
+          <div className="checks" role="group" aria-label="Niveau de risque">
+            {CLIENT_RISKS.map((item) => (
+              <label key={item.value}>
+                <input
+                  type="checkbox"
+                  checked={risks.includes(item.value)}
+                  onChange={() => {
+                    setPage(0);
+                    setRisks((current) => current.includes(item.value) ? current.filter((value) => value !== item.value) : [...current, item.value]);
+                  }}
+                />
+                {item.label}
+              </label>
+            ))}
+          </div>
         </div>
       </div>
       <table className="inbox sheet">
