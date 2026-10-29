@@ -216,7 +216,17 @@ def seed_demo(db: Session, engine=None, seed_clients: bool = True) -> None:
     )
     fixtures = [
         ("syn-san-001", "sanctions", "Person", ["Viktor Petrov", "Виктор Петров"], ["RU"], ["1974-03-12"], ["sanction"], ["synthetic_sanctions"]),
-        ("syn-pep-001", "pep", "Person", ["Amira El Fassi", "Amira Elfassi"], ["MA"], ["1982-11-02"], ["role.pep"], ["synthetic_pep"]),
+        (
+            "syn-putin-001",
+            "sanctions",
+            "Person",
+            ["Vladimir Putin", "Vladimir Vladimirovich Putin", "Владимир Путин"],
+            ["RU"],
+            ["1952-10-07"],
+            ["sanction", "export.control", "wanted", "debarment", "disqualified", "role.pep", "poi", "politician"],
+            ["synthetic_sanctions"],
+        ),
+        ("syn-pep-001", "pep", "Person", ["Amira El Fassi", "Amira Elfassi", "Amina El Fassi"], ["MA"], ["1982-11-02"], ["role.pep"], ["synthetic_pep"]),
         ("syn-adv-001", "adverse_media", "Person", ["Noah Keller"], ["DE"], ["1990-01-19"], ["adverse_media"], ["synthetic_adverse_media"]),
         ("syn-org-001", "sanctions", "Organization", ["Northwind Trading Ltd", "Northwind Trading Limited"], ["CY"], [], ["sanction"], ["synthetic_sanctions"]),
         ("syn-int-001", "internal", "Person", ["Jonas Keller"], ["FR"], [], ["internal_watchlist"], ["synthetic_internal"]),
@@ -279,14 +289,77 @@ def seed_demo(db: Session, engine=None, seed_clients: bool = True) -> None:
     if seed_clients:
         ensure_review_pack(db, engine)
         ensure_kyc_cycles(db)
+        seed_score_scenarios(db, engine)
+
+
+def ensure_watchlist_entries(db: Session) -> None:
+    fixtures = [
+        ("syn-san-001", "sanctions", "Person", ["Viktor Petrov", "Виктор Петров"], ["RU"], ["1974-03-12"], ["sanction"], ["synthetic_sanctions"]),
+        (
+            "syn-putin-001",
+            "sanctions",
+            "Person",
+            ["Vladimir Putin", "Vladimir Vladimirovich Putin", "Владимир Путин"],
+            ["RU"],
+            ["1952-10-07"],
+            ["sanction", "export.control", "wanted", "debarment", "disqualified", "role.pep", "poi", "politician"],
+            ["synthetic_sanctions"],
+        ),
+        ("syn-pep-001", "pep", "Person", ["Amira El Fassi", "Amira Elfassi", "Amina El Fassi"], ["MA"], ["1982-11-02"], ["role.pep"], ["synthetic_pep"]),
+        ("syn-adv-001", "adverse_media", "Person", ["Noah Keller"], ["DE"], ["1990-01-19"], ["adverse_media"], ["synthetic_adverse_media"]),
+        ("syn-org-001", "sanctions", "Organization", ["Northwind Trading Ltd", "Northwind Trading Limited"], ["CY"], [], ["sanction"], ["synthetic_sanctions"]),
+        ("syn-int-001", "internal", "Person", ["Jonas Keller"], ["FR"], [], ["internal_watchlist"], ["synthetic_internal"]),
+    ]
+    for entry_id, list_type, schema, names, countries, dobs, topics, datasets in fixtures:
+        row = db.get(WatchlistEntry, entry_id)
+        if row:
+            row.names = names
+            row.topics = topics
+            row.datasets = datasets
+            row.birth_dates = dobs
+            row.countries = countries
+            continue
+        db.add(
+            WatchlistEntry(
+                id=entry_id,
+                tenant_id=None,
+                list_type=list_type,
+                schema_name=schema,
+                names=names,
+                countries=countries,
+                birth_dates=dobs,
+                topics=topics,
+                datasets=datasets,
+                synthetic=True,
+                properties={"list_type": list_type},
+            )
+        )
+    db.flush()
+
+
+def reseed_demo_clients(db: Session, engine=None) -> dict:
+    """Reload demo customers/verifications with distinct risk-score scenarios."""
+    tenant = db.get(Tenant, TENANT_ID)
+    if not tenant:
+        return {"seeded_customers": 0, "scenarios": 0}
+    ensure_watchlist_entries(db)
+    user_ids = {row.email: row.id for row in db.scalars(select(User).where(User.tenant_id == TENANT_ID)).all()}
+    _seed_clients(db, tenant, user_ids)
+    ensure_risk_score_case(db, engine, seed_clients=True)
+    ensure_review_pack(db, engine)
+    ensure_kyc_cycles(db)
+    scenarios = seed_score_scenarios(db, engine)
+    return {"seeded_customers": scenarios.get("customers", 0), "scenarios": scenarios.get("scenarios", 0)}
 
 
 def _seed_clients(db: Session, tenant: Tenant, user_ids: dict) -> None:
     customers = [
-        ("cus-amina", "Amina El Fassi", "1988-04-18", "FR", "FR", "amina.elfassi@example.test"),
+        ("cus-amina", "Amina El Fassi", "1982-11-02", "MA", "FR", "amina.elfassi@example.test"),
         ("cus-viktor", "Viktor Petrov", "1974-03-12", "RU", "FR", "viktor.petrov@example.test"),
         ("cus-noah", "Noah Keller", "1990-01-19", "DE", "FR", "noah.keller@example.test"),
         ("cus-claire", "Claire Dumont", "1995-07-09", "FR", "FR", "claire.dumont@example.test"),
+        ("cus-putin", "Vladimir Putin", "1952-10-07", "RU", "RU", "vladimir.putin@example.test"),
+        ("cus-sofia", "Sofia Martin", "1991-02-14", "FR", "FR", "sofia.martin@example.test"),
     ]
     customer_rows = {}
     for ref, name, dob, nationality, residence, email in customers:
@@ -296,7 +369,7 @@ def _seed_clients(db: Session, tenant: Tenant, user_ids: dict) -> None:
             kind="individual",
             display_name=name,
             external_ref=ref,
-            canonical_status="approved" if ref == "cus-claire" else "in_review",
+            canonical_status="approved" if ref in {"cus-claire", "cus-sofia"} else "in_review",
             purpose="Compte de dépôt",
             expected_activity="Virements européens mensuels",
             source_of_funds="Salaire",
@@ -418,6 +491,10 @@ def ensure_review_pack(db: Session, engine=None) -> None:
     subjects = (
         ("cus-amina", "Amina", "El Fassi", "Passeport", "Justificatif de domicile"),
         ("cus-claire", "Claire", "Dumont", "Carte d'identite", "Justificatif de domicile"),
+        ("cus-viktor", "Viktor", "Petrov", "Passeport", "Justificatif de domicile"),
+        ("cus-putin", "Vladimir", "Putin", "Passeport", "Justificatif de domicile"),
+        ("cus-noah", "Noah", "Keller", "Carte d'identite", "Justificatif de domicile"),
+        ("cus-sofia", "Sofia", "Martin", "Carte d'identite", "Justificatif de domicile"),
     )
     for ref, given, family, identity_title, address_title in subjects:
         customer = db.scalar(select(Customer).where(Customer.tenant_id == TENANT_ID, Customer.external_ref == ref))
@@ -542,6 +619,153 @@ def ensure_risk_score_case(db: Session, engine=None, seed_clients: bool = True) 
     db.flush()
 
 
+def seed_score_scenarios(db: Session, engine=None) -> dict:
+    """Stamp documents, face results and screening so demo scores diverge clearly."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.models import Alert, CaseRecord, ScreeningCheck, ScreeningMatch
+    from app.services import assess_customer
+
+    tenant = db.get(Tenant, TENANT_ID)
+    if not tenant:
+        return {"customers": 0, "scenarios": 0}
+    specs = {
+        "cus-claire": {
+            "face": {"score": 0.88, "match": True, "source": "selfie", "detail": "Scénario faible risque."},
+            "mrz": True,
+            "confirm_screening": False,
+            "ops_confirmed": False,
+        },
+        "cus-sofia": {
+            "face": {"score": 0.81, "match": True, "source": "selfie", "detail": "Scénario faible risque."},
+            "mrz": True,
+            "confirm_screening": False,
+            "ops_confirmed": False,
+        },
+        "cus-amina": {
+            "face": {"score": 0.46, "match": True, "source": "selfie", "detail": "Visage juste au-dessus du seuil."},
+            "mrz": False,
+            "mrz_text": "",
+            "confirm_screening": False,
+            "ops_confirmed": False,
+        },
+        "cus-noah": {
+            "face": {"score": 0.52, "match": True, "source": "video", "detail": "Adverse media candidat."},
+            "mrz": False,
+            "mrz_text": "IDFRAXXXXXXXX<<<<<<<<<<<<<<<",
+            "confirm_screening": False,
+            "ops_confirmed": True,
+        },
+        "cus-viktor": {
+            "face": {"score": 0.22, "match": False, "source": "selfie", "detail": "Échec facial + sanction."},
+            "mrz": False,
+            "mrz_text": "P<RUSPETROV<<VIKTOR<<<<<<<<<<<<<<<<<<<",
+            "confirm_screening": True,
+            "ops_confirmed": False,
+        },
+        "cus-putin": {
+            "face": {"score": 0.18, "match": False, "source": "selfie", "detail": "Profil multi-topics sanctions."},
+            "mrz": False,
+            "mrz_text": "P<RUSPUTIN<<VLADIMIR<<<<<<<<<<<<<<<<<<",
+            "confirm_screening": True,
+            "ops_confirmed": True,
+        },
+    }
+    applied = 0
+    for ref, spec in specs.items():
+        customer = db.scalar(select(Customer).where(Customer.tenant_id == TENANT_ID, Customer.external_ref == ref))
+        if not customer:
+            continue
+        workflow = db.scalar(
+            select(WorkflowInstance)
+            .where(WorkflowInstance.customer_id == customer.id)
+            .order_by(WorkflowInstance.created_at.desc())
+        )
+        if workflow:
+            context = dict(workflow.context or {})
+            context["faceMatch"] = {
+                "score": spec["face"]["score"],
+                "match": spec["face"]["match"],
+                "threshold": 40,
+                "source": spec["face"]["source"],
+                "detail": spec["face"]["detail"],
+                "engine": "seed",
+            }
+            workflow.context = context
+            flag_modified(workflow, "context")
+            if workflow.state not in {"analystReview", "checkerReview", "approved", "rejected"}:
+                workflow.state = "analystReview"
+        for document in db.scalars(select(IdentityDocument).where(IdentityDocument.customer_id == customer.id)).all():
+            if document.doc_type not in {"passport", "id_card", "drivers_license"}:
+                continue
+            props = dict(document.properties or {})
+            text = spec.get("mrz_text") or ""
+            props["ocr"] = {
+                "engine": "seed",
+                "confidence": 0.9 if spec["mrz"] else 0.35,
+                "production": False,
+                "mrz": bool(spec["mrz"]),
+                "extracted_text": text if not spec["mrz"] else "MRZ OK",
+            }
+            if document.doc_type == "id_card" and ref == "cus-amina":
+                props["title"] = "id_card front" if "front" not in str(props.get("title") or "") else props.get("title")
+            document.properties = props
+            flag_modified(document, "properties")
+        screening_ids = list(db.scalars(select(ScreeningCheck.id).where(ScreeningCheck.customer_id == customer.id)).all())
+        matches = []
+        if screening_ids:
+            matches = list(db.scalars(select(ScreeningMatch).where(ScreeningMatch.screening_id.in_(screening_ids))).all())
+        if spec["confirm_screening"]:
+            for match in matches:
+                match.status = "confirmed_hit"
+            for screening_id in screening_ids:
+                screening = db.get(ScreeningCheck, screening_id)
+                if screening:
+                    screening.status = "confirmed_hit"
+        elif ref in {"cus-claire", "cus-sofia"}:
+            for match in matches:
+                match.status = "no_hit"
+            for screening_id in screening_ids:
+                screening = db.get(ScreeningCheck, screening_id)
+                if screening:
+                    screening.status = "no_hit"
+        if spec["ops_confirmed"]:
+            existing = db.scalar(
+                select(CaseRecord).where(
+                    CaseRecord.customer_id == customer.id,
+                    CaseRecord.outcome == "confirmed_risk",
+                )
+            )
+            if not existing:
+                case = CaseRecord(
+                    tenant_id=TENANT_ID,
+                    inbox_id=INBOX_ID,
+                    customer_id=customer.id,
+                    name=f"Opération à risque — {customer.display_name}",
+                    status="closed",
+                    outcome="confirmed_risk",
+                )
+                db.add(case)
+                db.flush()
+                db.add(
+                    Alert(
+                        tenant_id=TENANT_ID,
+                        customer_id=customer.id,
+                        case_id=case.id,
+                        title=case.name,
+                        priority="high",
+                        status="closed",
+                        disposition="valuable_alert",
+                        dedup_key=f"seed-ops-{customer.id}",
+                        rationale="Scénario de démonstration : risque confirmé par un gestionnaire.",
+                    )
+                )
+        assess_customer(db, tenant, customer, source="ruleset")
+        applied += 1
+    db.flush()
+    return {"customers": applied, "scenarios": applied}
+
+
 def ensure_kyc_cycles(db: Session) -> None:
     """Give each client one KYC verification with creation, validation and expiry."""
     from app.models import KycCycle
@@ -550,9 +774,11 @@ def ensure_kyc_cycles(db: Session) -> None:
     now = utcnow()
     specs = {
         "cus-claire": (now - timedelta(days=40), now + timedelta(days=365 * 3 - 40), now - timedelta(days=40)),
+        "cus-sofia": (now - timedelta(days=20), now + timedelta(days=365 * 3 - 20), now - timedelta(days=20)),
         "cus-amina": (None, None, now - timedelta(days=12)),
         "cus-viktor": (now - timedelta(days=365 * 3 + 10), now - timedelta(days=10), now - timedelta(days=365 * 3 + 10)),
         "cus-noah": (now - timedelta(days=365 * 3 + 45), now - timedelta(days=45), now - timedelta(days=365 * 3 + 45)),
+        "cus-putin": (None, None, now - timedelta(days=3)),
     }
     customers = db.scalars(select(Customer).where(Customer.tenant_id == TENANT_ID)).all()
     for customer in customers:

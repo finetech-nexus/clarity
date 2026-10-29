@@ -3,6 +3,7 @@
 import { CSSProperties, FormEvent, useEffect, useState } from "react";
 import DocumentViewer, { ViewerDocument } from "./DocumentViewer";
 import { api, searchPage } from "../lib/api";
+import { useI18n } from "../lib/i18n";
 
 type QueueItem = {
   id: string;
@@ -176,13 +177,16 @@ function faceMatchLabel(match: boolean | null | undefined, comparing: boolean) {
 function ScoreFormulaHint({ note }: { note?: string }) {
   const [open, setOpen] = useState(false);
   return (
-    <span className="formula-hint">
+    <span className="formula-hint" onClick={(event) => event.stopPropagation()}>
       <button
         className="formula-q"
         type="button"
         aria-label="Formule du score de risque"
         aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
+        onClick={(event) => {
+          event.stopPropagation();
+          setOpen((current) => !current);
+        }}
       >
         ?
       </button>
@@ -227,19 +231,53 @@ function RiskScoreChip({
   score,
   tier,
   note,
+  factors,
   metric,
+  labels,
 }: {
   score?: number | null;
   tier?: string | null;
   note?: string;
+  factors?: Array<{ code: string; points: number; explanation: string }>;
   metric?: boolean;
+  labels?: { score: string; breakdown: string; empty: string; click: string };
 }) {
+  const [open, setOpen] = useState(false);
   const value = score == null ? "—" : score;
+  const copy = {
+    score: labels?.score || "Score de risque",
+    breakdown: labels?.breakdown || "Détail du calcul",
+    empty: labels?.empty || "Score non calculé",
+    click: labels?.click || "Cliquer pour voir le détail du calcul",
+  };
   return (
-    <div className="score-chip" style={riskScoreChipStyle(score)}>
-      <span className="label">Score de risque <ScoreFormulaHint note={note} /></span>
-      {metric ? <div className="metric">{value}</div> : <strong>{value}</strong>}
-      {metric ? <p>{tier || "Score non calculé"}</p> : <span className="label">{tier || "non calculé"}</span>}
+    <div className={`score-chip${open ? " is-open" : ""}`} style={riskScoreChipStyle(score)}>
+      <button
+        className="score-chip-toggle"
+        type="button"
+        aria-expanded={open}
+        aria-label={copy.click}
+        title={copy.click}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="label">{copy.score} <ScoreFormulaHint note={note} /></span>
+        {metric ? <div className="metric">{value}</div> : <strong>{value}</strong>}
+        {metric ? <p>{tier || copy.empty}</p> : <span className="label">{tier || "non calculé"}</span>}
+      </button>
+      {open ? (
+        <div className="score-breakdown" role="region" aria-label={copy.breakdown}>
+          <p className="label">{copy.breakdown}</p>
+          {factors?.length ? (
+            <ul className="factors">
+              {factors.map((factor) => (
+                <li key={factor.code}>{factor.points} pts — {factor.explanation}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="label">{copy.empty}</p>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -502,6 +540,7 @@ function ActionTiles({
 }
 
 export default function KycDesk({ kind }: { kind?: "business" }) {
+  const { t } = useI18n();
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [selected, setSelected] = useState("");
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -694,10 +733,11 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
   const screeningFactors = (detail?.customer?.risk?.factors || []).filter((factor) =>
     factor.code === "screening_confirmed" || factor.code === "screening_candidate"
   );
-  const otherFactors = (detail?.customer?.risk?.factors || []).filter((factor) =>
-    factor.code !== "screening_confirmed" && factor.code !== "screening_candidate"
-  );
+  const riskFactors = detail?.customer?.risk?.factors || [];
   const alertReasons = detail?.alert_reasons || [];
+  const selectedIndex = queue.findIndex((item) => item.id === selected);
+  const canPrevCase = selectedIndex > 0;
+  const canNextCase = selectedIndex >= 0 && selectedIndex < queue.length - 1;
 
   useEffect(() => {
     setFaceTried("");
@@ -711,8 +751,8 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
 
   return (
     <>
-      <h1>Vérification</h1>
-      <p className="lede">Dossier de vérification : informations saisies, pièces et données lues sur les documents.</p>
+      <h1>{t("verify.title")}</h1>
+      <p className="lede">{t("verify.lede")}</p>
       {error ? <p className="error">{error}</p> : null}
       {message ? <p className="label">{message}</p> : null}
       <div className="filters">
@@ -747,24 +787,58 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
           ))}
         </div>
       </div>
-      <p className="label">{total} dossier(s) · page {page + 1}</p>
-      <div className="tabs">
-        <button className="ghost" type="button" disabled={page === 0} onClick={() => setPage((current) => Math.max(0, current - 1))}>Précédent</button>
-        <button className="ghost" type="button" disabled={(page + 1) * 25 >= total} onClick={() => setPage((current) => current + 1)}>Suivant</button>
-      </div>
+      <p className="label">{total} {t("verify.cases")} · {t("verify.page")} {page + 1}</p>
       <div className="kyc-shell">
-        <div className="queue">
-          {queue.map((item) => (
-            <button className={`${item.id === selected ? "active" : "ghost"}${item.alert ? " alert" : ""}`} key={item.id} type="button" onClick={() => setSelected(item.id)}>
-              <span>{item.name}</span>
-              <span className="label">{item.status === "active" ? stepLabel(item.state, item.status) : statusLabel(item.status, item.state)} · {item.documents} pièce(s){item.revisions ? ` · ${item.revisions} à renvoyer` : ""}</span>
+        <aside className="queue-panel" aria-label={t("verify.queue")}>
+          <div className="panel-head">
+            <h3>{t("verify.queue")}</h3>
+            <span className="label">{queue.length}</span>
+          </div>
+          <div className="queue">
+            {queue.map((item) => (
+              <button className={`${item.id === selected ? "active" : "ghost"}${item.alert ? " alert" : ""}`} key={item.id} type="button" onClick={() => setSelected(item.id)}>
+                <span>{item.name}</span>
+                <span className="label">{item.status === "active" ? stepLabel(item.state, item.status) : statusLabel(item.status, item.state)} · {item.documents} pièce(s){item.revisions ? ` · ${item.revisions} à renvoyer` : ""}</span>
+              </button>
+            ))}
+          </div>
+          <div className="queue-nav">
+            <button
+              className="ghost"
+              type="button"
+              disabled={!canPrevCase && page === 0}
+              onClick={() => {
+                if (canPrevCase) {
+                  setSelected(queue[selectedIndex - 1].id);
+                  return;
+                }
+                if (page > 0) setPage((current) => current - 1);
+              }}
+            >
+              {t("verify.prev")}
             </button>
-          ))}
-        </div>
+            <button
+              className="ghost"
+              type="button"
+              disabled={!canNextCase && (page + 1) * 25 >= total}
+              onClick={() => {
+                if (canNextCase) {
+                  setSelected(queue[selectedIndex + 1].id);
+                  return;
+                }
+                if ((page + 1) * 25 < total) setPage((current) => current + 1);
+              }}
+            >
+              {t("verify.next")}
+            </button>
+          </div>
+        </aside>
         {detail ? (
+          <div className="case-panel" aria-label={t("verify.detail")}>
           <div className="case-sheet">
             <header className="case-bar">
               <div>
+                <p className="panel-kicker">{t("verify.detail")}</p>
                 <h2>{detail.customer?.display_name || detail.case.name}</h2>
                 <p className="label">{detail.case.definition} · {statusLabel(detail.case.status, detail.case.state)} · {detail.task?.name || stepLabel(detail.case.state, "sans tâche ouverte")}</p>
                 {detail.steps?.length ? (
@@ -774,18 +848,18 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                     ))}
                   </ol>
                 ) : null}
-                {otherFactors.length ? (
-                  <ul className="factors">
-                    {otherFactors.map((factor) => (
-                      <li key={factor.code}>{factor.points} pts — {factor.explanation}</li>
-                    ))}
-                  </ul>
-                ) : null}
               </div>
               <RiskScoreChip
                 score={detail.customer?.risk?.score}
                 tier={detail.customer?.risk?.tier}
                 note={detail.customer?.risk?.formula_note}
+                factors={riskFactors}
+                labels={{
+                  score: t("verify.score"),
+                  breakdown: t("verify.score.breakdown"),
+                  empty: t("verify.score.empty"),
+                  click: t("verify.score.click"),
+                }}
               />
             </header>
             <div className="case-layout">
@@ -917,6 +991,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
             ) : null}
             </div>
             </div>
+          </div>
           </div>
         ) : selected ? <p>Chargement du dossier…</p> : null}
       </div>
@@ -1109,6 +1184,7 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
               score={detail.customer?.risk?.score}
               tier={detail.customer?.risk?.tier}
               note={detail.customer?.risk?.formula_note}
+              factors={detail.customer?.risk?.factors || []}
               metric
             />
             {(detail.customer?.risk?.factors || []).map((factor) => (

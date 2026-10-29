@@ -12,51 +12,52 @@ import { AdminBoard, AlertBoard, AuditBoard, IntegrationBoard, ReportBoard, Revi
 import { QueryStack } from "./QueryStack";
 import { api, searchPage } from "../lib/api";
 import { logout as keycloakLogout, startKeycloak } from "../lib/keycloak";
+import { LOCALES, useI18n } from "../lib/i18n";
 
 const GROUPS = [
   {
     id: "kyc",
-    label: "KYC",
+    labelKey: "nav.kyc",
     links: [
-      ["/", "Vue d'ensemble"],
-      ["/customers", "Clients"],
-      ["/kyc-sessions", "Sessions"],
-      ["/verification", "Vérification"],
+      ["/", "nav.overview"],
+      ["/customers", "nav.customers"],
+      ["/kyc-sessions", "nav.sessions"],
+      ["/verification", "nav.verification"],
     ],
   },
   {
     id: "kyb",
-    label: "KYB",
+    labelKey: "nav.kyb",
     links: [
-      ["/kyb", "Vue d'ensemble"],
-      ["/businesses", "Clients"],
-      ["/kyb-sessions", "Sessions"],
-      ["/kyb-verification", "Vérification"],
+      ["/kyb", "nav.overview"],
+      ["/businesses", "nav.businesses"],
+      ["/kyb-sessions", "nav.sessions"],
+      ["/kyb-verification", "nav.verification"],
     ],
   },
   {
     id: "aml",
-    label: "AML",
+    labelKey: "nav.aml",
     links: [
-      ["/aml", "Vue d'ensemble"],
-      ["/screening", "Criblage"],
-      ["/risk", "Risque"],
-      ["/transactions", "Transactions"],
-      ["/alerts", "Alertes"],
-      ["/investigations", "Investigations"],
-      ["/reviews", "Revues"],
-      ["/reports", "Rapports"],
+      ["/aml", "nav.overview"],
+      ["/screening", "nav.screening"],
+      ["/risk", "nav.risk"],
+      ["/transactions", "nav.transactions"],
+      ["/alerts", "nav.alerts"],
+      ["/investigations", "nav.investigations"],
+      ["/reviews", "nav.reviews"],
+      ["/reports", "nav.reports"],
     ],
   },
   {
     id: "settings",
-    label: "Paramétrage",
+    labelKey: "nav.settings",
     links: [
-      ["/rules", "Scénarios"],
-      ["/workflows", "Parcours"],
-      ["/audit", "Audit"],
-      ["/integrations", "Intégrations"],
-      ["/administration", "Administration"],
+      ["/rules", "nav.rules"],
+      ["/workflows", "nav.workflows"],
+      ["/audit", "nav.audit"],
+      ["/integrations", "nav.integrations"],
+      ["/administration", "nav.administration"],
     ],
   },
 ];
@@ -122,6 +123,7 @@ const CLIENT_RISKS = [
 
 export default function Workspace({ section, customerId }: { section: string; customerId?: string }) {
   const pathname = usePathname();
+  const { t, locale, setLocale } = useI18n();
   const [token, setToken] = useState<string | null>(null);
   const [authMode, setAuthMode] = useState<"" | "oidc" | "password">("");
   const [email, setEmail] = useState("");
@@ -278,11 +280,11 @@ export default function Workspace({ section, customerId }: { section: string; cu
         <nav aria-label="Navigation">
           {GROUPS.map((group) => (
             <div key={group.id}>
-              <div className="nav-group">{group.label}</div>
-              <div className="submenu" aria-label={group.label}>
-                {group.links.map(([href, label]) => (
+              <div className="nav-group">{t(group.labelKey)}</div>
+              <div className="submenu" aria-label={t(group.labelKey)}>
+                {group.links.map(([href, labelKey]) => (
                   <Link key={href} href={href} className={isCurrent(pathname, href, String(profile?.kind || "")) ? "active" : ""}>
-                    {label}
+                    {t(labelKey)}
                   </Link>
                 ))}
               </div>
@@ -293,10 +295,25 @@ export default function Workspace({ section, customerId }: { section: string; cu
           className="ghost nav-exit"
           onClick={quit}
         >
-          Quitter
+          {t("nav.quit")}
         </button>
       </aside>
       <main className="main">
+        <div className="main-topbar">
+          <div className="lang-switch" role="group" aria-label={t("lang.label")}>
+            {LOCALES.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={locale === item.id ? "is-active" : ""}
+                aria-pressed={locale === item.id}
+                onClick={() => setLocale(item.id)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
         {error && <p className="error">{error}</p>}
         {customerId && profile ? <CustomerView profile={profile} onChange={setProfile} /> : null}
         {!customerId && (section === "overview" || section === "kyb" || section === "aml") ? <Overview scope={section === "overview" ? "kyc" : section} data={data as Record<string, unknown> | null} /> : null}

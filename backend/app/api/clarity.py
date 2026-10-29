@@ -1131,6 +1131,20 @@ def purge_client_data(principal: Principal = Depends(clarity_principal), db: Ses
     return result
 
 
+@router.post("/administration/reseed-clients")
+def reseed_client_data(request: Request, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    if not principal.allows("admin"):
+        raise clarity_error(403, "forbidden", "Réservé à l'administration.")
+    from app.seed import reseed_demo_clients
+    from app.services import purge_clients
+
+    purged = purge_clients(db, principal.tenant_id)
+    seeded = reseed_demo_clients(db, request.app.state.engine)
+    result = {**purged, **seeded}
+    audit(db, principal.tenant_id, actor_label(principal), "clients.reseed", "tenant", principal.tenant_id, result)
+    return result
+
+
 @router.get("/administration/users")
 def users(principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
     if not principal.allows("admin"):
