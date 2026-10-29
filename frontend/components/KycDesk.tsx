@@ -968,7 +968,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                   <p className="label">
                     {detail.case.state === "collect"
                       ? "Aucune action de revue pour l'instant. Le dossier est encore en collecte — les décisions s'ouvrent à l'étape Revue analyste."
-                      : `Aucune action ouverte à l'étape « ${stepLabel(detail.case.state, detail.task?.name || detail.case.state)} ».`}
+                      : `Aucune action ouverte à l'étape « ${stepLabel(detail.case.state, detail.task?.name || "en cours")} ».`}
                   </p>
                 ) : null}
                 {fundingReview && !finished ? <p className="label">Virement reçu sur un compte limité. Vérifiez la provenance avant d'activer le compte.</p> : null}
