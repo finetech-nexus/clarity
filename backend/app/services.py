@@ -1363,11 +1363,13 @@ def _customer_has_pending_screening(db: Session, customer_id: str) -> bool:
 
 RISK_METHODOLOGY = "clarity-risk-2"
 RISK_FORMULA_NOTE = (
-    "Score = somme des points AML + visage + authenticité des pièces + pays/structure. "
+    "Score = somme des points AML + visage + authenticité des pièces + historique d'opérations + pays/structure. "
     "AML : pondération selon les topics (Sanctioned, Export controlled, Wanted, Debarred, Disqualified, PEP, Person of interest, Politician) "
     "et le statut (candidat / confirmé). "
     "Visage : échec ou score faible sous le seuil. "
     "Pièces : MRZ/code-barres absent (passeport) ou invalide (checksum). "
+    "Opérations : dossiers d'investigation clôturés en « risque confirmé » ou alerte utile par un gestionnaire, "
+    "et dispositions d'alertes utiles/escaladées — plus il y en a, plus le score monte. "
     "Seuils : <30 faible, 30–59 moyen, ≥60 élevé. Deux dossiers ne donnent le même score que si les mêmes facteurs sont présents."
 )
 
@@ -1580,8 +1582,75 @@ def _face_risk_factors(db: Session, customer: Customer) -> list[dict]:
     return []
 
 
+def _operation_history_factors(db: Session, customer: Customer) -> list[dict]:
+    """Manager-validated risky operations raise the customer score."""
+    cases = list(
+        db.scalars(
+            select(CaseRecord).where(
+                CaseRecord.customer_id == customer.id,
+                CaseRecord.status == "closed",
+                CaseRecord.outcome.in_(("confirmed_risk", "valuable_alert")),
+            )
+        ).all()
+    )
+    confirmed_cases = [row for row in cases if row.outcome == "confirmed_risk"]
+    valuable_cases = [row for row in cases if row.outcome == "valuable_alert"]
+    case_ids = {row.id for row in cases}
+    alerts = list(
+        db.scalars(
+            select(Alert).where(
+                Alert.customer_id == customer.id,
+                Alert.disposition.in_(("valuable_alert", "escalated")),
+            )
+        ).all()
+    )
+    # Prefer the case outcome when the same investigation was already closed by a manager.
+    orphan_alerts = [row for row in alerts if not row.case_id or row.case_id not in case_ids]
+    factors: list[dict] = []
+    if confirmed_cases:
+        points = min(42, 18 + 8 * (len(confirmed_cases) - 1))
+        factors.append(
+            {
+                "code": "ops_confirmed_risk",
+                "points": points,
+                "explanation": (
+                    f"{len(confirmed_cases)} opération(s) à risque confirmée(s) par un gestionnaire "
+                    f"après investigation."
+                ),
+            }
+        )
+    if valuable_cases:
+        points = min(22, 10 + 5 * (len(valuable_cases) - 1))
+        factors.append(
+            {
+                "code": "ops_valuable_alert",
+                "points": points,
+                "explanation": (
+                    f"{len(valuable_cases)} alerte(s) jugée(s) utile(s) par un gestionnaire "
+                    f"sur l'historique d'opérations."
+                ),
+            }
+        )
+    if orphan_alerts:
+        escalated = sum(1 for row in orphan_alerts if row.disposition == "escalated")
+        valuable = len(orphan_alerts) - escalated
+        points = min(18, 6 * valuable + 9 * escalated)
+        if points:
+            factors.append(
+                {
+                    "code": "ops_alert_disposition",
+                    "points": points,
+                    "explanation": (
+                        f"{len(orphan_alerts)} disposition(s) gestionnaire sur alerte "
+                        f"({valuable} utile(s), {escalated} escaladée(s))."
+                    ),
+                }
+            )
+    return factors
+
+
 def assess_customer(db: Session, tenant: Tenant, customer: Customer, source: str = "ruleset") -> RiskAssessment:
-    """clarity-risk-2: AML topics + face match + document authenticity, not a flat +40."""
+    """clarity-risk-2: AML topics + face + document authenticity + manager-validated ops."""
     factors: list[dict] = []
     score = 0
     country = None
@@ -1636,6 +1705,9 @@ def assess_customer(db: Session, tenant: Tenant, customer: Customer, source: str
         factors.append(factor)
     documents = list(db.scalars(select(IdentityDocument).where(IdentityDocument.customer_id == customer.id)).all())
     for factor in _document_authenticity_factors(documents):
+        score += int(factor["points"])
+        factors.append(factor)
+    for factor in _operation_history_factors(db, customer):
         score += int(factor["points"])
         factors.append(factor)
     score = min(100, max(0, score))

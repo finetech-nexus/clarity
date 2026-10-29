@@ -15,6 +15,7 @@ from app.models import (
     CaseComment,
     CaseRecord,
     CaseTag,
+    Customer,
     Decision,
     Evidence,
     IngestedObject,
@@ -590,6 +591,8 @@ def update_case(case_id: str, body: dict, principal: Principal = Depends(marble_
 
 @v1beta.post("/cases/{case_id}/close")
 def close_case(case_id: str, body: dict | None = None, principal: Principal = Depends(marble_principal), db: Session = Depends(db_session)):
+    from app.services import assess_customer
+
     case = _case_or_404(db, principal, case_id)
     if case.status == "closed":
         raise marble_error(422, "unprocessable_entity", "case is already closed")
@@ -600,6 +603,10 @@ def close_case(case_id: str, body: dict | None = None, principal: Principal = De
     case.outcome = outcome
     case.updated_at = utcnow()
     audit(db, principal.tenant_id, actor_label(principal), "case.close", "case", case.id, {"outcome": outcome})
+    if case.customer_id and outcome in {"confirmed_risk", "valuable_alert", "false_positive"}:
+        customer = db.get(Customer, case.customer_id)
+        if customer:
+            assess_customer(db, _tenant(db, principal), customer, source="ruleset")
     return {"data": case_payload(db, case)}
 
 

@@ -2268,6 +2268,67 @@ def test_risk_score_weights_aml_topics_face_and_document(tmp_path):
         db.close()
 
 
+def test_risk_score_includes_manager_confirmed_operations(tmp_path):
+    from sqlalchemy import select
+
+    from app.ids import INBOX_ID, TENANT_ID
+    from app.models import Alert, CaseRecord, Tenant
+    from app.services import assess_customer
+
+    with _client(tmp_path) as client:
+        db = client.app.state.database.session_factory()
+        tenant = db.get(Tenant, TENANT_ID)
+        customer = db.scalar(select(Customer).where(Customer.tenant_id == TENANT_ID, Customer.kind == "individual"))
+        assert tenant and customer
+        baseline = assess_customer(db, tenant, customer, source="ruleset")
+        db.flush()
+        case = CaseRecord(
+            tenant_id=TENANT_ID,
+            inbox_id=INBOX_ID,
+            customer_id=customer.id,
+            name="Opération à risque",
+            status="closed",
+            outcome="confirmed_risk",
+        )
+        db.add(case)
+        db.flush()
+        with_ops = assess_customer(db, tenant, customer, source="ruleset")
+        db.commit()
+        ops = next(factor for factor in with_ops.factors if factor["code"] == "ops_confirmed_risk")
+        assert ops["points"] >= 18
+        assert with_ops.score >= baseline.score + 18
+        db.add(
+            CaseRecord(
+                tenant_id=TENANT_ID,
+                inbox_id=INBOX_ID,
+                customer_id=customer.id,
+                name="Deuxième risque",
+                status="closed",
+                outcome="confirmed_risk",
+            )
+        )
+        db.flush()
+        twice = assess_customer(db, tenant, customer, source="ruleset")
+        assert twice.score > with_ops.score
+        db.add(
+            Alert(
+                tenant_id=TENANT_ID,
+                customer_id=customer.id,
+                title="Alerte utile orpheline",
+                priority="high",
+                status="closed",
+                disposition="valuable_alert",
+                dedup_key=f"ops-test-{customer.id}",
+            )
+        )
+        db.flush()
+        with_alert = assess_customer(db, tenant, customer, source="ruleset")
+        codes = {factor["code"] for factor in with_alert.factors}
+        assert "ops_alert_disposition" in codes
+        assert with_alert.score > twice.score
+        db.close()
+
+
 def normalize_template(path: str) -> str:
     import re
 

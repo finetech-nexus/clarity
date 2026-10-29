@@ -716,6 +716,10 @@ def disposition_alert(
     alert.status = "closed" if body.status != "escalated" else "open"
     alert.rationale = body.rationale or alert.rationale
     audit(db, principal.tenant_id, actor_label(principal), "alert.disposition", "alert", alert.id, {"status": body.status})
+    if alert.customer_id and body.status in {"valuable_alert", "escalated", "false_positive"}:
+        customer = db.get(Customer, alert.customer_id)
+        if customer:
+            assess_customer(db, _tenant(db, principal), customer, source="ruleset")
     return {"id": alert.id, "status": alert.status, "disposition": alert.disposition}
 
 

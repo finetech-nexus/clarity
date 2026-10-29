@@ -891,6 +891,8 @@ def assign_case(case_id: str, body: dict, principal: Principal = Depends(clarity
 
 @router.post("/cases/{case_id}/close")
 def close_case(case_id: str, body: dict, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    from app.services import assess_customer
+
     case = _case(db, principal, case_id)
     outcome = body.get("outcome") or "unset"
     if outcome not in {"unset", "confirmed_risk", "valuable_alert", "false_positive"}:
@@ -899,6 +901,10 @@ def close_case(case_id: str, body: dict, principal: Principal = Depends(clarity_
     case.outcome = outcome
     case.updated_at = utcnow()
     audit(db, principal.tenant_id, actor_label(principal), "case.closed", "case", case.id, {"outcome": outcome})
+    if case.customer_id and outcome in {"confirmed_risk", "valuable_alert", "false_positive"}:
+        customer = db.get(Customer, case.customer_id)
+        if customer:
+            assess_customer(db, _tenant(db, principal), customer, source="ruleset")
     return _case_row(db, case)
 
 

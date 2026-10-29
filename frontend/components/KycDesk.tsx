@@ -72,10 +72,12 @@ type Detail = {
 };
 
 const DEFAULT_FORMULA_NOTE =
-  "Score = somme des points AML + visage + authenticité des pièces + pays/structure. "
+  "Score = somme des points AML + visage + authenticité des pièces + historique d'opérations + pays/structure. "
   + "AML : pondération selon les topics (Sanctioned, Export controlled, Wanted, Debarred, Disqualified, PEP, Person of interest, Politician) "
   + "et le statut (candidat / confirmé). Visage : échec ou score faible sous le seuil. "
   + "Pièces : MRZ/code-barres absent (passeport) ou invalide (checksum). "
+  + "Opérations : dossiers clôturés en risque confirmé ou alerte utile par un gestionnaire, "
+  + "et dispositions d'alertes utiles/escaladées. "
   + "Seuils : <30 faible, 30–59 moyen, ≥60 élevé.";
 
 const TAB_ALERT_REASONS: Record<string, string[]> = {
