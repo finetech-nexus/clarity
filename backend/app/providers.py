@@ -69,9 +69,11 @@ def match_opensanctions(name: str, schema: str, birth_date: str | None, country:
                 "production": True,
                 "payload": {
                     "id": item.get("id"),
+                    "caption": item.get("caption") or name,
                     "schema": item.get("schema") or schema,
                     "datasets": item.get("datasets") or [],
                     "score": item.get("score"),
+                    "topics": (item.get("properties") or {}).get("topics") or item.get("topics") or [],
                     "properties": item.get("properties") or {},
                     "synthetic": False,
                     "provider": "opensanctions",

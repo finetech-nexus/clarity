@@ -390,6 +390,7 @@ def apply_read(document, result: dict) -> None:
         "engine": result["engine"],
         "confidence": result["confidence"],
         "production": False,
+        "mrz": bool(result.get("mrz")),
         "extracted_text": result["extracted_text"][:4000],
     }
     document.properties = properties
@@ -868,6 +869,7 @@ def keep_reader_values(document, result: dict) -> None:
         "engine": result["engine"],
         "confidence": result["confidence"],
         "production": False,
+        "mrz": bool(result.get("mrz")),
         "extracted_text": result["extracted_text"][:4000],
     }
     document.properties = properties

@@ -273,8 +273,57 @@ button.active, button.active:hover {
 .kv span { display: contents; }
 .form label { display: grid; gap: 0.25rem; color: var(--muted); font-size: 0.85rem; }
 .form label.mismatch input { border-color: var(--danger); background: #fdecee; }
-.queue button.alert, .case-sheet.alert { border: 1.5px solid var(--danger); background: #fdecee; }
+.queue button.alert { border: 1.5px solid var(--danger); background: #fdecee; }
+.case-tabs button.tab-alert,
+.tabs.case-tabs button.tab-alert {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: #fdecee;
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+.case-tabs button.tab-alert.active,
+.tabs.case-tabs button.tab-alert.active {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: #fdecee;
+  box-shadow: inset 3px 0 0 var(--danger);
+}
 .alert-line { color: var(--danger); margin: 0.2rem 0 0; font-weight: 700; }
+.formula-hint { position: relative; display: inline-flex; align-items: center; margin-left: 0.25rem; vertical-align: middle; }
+.formula-q {
+  width: 1.15rem;
+  height: 1.15rem;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+.formula-q:hover, .formula-q[aria-expanded="true"] { border-color: var(--accent-deep); color: var(--accent-deep); }
+.formula-note {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  width: min(22rem, 70vw);
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.4;
+  box-shadow: 0 8px 24px rgba(23, 33, 43, 0.12);
+}
+.screening-match { display: grid; gap: 0.35rem; margin: 0.55rem 0; padding-bottom: 0.55rem; border-bottom: 1px solid var(--line); }
+.screening-match:last-child { border-bottom: 0; padding-bottom: 0; }
+.screening-detail { margin: 0; }
+.screening-detail dd { color: var(--ink); }
 .case-bar h2, .info-pane h3, .card h3 { margin: 0.2rem 0 0.4rem; font-size: 1.15rem; }
 .kyc-body, .manager-grid { display: grid; grid-template-columns: 320px 1fr; gap: 1rem; align-items: start; }
 .document-data { display: grid; gap: 1rem; }

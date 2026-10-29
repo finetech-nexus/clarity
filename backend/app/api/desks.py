@@ -325,6 +325,9 @@ def _screening_alert(db: Session, customer: Customer | None) -> bool:
 
 
 def _review_flags(db: Session, workflow: WorkflowInstance, customer: Customer | None, documents: list[IdentityDocument]) -> dict:
+    from app.face import stored_face_match
+    from app.services import _document_authenticity_factors
+
     declared = _declared_identity(workflow, customer)
     identity = [document for document in documents if document.doc_type in _IDENTITY_TYPES]
     mismatched = []
@@ -333,10 +336,15 @@ def _review_flags(db: Session, workflow: WorkflowInstance, customer: Customer | 
         if not _same(key, declared.get(key, ""), read):
             mismatched.append(key)
     reasons = []
-    if mismatched or not identity:
+    if mismatched:
         reasons.append("correspondence")
     if _screening_alert(db, customer):
         reasons.append("screening")
+    face = stored_face_match(db, workflow)
+    if face and face.get("match") is False:
+        reasons.append("face")
+    if _document_authenticity_factors(identity):
+        reasons.append("document")
     return {"alert": bool(reasons), "alert_reasons": reasons, "mismatched": mismatched}
 
 
@@ -619,8 +627,13 @@ def _case_documents(db: Session, workflow: WorkflowInstance) -> list[IdentityDoc
 
 @router.post("/kyc/{runtime_id}/face-match")
 def match_faces(runtime_id: str, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    from app.services import assess_customer
+
     workflow = _workflow(db, principal, runtime_id)
     compare_case_faces(db, workflow, _case_documents(db, workflow))
+    customer = db.get(Customer, workflow.customer_id) if workflow.customer_id else None
+    if customer:
+        assess_customer(db, _tenant(db, principal), customer, source="ruleset")
     return kyc_case(runtime_id, principal, db)
 
 
@@ -632,6 +645,8 @@ def update_face_threshold(body: dict, principal: Principal = Depends(clarity_pri
 
 @router.post("/kyc/{runtime_id}/identity/ocr")
 def read_identity_documents(runtime_id: str, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    from app.services import assess_customer
+
     workflow = _workflow(db, principal, runtime_id)
     identity = _identity_documents(_case_documents(db, workflow))
     reads = []
@@ -643,6 +658,9 @@ def read_identity_documents(runtime_id: str, principal: Principal = Depends(clar
         audit(db, principal.tenant_id, actor_label(principal), "document.ocr", "document", document.id, {"engine": result["engine"], "confidence": result["confidence"]})
     if not reads:
         raise clarity_error(400, "invalid", "Aucune carte d'identité ou passeport à lire.")
+    customer = db.get(Customer, workflow.customer_id) if workflow.customer_id else None
+    if customer:
+        assess_customer(db, _tenant(db, principal), customer, source="ruleset")
     merged = {key: "" for key in _IDENTITY_FORM}
     ranked = sorted(reads, key=lambda item: (bool(item.get("firstName") and item.get("lastName")), bool(item.get("dateOfBirth"))), reverse=True)
     for item in ranked:

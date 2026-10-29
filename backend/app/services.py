@@ -1361,8 +1361,228 @@ def _customer_has_pending_screening(db: Session, customer_id: str) -> bool:
     return pending is not None
 
 
-def assess_customer(db: Session, tenant: Tenant, customer: Customer, source: str = "ruleset") -> RiskAssessment:
+RISK_METHODOLOGY = "clarity-risk-2"
+RISK_FORMULA_NOTE = (
+    "Score = somme des points AML + visage + authenticité des pièces + pays/structure. "
+    "AML : pondération selon les topics (Sanctioned, Export controlled, Wanted, Debarred, Disqualified, PEP, Person of interest, Politician) "
+    "et le statut (candidat / confirmé). "
+    "Visage : échec ou score faible sous le seuil. "
+    "Pièces : MRZ/code-barres absent (passeport) ou invalide (checksum). "
+    "Seuils : <30 faible, 30–59 moyen, ≥60 élevé. Deux dossiers ne donnent le même score que si les mêmes facteurs sont présents."
+)
+
+_TOPIC_POINTS = {
+    "sanction": 50,
+    "sanctioned": 50,
+    "export.control": 45,
+    "export.controlled": 45,
+    "export controlled": 45,
+    "wanted": 48,
+    "debarment": 45,
+    "debarred": 45,
+    "disqualified": 42,
+    "role.pep": 35,
+    "pep": 35,
+    "politician": 32,
+    "role.pol": 32,
+    "gov.national": 32,
+    "poi": 28,
+    "person of interest": 28,
+    "personofinterest": 28,
+    "adverse_media": 25,
+    "adverse-media": 25,
+    "internal_watchlist": 20,
+    "role.pep.national": 35,
+}
+
+_TOPIC_LABELS = {
+    "sanction": "Sanctioned",
+    "sanctioned": "Sanctioned",
+    "export.control": "Export controlled",
+    "export.controlled": "Export controlled",
+    "export controlled": "Export controlled",
+    "wanted": "Wanted",
+    "debarment": "Debarred",
+    "debarred": "Debarred",
+    "disqualified": "Disqualified",
+    "role.pep": "PEP",
+    "pep": "PEP",
+    "role.pep.national": "PEP",
+    "politician": "Politician",
+    "role.pol": "Politician",
+    "gov.national": "Politician",
+    "poi": "Person of interest",
+    "person of interest": "Person of interest",
+    "personofinterest": "Person of interest",
+}
+
+
+def _topic_key(value: str) -> str:
+    return str(value or "").strip().lower().replace("_", ".")
+
+
+def topic_label(value: str) -> str:
+    key = _topic_key(value)
+    return _TOPIC_LABELS.get(key) or _TOPIC_LABELS.get(key.replace(".", " ")) or str(value)
+
+
+def match_topics(payload: dict | None) -> list[str]:
+    raw = payload or {}
+    props = raw.get("properties") if isinstance(raw.get("properties"), dict) else {}
+    values = props.get("topics") if props.get("topics") is not None else raw.get("topics")
+    if not isinstance(values, list):
+        return []
+    labels = []
+    seen = set()
+    for item in values:
+        label = topic_label(str(item))
+        if label and label not in seen:
+            seen.add(label)
+            labels.append(label)
+    return labels
+
+
+def match_display_name(payload: dict | None, entity_id: str | None = None) -> str:
+    raw = payload or {}
+    props = raw.get("properties") if isinstance(raw.get("properties"), dict) else {}
+    for key in ("caption", "name"):
+        value = props.get(key) if key in props else raw.get(key)
+        if isinstance(value, list) and value:
+            return str(value[0])
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return str(entity_id or "Correspondance")
+
+
+def _match_note(payload: dict | None) -> str:
+    raw = payload or {}
+    props = raw.get("properties") if isinstance(raw.get("properties"), dict) else {}
+    notes = props.get("notes") if props.get("notes") is not None else raw.get("notes")
+    if isinstance(notes, list) and notes:
+        return str(notes[0])
+    if isinstance(notes, str) and notes.strip():
+        return notes.strip()
+    return ""
+
+
+def _match_confidence_boost(score: int | float | None) -> int:
+    try:
+        value = int(score or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(8, (value - 75) // 3))
+
+
+def _match_topic_points(payload: dict | None) -> int:
+    raw = payload or {}
+    props = raw.get("properties") if isinstance(raw.get("properties"), dict) else {}
+    values = props.get("topics") if props.get("topics") is not None else raw.get("topics")
+    if not isinstance(values, list) or not values:
+        return 22
+    best = 0
+    for item in values:
+        best = max(best, _TOPIC_POINTS.get(_topic_key(str(item)), 18))
+    return best
+
+
+def _looks_like_mrz_text(text: str) -> bool:
+    lines = [line.strip() for line in str(text or "").upper().splitlines() if line.strip()]
+    return any(line.startswith("P<") or (len(line) >= 30 and line.count("<") >= 2) for line in lines)
+
+
+def _document_authenticity_factors(documents: list[IdentityDocument]) -> list[dict]:
     factors = []
+    for document in documents:
+        if document.doc_type not in {"passport", "id_card", "drivers_license"}:
+            continue
+        ocr = (document.properties or {}).get("ocr") if isinstance(document.properties, dict) else None
+        if not isinstance(ocr, dict):
+            continue
+        mrz = bool(ocr.get("mrz"))
+        text = str(ocr.get("extracted_text") or "")
+        title = (document.properties or {}).get("title") or document.doc_type
+        if mrz:
+            continue
+        if _looks_like_mrz_text(text):
+            factors.append(
+                {
+                    "code": "document_mrz_invalid",
+                    "points": 30,
+                    "explanation": f"MRZ/code-barres illisible ou checksum invalide sur « {title} » — authenticité douteuse.",
+                }
+            )
+        elif document.doc_type == "passport":
+            factors.append(
+                {
+                    "code": "document_mrz_missing",
+                    "points": 15,
+                    "explanation": f"Passeport « {title} » sans MRZ/code-barres lisible — authenticité non vérifiable.",
+                }
+            )
+        elif document.doc_type == "id_card":
+            factors.append(
+                {
+                    "code": "document_mrz_optional_missing",
+                    "points": 8,
+                    "explanation": f"Pièce « {title} » sans MRZ/code-barres — contrôle d'authenticité partiel.",
+                }
+            )
+    return factors
+
+
+def _face_risk_factors(db: Session, customer: Customer) -> list[dict]:
+    from app.face import stored_face_match
+
+    workflow = db.scalar(
+        select(WorkflowInstance)
+        .where(WorkflowInstance.customer_id == customer.id, WorkflowInstance.definition_key.in_(_VERIFICATION_KEYS))
+        .order_by(WorkflowInstance.created_at.desc())
+    )
+    if not workflow:
+        return []
+    face = stored_face_match(db, workflow)
+    if not face:
+        return [
+            {
+                "code": "face_pending",
+                "points": 5,
+                "explanation": "Comparaison faciale non réalisée — le score reste vigilant jusqu'au contrôle.",
+            }
+        ]
+    if face.get("match") is False:
+        score = face.get("score")
+        detail = f" (score {round(float(score) * 100) if isinstance(score, (int, float)) and score <= 1 else score})" if score is not None else ""
+        return [
+            {
+                "code": "face_mismatch",
+                "points": 25,
+                "explanation": f"Correspondance faciale en échec{detail} — écart entre selfie/vidéo et la pièce.",
+            }
+        ]
+    percent = None
+    try:
+        raw = face.get("score")
+        if raw is not None:
+            percent = float(raw)
+            if percent <= 1:
+                percent *= 100
+    except (TypeError, ValueError):
+        percent = None
+    threshold = int(face.get("threshold") or 40)
+    if percent is not None and percent < threshold + 10:
+        return [
+            {
+                "code": "face_weak",
+                "points": 12,
+                "explanation": f"Correspondance faciale juste au-dessus du seuil ({round(percent)}/{threshold}) — vigilance.",
+            }
+        ]
+    return []
+
+
+def assess_customer(db: Session, tenant: Tenant, customer: Customer, source: str = "ruleset") -> RiskAssessment:
+    """clarity-risk-2: AML topics + face match + document authenticity, not a flat +40."""
+    factors: list[dict] = []
     score = 0
     country = None
     if customer.individual:
@@ -1378,32 +1598,49 @@ def assess_customer(db: Session, tenant: Tenant, customer: Customer, source: str
         if any((owner.ownership_pct or 0) >= 25 for owner in owners) and len(owners) > 2:
             score += 10
             factors.append({"code": "ownership", "points": 10, "explanation": "Structure d'actionnariat avec plusieurs bénéficiaires effectifs."})
-    pending = _customer_has_pending_screening(db, customer.id)
-    confirmed = False
     screening_ids = list(db.scalars(select(ScreeningCheck.id).where(ScreeningCheck.customer_id == customer.id)).all())
+    matches = []
     if screening_ids:
-        confirmed = (
-            db.scalar(
-                select(ScreeningMatch).where(
-                    ScreeningMatch.screening_id.in_(screening_ids), ScreeningMatch.status == "confirmed_hit"
-                )
-            )
-            is not None
-        )
-    if pending:
-        score += 15
+        matches = list(db.scalars(select(ScreeningMatch).where(ScreeningMatch.screening_id.in_(screening_ids))).all())
+    pending_rows = [row for row in matches if row.status == "pending"]
+    confirmed_rows = [row for row in matches if row.status == "confirmed_hit"]
+    if pending_rows:
+        top = max(pending_rows, key=lambda row: (_match_topic_points(row.payload), int(row.score or 0)))
+        weight = _match_topic_points(top.payload)
+        points = max(10, min(28, round(weight * 0.45) + _match_confidence_boost(top.score)))
+        topics = sorted({label for row in pending_rows for label in match_topics(row.payload)})
+        detail = f" Topics : {', '.join(topics)}." if topics else ""
+        score += points
         factors.append(
             {
                 "code": "screening_candidate",
-                "points": 15,
-                "explanation": "Au moins une correspondance candidate est en attente. Le score augmente l'attention. Il ne refuse pas le client.",
+                "points": points,
+                "explanation": f"Correspondance AML candidate en attente (pondération selon topics).{detail}",
             }
         )
-    if confirmed:
-        score += 40
-        factors.append({"code": "screening_confirmed", "points": 40, "explanation": "Une correspondance a été confirmée manuellement."})
+    if confirmed_rows:
+        top = max(confirmed_rows, key=lambda row: (_match_topic_points(row.payload), int(row.score or 0)))
+        weight = _match_topic_points(top.payload) + _match_confidence_boost(top.score)
+        topics = sorted({label for row in confirmed_rows for label in match_topics(row.payload)})
+        detail = f" Topics : {', '.join(topics)}." if topics else ""
+        score += weight
+        factors.append(
+            {
+                "code": "screening_confirmed",
+                "points": weight,
+                "explanation": f"Correspondance AML confirmée — points selon la gravité des topics.{detail}",
+            }
+        )
+    for factor in _face_risk_factors(db, customer):
+        score += int(factor["points"])
+        factors.append(factor)
+    documents = list(db.scalars(select(IdentityDocument).where(IdentityDocument.customer_id == customer.id)).all())
+    for factor in _document_authenticity_factors(documents):
+        score += int(factor["points"])
+        factors.append(factor)
+    score = min(100, max(0, score))
     if not factors:
-        factors.append({"code": "baseline", "points": 0, "explanation": "Aucun facteur aggravant sur la méthodologie clarity-risk-1."})
+        factors.append({"code": "baseline", "points": 0, "explanation": "Aucun facteur aggravant sur la méthodologie clarity-risk-2."})
     tier = "low"
     level = 1
     if score >= 60:
@@ -1427,6 +1664,7 @@ def assess_customer(db: Session, tenant: Tenant, customer: Customer, source: str
         customer_id=customer.id,
         object_type="customers",
         object_id=customer.id,
+        methodology_version=RISK_METHODOLOGY,
         source=source,
         score=score,
         risk_level=level,
@@ -2116,7 +2354,11 @@ def customer_view(db: Session, customer: Customer) -> dict:
                         "score": match.score,
                         "explanation": match.explanation,
                         "entity_id": match.entity_id,
-                        "name": str((match.payload or {}).get("caption") or (match.payload or {}).get("name") or match.entity_id),
+                        "name": match_display_name(match.payload, match.entity_id),
+                        "topics": match_topics(match.payload),
+                        "datasets": list((match.payload or {}).get("datasets") or []),
+                        "note": _match_note(match.payload),
+                        "provider": (match.payload or {}).get("provider"),
                         "synthetic": (match.payload or {}).get("synthetic", False),
                     }
                     for match in matches
@@ -2136,5 +2378,6 @@ def customer_view(db: Session, customer: Customer) -> dict:
             "risk_level": risk.risk_level,
             "factors": risk.factors,
             "rationale": risk.rationale,
+            "formula_note": RISK_FORMULA_NOTE,
         },
     }

@@ -25,6 +25,19 @@ type OcrRead = {
   extracted_text?: string;
 };
 
+type ScreeningMatch = {
+  id: string;
+  status: string;
+  score: number;
+  name?: string;
+  topics?: string[];
+  datasets?: string[];
+  note?: string;
+  explanation?: string[] | string;
+  provider?: string;
+  synthetic?: boolean;
+};
+
 type Detail = {
   case: QueueItem & { task?: { key: string; name: string } | null };
   task: { key: string; name: string } | null;
@@ -35,9 +48,15 @@ type Detail = {
     synthetic: boolean;
     individual: Record<string, string | null> | null;
     business: Record<string, string | null> | null;
-    screening: Array<{ id: string; status: string; production: boolean; matches: Array<{ id: string; status: string; score: number; name?: string }> }>;
+    screening: Array<{ id: string; status: string; production: boolean; matches: ScreeningMatch[] }>;
     verification_checks: Array<Record<string, unknown>>;
-    risk?: { score: number; tier: string; factors?: Array<{ code: string; points: number; explanation: string }> } | null;
+    risk?: {
+      score: number;
+      tier: string;
+      factors?: Array<{ code: string; points: number; explanation: string }>;
+      formula_note?: string;
+      methodology_version?: string;
+    } | null;
   } | null;
   submitted: Field[];
   identity?: Field[];
@@ -51,6 +70,25 @@ type Detail = {
   steps?: Array<{ key: string; label: string; status: "done" | "current" | "upcoming" }>;
   notes?: Array<{ id: string; comment: string; actor?: string; created_at?: string; action?: string | null }>;
 };
+
+const DEFAULT_FORMULA_NOTE =
+  "Score = somme des points AML + visage + authenticité des pièces + pays/structure. "
+  + "AML : pondération selon les topics (Sanctioned, Export controlled, Wanted, Debarred, Disqualified, PEP, Person of interest, Politician) "
+  + "et le statut (candidat / confirmé). Visage : échec ou score faible sous le seuil. "
+  + "Pièces : MRZ/code-barres absent (passeport) ou invalide (checksum). "
+  + "Seuils : <30 faible, 30–59 moyen, ≥60 élevé.";
+
+const TAB_ALERT_REASONS: Record<string, string[]> = {
+  "Données du document": ["correspondence"],
+  Documents: ["document"],
+  "Reconnaissance faciale": ["face"],
+  Criblage: ["screening"],
+};
+
+function tabHasAlert(tab: string, reasons: string[] | undefined) {
+  const keys = TAB_ALERT_REASONS[tab] || [];
+  return keys.some((key) => reasons?.includes(key));
+}
 
 const TABS = ["Informations saisies", "Documents", "Données du document", "Reconnaissance faciale", "Criblage", "Notes", "Action"] as const;
 const PREVIEW_TABS = ["Informations saisies", "Documents", "Données du document", "Reconnaissance faciale", "Score", "Criblage", "Notes", "Action"] as const;
@@ -97,6 +135,62 @@ function FaceScale({ score, threshold }: { score: number | null | undefined; thr
 function faceMatchLabel(match: boolean | null | undefined, comparing: boolean) {
   if (match == null) return comparing ? "Comparaison des visages…" : "Comparaison non faite";
   return match ? "Résultat de correspondance : OK" : "Résultat de correspondance : KO";
+}
+
+function ScoreFormulaHint({ note }: { note?: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="formula-hint">
+      <button
+        className="formula-q"
+        type="button"
+        aria-label="Formule du score de risque"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        ?
+      </button>
+      {open ? <span className="formula-note" role="note">{note || DEFAULT_FORMULA_NOTE}</span> : null}
+    </span>
+  );
+}
+
+function ScreeningMatchRow({
+  match,
+  pendingActions,
+}: {
+  match: ScreeningMatch;
+  pendingActions?: { onClear: () => void; onConfirm: () => void } | null;
+}) {
+  const topics = match.topics?.length ? match.topics.join(", ") : "—";
+  const datasets = match.datasets?.length ? match.datasets.join(", ") : "";
+  const explanation = Array.isArray(match.explanation) ? match.explanation.join(" ") : match.explanation || "";
+  return (
+    <div className="screening-match">
+      <p className="file-row">
+        <span>
+          <strong>{match.name || "Correspondance"}</strong>
+          {" · score "}{match.score}
+          {" · "}{match.status}
+        </span>
+        {match.status === "pending" && pendingActions ? (
+          <span className="tabs">
+            <button type="button" onClick={pendingActions.onClear}>Faux positif</button>
+            <button className="ghost" type="button" onClick={pendingActions.onConfirm}>Confirmer</button>
+          </span>
+        ) : (
+          <span className="tag">{match.status === "no_hit" ? "Écartée" : match.status === "confirmed_hit" ? "Confirmée" : match.status}</span>
+        )}
+      </p>
+      <dl className="kv screening-detail">
+        <span><dt>Topics</dt><dd>{topics}</dd></span>
+        {datasets ? <span><dt>Jeux</dt><dd>{datasets}</dd></span> : null}
+        {match.note ? <span><dt>Détail</dt><dd>{match.note}</dd></span> : null}
+        {explanation ? <span><dt>Explication</dt><dd>{explanation}</dd></span> : null}
+        {match.provider ? <span><dt>Source</dt><dd>{match.provider}{match.synthetic ? " · synthétique" : ""}</dd></span> : null}
+      </dl>
+    </div>
+  );
 }
 
 function formatNoteDate(value?: string) {
@@ -505,8 +599,13 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
   const finished = !detail || detail.case.status === "failed" || detail.case.state === "approved" || detail.case.state === "approved-partially" || detail.case.state === "rejected" || detail.case.state === "closed";
   const sentDocuments = (detail?.documents || []).filter((document) => document.status !== "requested");
   const complements = (detail?.tracker || []).filter((row) => !row.document_id);
-  const screeningFactors = (detail?.customer?.risk?.factors || []).filter((factor) => factor.code === "screening_confirmed");
-  const otherFactors = (detail?.customer?.risk?.factors || []).filter((factor) => factor.code !== "screening_confirmed");
+  const screeningFactors = (detail?.customer?.risk?.factors || []).filter((factor) =>
+    factor.code === "screening_confirmed" || factor.code === "screening_candidate"
+  );
+  const otherFactors = (detail?.customer?.risk?.factors || []).filter((factor) =>
+    factor.code !== "screening_confirmed" && factor.code !== "screening_candidate"
+  );
+  const alertReasons = detail?.alert_reasons || [];
 
   useEffect(() => {
     setFaceTried("");
@@ -571,7 +670,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
           ))}
         </div>
         {detail ? (
-          <div className={`case-sheet${detail.alert ? " alert" : ""}`}>
+          <div className="case-sheet">
             <header className="case-bar">
               <div>
                 <h2>{detail.customer?.display_name || detail.case.name}</h2>
@@ -592,7 +691,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                 ) : null}
               </div>
               <div className="score-chip">
-                <span className="label">Score de risque</span>
+                <span className="label">Score de risque <ScoreFormulaHint note={detail.customer?.risk?.formula_note} /></span>
                 <strong>{detail.customer?.risk ? detail.customer.risk.score : "—"}</strong>
                 <span className="label">{detail.customer?.risk?.tier || "non calculé"}</span>
               </div>
@@ -600,7 +699,14 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
             <div className="case-layout">
             <div className="tabs case-tabs">
               {TABS.map((item) => (
-                <button className={tab === item ? "active" : ""} key={item} type="button" onClick={() => setTab(item)}>{item}</button>
+                <button
+                  className={`${tab === item ? "active" : ""}${tabHasAlert(item, alertReasons) ? " tab-alert" : ""}`}
+                  key={item}
+                  type="button"
+                  onClick={() => setTab(item)}
+                >
+                  {item}
+                </button>
               ))}
             </div>
             <div className="case-pane">
@@ -660,15 +766,14 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                   <p className="factor" key={factor.code}>{factor.points} pts — {factor.explanation}</p>
                 ))}
                 {matches.length ? matches.map((match) => (
-                  <p className="file-row" key={match.id}>
-                    <span>{match.name || "Correspondance"} · score {match.score} · {match.status}</span>
-                    {match.status === "pending" ? (
-                      <span className="tabs">
-                        <button type="button" onClick={() => void disposition(match.id, "no_hit")}>Faux positif</button>
-                        <button className="ghost" type="button" onClick={() => void disposition(match.id, "confirmed_hit")}>Confirmer</button>
-                      </span>
-                    ) : <span className="tag">{match.status === "no_hit" ? "Écartée" : "Confirmée"}</span>}
-                  </p>
+                  <ScreeningMatchRow
+                    key={match.id}
+                    match={match}
+                    pendingActions={match.status === "pending" ? {
+                      onClear: () => void disposition(match.id, "no_hit"),
+                      onConfirm: () => void disposition(match.id, "confirmed_hit"),
+                    } : null}
+                  />
                 )) : <p className="label">Aucune correspondance sur ce dossier.</p>}
               </article>
             ) : null}
@@ -683,8 +788,6 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
             ) : null}
             {tab === "Action" ? (
               <div className="stack">
-                {detail.alert_reasons?.includes("correspondence") ? <p className="alert-line">Les données lues sur la pièce ne correspondent pas aux informations saisies.</p> : null}
-                {detail.alert_reasons?.includes("screening") ? <p className="alert-line">Le criblage remonte une alerte.</p> : null}
                 {fundingReview && !finished ? <p className="label">Virement reçu sur un compte limité. Vérifiez la provenance avant d'activer le compte.</p> : null}
                 {canDecide && !piecesApproved && !fundingReview && !finished ? <p className="error">Approuvez chaque pièce pour activer la validation.</p> : null}
                 {canDecide && screeningPending && !finished ? <p className="label">Vérifiez chaque correspondance de criblage avant de valider.</p> : null}
@@ -846,13 +949,21 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
   const finished = detail.case.status === "failed" || detail.case.state === "approved" || detail.case.state === "approved-partially" || detail.case.state === "rejected" || detail.case.state === "closed";
   const sentDocuments = (detail.documents || []).filter((document) => document.status !== "requested");
   const complements = (detail.tracker || []).filter((row) => !row.document_id);
+  const alertReasons = detail.alert_reasons || [];
   return (
     <div className="verify-preview">
       <aside className="verify-side">
         <h3>{detail.customer?.display_name || detail.case.name}</h3>
         <div className="tabs case-tabs">
           {PREVIEW_TABS.map((item) => (
-            <button className={tab === item ? "active" : ""} key={item} type="button" onClick={() => setTab(item)}>{item}</button>
+            <button
+              className={`${tab === item ? "active" : ""}${tabHasAlert(item, alertReasons) ? " tab-alert" : ""}`}
+              key={item}
+              type="button"
+              onClick={() => setTab(item)}
+            >
+              {item}
+            </button>
           ))}
         </div>
       </aside>
@@ -902,8 +1013,11 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
         ) : null}
         {tab === "Score" ? (
           <article className="card">
-            <div className="metric">{detail.customer?.risk ? detail.customer.risk.score : "—"}</div>
-            <p>{detail.customer?.risk?.tier || "Score non calculé"}</p>
+            <div className="score-chip">
+              <span className="label">Score de risque <ScoreFormulaHint note={detail.customer?.risk?.formula_note} /></span>
+              <div className="metric">{detail.customer?.risk ? detail.customer.risk.score : "—"}</div>
+              <p>{detail.customer?.risk?.tier || "Score non calculé"}</p>
+            </div>
             {(detail.customer?.risk?.factors || []).map((factor) => (
               <p className="factor" key={factor.code}>{factor.points} pts — {factor.explanation}</p>
             ))}
@@ -911,17 +1025,13 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
         ) : null}
         {tab === "Criblage" ? (
           <article className="card">
-            {(detail.customer?.risk?.factors || []).filter((factor) => factor.code === "screening_confirmed").map((factor) => (
-              <p className="factor" key={factor.code}>{factor.points} pts — {factor.explanation}</p>
-            ))}
+            {(detail.customer?.risk?.factors || [])
+              .filter((factor) => factor.code === "screening_confirmed" || factor.code === "screening_candidate")
+              .map((factor) => (
+                <p className="factor" key={factor.code}>{factor.points} pts — {factor.explanation}</p>
+              ))}
             {matches.length ? matches.map((match) => (
-              <p className="file-row" key={match.id}>
-                <span>{match.name || "Correspondance"} · score {match.score} · {match.status}</span>
-                <span className="tabs">
-                  <button type="button" disabled>Faux positif</button>
-                  <button className="ghost" type="button" disabled>Confirmer</button>
-                </span>
-              </p>
+              <ScreeningMatchRow key={match.id} match={match} pendingActions={null} />
             )) : <p className="label">Aucune correspondance sur ce dossier.</p>}
           </article>
         ) : null}

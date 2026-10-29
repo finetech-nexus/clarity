@@ -2179,6 +2179,95 @@ def test_customers_can_be_sorted_and_filtered_as_rejected(tmp_path):
         assert all(row["kyc_status"] == "rejected" or row["status"] == "rejected" for row in refused.json()["items"])
 
 
+def test_risk_score_weights_aml_topics_face_and_document(tmp_path):
+    from sqlalchemy import select
+
+    from app.ids import TENANT_ID
+    from app.models import IdentityDocument, ScreeningCheck, ScreeningMatch, Tenant
+    from app.services import RISK_METHODOLOGY, assess_customer, match_topics
+
+    assert match_topics({"properties": {"topics": ["sanction", "role.pep"]}}) == ["Sanctioned", "PEP"]
+    assert match_topics({"topics": ["export.control", "wanted", "politician"]}) == [
+        "Export controlled",
+        "Wanted",
+        "Politician",
+    ]
+
+    with _client(tmp_path) as client:
+        db = client.app.state.database.session_factory()
+        tenant = db.get(Tenant, TENANT_ID)
+        customer = db.scalar(select(Customer).where(Customer.tenant_id == TENANT_ID, Customer.kind == "individual"))
+        assert tenant and customer
+
+        screening = ScreeningCheck(
+            tenant_id=TENANT_ID,
+            customer_id=customer.id,
+            status="confirmed_hit",
+            query={"queries": {}},
+            match_count=1,
+            production=True,
+        )
+        db.add(screening)
+        db.flush()
+        db.add(
+            ScreeningMatch(
+                tenant_id=TENANT_ID,
+                screening_id=screening.id,
+                entity_id="os-putin",
+                status="confirmed_hit",
+                score=96,
+                explanation=["OpenSanctions candidate"],
+                payload={
+                    "caption": "Vladimir Putin",
+                    "topics": ["sanction", "role.pep", "export.control"],
+                    "properties": {"topics": ["sanction", "role.pep", "export.control"], "name": ["Vladimir Putin"]},
+                    "provider": "opensanctions",
+                },
+            )
+        )
+        db.add(
+            IdentityDocument(
+                tenant_id=TENANT_ID,
+                customer_id=customer.id,
+                category="proof_of_identity",
+                doc_type="passport",
+                status="provided",
+                properties={"title": "Passeport", "ocr": {"mrz": False, "extracted_text": "P<UTOPUTIN<<VLADIMIR<<<<<<<<<<<<<<<<<<"}},
+            )
+        )
+        assessment = assess_customer(db, tenant, customer, source="ruleset")
+        db.commit()
+        codes = {factor["code"] for factor in assessment.factors}
+        assert assessment.methodology_version == RISK_METHODOLOGY
+        assert assessment.score != 40
+        assert assessment.score >= 50
+        assert "screening_confirmed" in codes
+        assert "document_mrz_invalid" in codes or "document_mrz_missing" in codes or "face_pending" in codes
+        confirmed = next(factor for factor in assessment.factors if factor["code"] == "screening_confirmed")
+        assert confirmed["points"] >= 50
+        assert "Sanctioned" in confirmed["explanation"]
+        pep = ScreeningMatch(
+            tenant_id=TENANT_ID,
+            screening_id=screening.id,
+            entity_id="syn-pep",
+            status="confirmed_hit",
+            score=80,
+            explanation=["PEP"],
+            payload={"properties": {"topics": ["role.pep"], "name": ["Amira El Fassi"]}},
+        )
+        # Replace sanctions hit with PEP-only to ensure divergent score.
+        for row in db.scalars(select(ScreeningMatch).where(ScreeningMatch.screening_id == screening.id)).all():
+            db.delete(row)
+        db.add(pep)
+        db.flush()
+        pep_assessment = assess_customer(db, tenant, customer, source="ruleset")
+        db.commit()
+        assert pep_assessment.score != assessment.score
+        pep_factor = next(factor for factor in pep_assessment.factors if factor["code"] == "screening_confirmed")
+        assert pep_factor["points"] < confirmed["points"]
+        db.close()
+
+
 def normalize_template(path: str) -> str:
     import re
 
