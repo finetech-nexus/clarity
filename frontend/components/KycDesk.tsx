@@ -251,22 +251,21 @@ export function RiskScoreChip({
     click: labels?.click || "Cliquer pour voir le détail du calcul",
   };
   return (
-    <div className={`score-chip${open ? " is-open" : ""}`} style={riskScoreChipStyle(score)}>
+    <div className={`score-chip${open ? " is-open" : ""}${metric ? " is-metric" : ""}`} style={riskScoreChipStyle(score)}>
       <button
         className="score-chip-toggle"
         type="button"
         aria-expanded={open}
-        aria-label={copy.click}
+        aria-label={`${copy.score}: ${value}. ${copy.click}`}
         title={copy.click}
         onClick={() => setOpen((current) => !current)}
       >
-        <span className="label">{copy.score} <ScoreFormulaHint note={note} /></span>
-        {metric ? <div className="metric">{value}</div> : <strong>{value}</strong>}
-        {metric ? <p>{tier || copy.empty}</p> : <span className="label">{tier || "non calculé"}</span>}
+        <strong className={metric ? "metric" : undefined}>{value}</strong>
+        <span className="score-chip-tier">{tier || copy.empty}</span>
       </button>
       {open ? (
         <div className="score-breakdown" role="region" aria-label={copy.breakdown}>
-          <p className="label">{copy.breakdown}</p>
+          <p className="label">{copy.breakdown} <ScoreFormulaHint note={note} /></p>
           {factors?.length ? (
             <ul className="factors">
               {factors.map((factor) => (
@@ -835,7 +834,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
         {detail ? (
           <div className="case-panel" aria-label={t("verify.detail")}>
           <div className="case-sheet">
-            <header className="case-bar">
+            <header className="case-bar case-bar-score">
               <div>
                 <p className="panel-kicker">{t("verify.detail")}</p>
                 <h2>{detail.customer?.display_name || detail.case.name}</h2>
@@ -848,6 +847,18 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                   </ol>
                 ) : null}
               </div>
+              <RiskScoreChip
+                score={detail.customer?.risk?.score}
+                tier={detail.customer?.risk?.tier}
+                note={detail.customer?.risk?.formula_note}
+                factors={detail.customer?.risk?.factors || []}
+                labels={{
+                  score: t("verify.score"),
+                  breakdown: t("verify.score.breakdown"),
+                  empty: t("verify.score.empty"),
+                  click: t("verify.score.click"),
+                }}
+              />
             </header>
             <div className="case-layout">
             <div className="tabs case-tabs">
@@ -1107,7 +1118,15 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
   return (
     <div className="verify-preview">
       <aside className="verify-side">
-        <h3>{detail.customer?.display_name || detail.case.name}</h3>
+        <div className="verify-side-head">
+          <h3>{detail.customer?.display_name || detail.case.name}</h3>
+          <RiskScoreChip
+            score={detail.customer?.risk?.score}
+            tier={detail.customer?.risk?.tier}
+            note={detail.customer?.risk?.formula_note}
+            factors={detail.customer?.risk?.factors || []}
+          />
+        </div>
         <div className="tabs case-tabs">
           {PREVIEW_TABS.map((item) => (
             <button

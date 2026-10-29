@@ -327,35 +327,34 @@ button.active, button.active:hover {
 .queue button, .thumbs button { display: grid; text-align: left; border-radius: 12px; }
 .case-sheet { display: grid; gap: 0.8rem; }
 .case-bar, .viewer-caption, .file-row, .actions { display: flex; justify-content: space-between; gap: 1rem; align-items: center; flex-wrap: wrap; }
-.customer-fiche-head {
+.case-bar-score,
+.customer-fiche-head,
+.verify-side-head {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: 1rem;
-  margin-bottom: 0.35rem;
 }
-.customer-fiche-head > div:first-child {
+.case-bar-score > div:first-child,
+.customer-fiche-head > div:first-child,
+.verify-side-head h3 {
   min-width: 0;
 }
-.customer-fiche-head .score-chip {
+.customer-fiche-head { margin-bottom: 0.35rem; }
+.verify-side-head {
+  align-items: center;
+  gap: 0.55rem;
+}
+.verify-side-head h3 { margin: 0; flex: 1; }
+.case-bar-score .score-chip,
+.customer-fiche-head .score-chip,
+.verify-side-head .score-chip {
   flex: none;
   margin-left: auto;
-  justify-items: end;
-  text-align: right;
 }
-.customer-fiche-head .score-chip-toggle {
-  justify-items: end;
-  text-align: right;
-}
-.customer-fiche-head .score-breakdown {
-  text-align: right;
-}
-.customer-fiche-head .score-breakdown .factors {
-  padding-left: 0;
-  padding-right: 1rem;
-  list-style-position: inside;
-}
-html[dir="rtl"] .customer-fiche-head .score-chip {
+html[dir="rtl"] .case-bar-score .score-chip,
+html[dir="rtl"] .customer-fiche-head .score-chip,
+html[dir="rtl"] .verify-side-head .score-chip {
   margin-left: 0;
   margin-right: auto;
 }
@@ -479,49 +478,70 @@ html[dir="rtl"] .customer-fiche-head .score-chip {
 .score-chip {
   position: relative;
   display: grid;
-  justify-items: start;
-  min-width: 8.5rem;
-  max-width: 22rem;
-  width: min(100%, 22rem);
+  width: 4.75rem;
+  height: 4.75rem;
+  min-width: 4.75rem;
+  max-width: 4.75rem;
   padding: 0;
   border: 1.5px solid var(--line);
   border-radius: 12px;
   background: #fff;
   transition: color 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
-  text-align: left;
+  z-index: 2;
 }
 .score-chip-toggle {
   display: grid;
-  justify-items: start;
-  gap: 0.1rem;
+  place-content: center;
+  justify-items: center;
+  align-content: center;
+  gap: 0.05rem;
   width: 100%;
-  padding: 0.5rem 0.85rem;
+  height: 100%;
+  padding: 0.35rem;
   border: 0;
   border-radius: 12px;
   background: transparent;
   box-shadow: none;
   color: inherit;
   cursor: pointer;
-  text-align: left;
+  text-align: center;
 }
 .score-chip-toggle:hover { filter: brightness(0.98); }
 .score-chip strong, .score-chip .metric {
-  font-size: 1.6rem;
-  line-height: 1.1;
+  font-size: 1.45rem;
+  line-height: 1;
   font-weight: 700;
   color: inherit;
 }
-.score-chip .label:first-child { color: var(--muted); }
-.score-chip-toggle > .label:last-child, .score-chip-toggle > p {
+.score-chip-tier {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: inherit;
   opacity: 0.85;
   margin: 0;
-  font-weight: 600;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 .score-breakdown {
-  border-top: 1px solid color-mix(in srgb, currentColor 25%, var(--line));
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  width: min(18rem, 70vw);
+  border: 1.5px solid color-mix(in srgb, currentColor 25%, var(--line));
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgba(16, 32, 43, 0.12);
   padding: 0.55rem 0.75rem 0.7rem;
   text-align: left;
+  color: var(--ink);
+}
+html[dir="rtl"] .score-breakdown {
+  right: auto;
+  left: 0;
 }
 .score-breakdown .factors {
   margin: 0.35rem 0 0;
