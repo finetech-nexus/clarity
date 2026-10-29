@@ -672,7 +672,7 @@ def ensure_review_pack(db: Session, engine=None) -> None:
     tenant = db.get(Tenant, TENANT_ID)
     if not tenant or engine is None:
         return
-    from app.services import start_customer_workflow, store_bytes
+    from app.services import start_customer_workflow
 
     analyst = db.scalar(select(User).where(User.tenant_id == TENANT_ID, User.email == ANALYST_EMAIL))
     if not analyst:
@@ -711,7 +711,7 @@ def ensure_review_pack(db: Session, engine=None) -> None:
             ("proof_of_address", address_title, ["10 rue de la Paix", "75002 Paris", "Fournisseur de demonstration"]),
         )
         for doc_type, title, lines in pages:
-            path, digest = store_bytes(ROOT / "data" / "uploads", TENANT_ID, f"{ref}-{doc_type}.svg", _specimen(title, lines), db=db)
+            path, digest = _store_seed_file(TENANT_ID, f"{ref}-{doc_type}.svg", _specimen(title, lines))
             db.add(
                 IdentityDocument(
                     tenant_id=TENANT_ID,
@@ -730,7 +730,11 @@ def ensure_review_pack(db: Session, engine=None) -> None:
     for case in db.scalars(select(CaseRecord).where(CaseRecord.tenant_id == TENANT_ID)).all():
         if db.scalar(select(Evidence).where(Evidence.case_id == case.id)):
             continue
-        path, digest = store_bytes(ROOT / "data" / "uploads", TENANT_ID, f"note-{case.id[:8]}.svg", _specimen("Note jointe au dossier", [case.name, "Piece versée par le gestionnaire"]), db=db)
+        path, digest = _store_seed_file(
+            TENANT_ID,
+            f"note-{case.id[:8]}.svg",
+            _specimen("Note jointe au dossier", [case.name, "Piece versee par le gestionnaire"]),
+        )
         db.add(Evidence(tenant_id=TENANT_ID, case_id=case.id, customer_id=case.customer_id, file_name="note-investigation.svg", storage_path=path, sha256=digest))
     db.flush()
 
