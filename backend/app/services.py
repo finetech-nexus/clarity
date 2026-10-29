@@ -1580,6 +1580,32 @@ def _mark_refused(db: Session, workflow: WorkflowInstance, customer: Customer) -
         cycle.status = "rejected"
 
 
+def append_workflow_note(workflow: WorkflowInstance, principal: Principal, comment: str, action: str | None = None) -> dict | None:
+    """Persist a dossier note on the workflow context (analyst and checker)."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.models import new_id
+
+    text = str(comment or "").strip()
+    if not text:
+        return None
+    note = {
+        "id": new_id(),
+        "comment": text,
+        "actor": actor_label(principal),
+        "created_at": iso(utcnow()),
+        "action": action,
+    }
+    context = dict(workflow.context or {})
+    notes = list(context.get("notes") or [])
+    notes.append(note)
+    context["notes"] = notes
+    workflow.context = context
+    flag_modified(workflow, "context")
+    workflow.updated_at = utcnow()
+    return note
+
+
 def refuse_verification(db: Session, engine, tenant: Tenant, principal: Principal, workflow: WorkflowInstance, rationale: str) -> WorkflowInstance:
     """Refuse the case even when it is not sitting on the analyst or checker step."""
     if not principal.allows("analyst", "investigator", "checker"):
@@ -1592,6 +1618,7 @@ def refuse_verification(db: Session, engine, tenant: Tenant, principal: Principa
     routes = ADVANCE.get(workflow.definition_key, {}).get(task.task_key, {}) if task else {}
     if task and "reject" in routes:
         return advance_workflow(db, engine, tenant, principal, workflow, "reject", rationale)
+    append_workflow_note(workflow, principal, rationale, "reject")
     workflow.state = "rejected"
     workflow.resolved_at = utcnow()
     _sync_task(db, workflow, None)
@@ -1761,6 +1788,8 @@ def advance_workflow(db: Session, engine, tenant: Tenant, principal: Principal, 
         raise clarity_error(403, "maker_checker", "La personne qui a instruit le dossier ne peut pas l'approuver.")
     if action in {"approve", "approvePartial"} and workflow.definition_key != "clarityFundingOrigin":
         _require_approval_ready(db, workflow)
+    if action == "approvePartial" and task.task_key != "checkerReview":
+        raise clarity_error(403, "forbidden", "L'approbation partielle est réservée au contrôleur.")
     if task.task_key == "analystReview":
         context["maker_id"] = identity
         workflow.context = context
@@ -1775,6 +1804,7 @@ def advance_workflow(db: Session, engine, tenant: Tenant, principal: Principal, 
                 rationale=rationale,
             )
         )
+    append_workflow_note(workflow, principal, rationale, action)
     _complete_active(db, engine, workflow, {"action": action, "rationale": rationale})
     customer = db.get(Customer, workflow.customer_id) if workflow.customer_id else None
     if customer and workflow.state == "approved" and workflow.definition_key == "clarityFundingOrigin":

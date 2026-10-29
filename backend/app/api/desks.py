@@ -469,9 +469,25 @@ def kyc_case(runtime_id: str, principal: Principal = Depends(clarity_principal),
         "alert_reasons": flags["alert_reasons"],
         "steps": process_steps(workflow.definition_key, workflow.state),
         "requested_documents": list((workflow.context or {}).get("documentsRequested") or []),
+        "notes": list((workflow.context or {}).get("notes") or []),
         "face_match": stored_face_match(db, workflow),
         "face_threshold": face_threshold(db, principal.tenant_id),
     }
+
+
+@router.post("/kyc/{runtime_id}/notes")
+def add_kyc_note(runtime_id: str, body: dict, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    from app.services import append_workflow_note
+
+    if not principal.allows("analyst", "investigator", "checker"):
+        raise clarity_error(403, "forbidden", "Seuls l'analyste et le contrôleur peuvent noter le dossier.")
+    workflow = _workflow(db, principal, runtime_id)
+    note = append_workflow_note(workflow, principal, str(body.get("comment") or body.get("note") or ""))
+    if not note:
+        raise clarity_error(400, "invalid", "La note est vide.")
+    audit(db, principal.tenant_id, actor_label(principal), "workflow.note", "workflow", workflow.id, {"note_id": note["id"]})
+    db.flush()
+    return kyc_case(runtime_id, principal, db)
 
 
 def _document_tracker(db: Session, principal: Principal, workflow: WorkflowInstance, documents: list[IdentityDocument]) -> list[dict]:

@@ -49,6 +49,7 @@ type Detail = {
   face_match?: { score: number | null; match: boolean | null; threshold?: number; source?: string; detail?: string } | null;
   face_threshold?: number;
   steps?: Array<{ key: string; label: string; status: "done" | "current" | "upcoming" }>;
+  notes?: Array<{ id: string; comment: string; actor?: string; created_at?: string; action?: string | null }>;
 };
 
 const TABS = ["Informations saisies", "Documents", "Données du document", "Reconnaissance faciale", "Criblage", "Action"] as const;
@@ -125,6 +126,172 @@ const TASK_ACTION: Record<string, string> = {
   investigate: "Clôturer l'instruction",
 };
 
+const NOTE_ACTION_LABEL: Record<string, string> = {
+  approve: "Transmission / approbation",
+  reject: "Rejet",
+  approvePartial: "Approbation partielle",
+  "approve-partial": "Approbation partielle",
+};
+
+function ActionTiles({
+  reviewState,
+  fundingReview,
+  canDecide,
+  canApprove,
+  finished,
+  notes,
+  rejectNote,
+  approveNote,
+  partialNote,
+  freeNote,
+  onRejectNote,
+  onApproveNote,
+  onPartialNote,
+  onFreeNote,
+  onDecide,
+  onAddNote,
+  resubmitId,
+  complementTarget,
+  askReason,
+  sentDocuments,
+  complements,
+  onResubmitId,
+  onComplementTarget,
+  onAskReason,
+  onRequestDocuments,
+}: {
+  reviewState: string;
+  fundingReview: boolean;
+  canDecide: boolean;
+  canApprove: boolean;
+  finished: boolean;
+  notes: Array<{ id: string; comment: string; actor?: string; created_at?: string; action?: string | null }>;
+  rejectNote: string;
+  approveNote: string;
+  partialNote: string;
+  freeNote: string;
+  onRejectNote: (value: string) => void;
+  onApproveNote: (value: string) => void;
+  onPartialNote: (value: string) => void;
+  onFreeNote: (value: string) => void;
+  onDecide: (action: "approve" | "reject" | "approve-partial", note: string) => void;
+  onAddNote: () => void;
+  resubmitId: string;
+  complementTarget: string;
+  askReason: string;
+  sentDocuments: Array<{ id: string; title?: string; type?: string }>;
+  complements: Array<{ type: string; category: string; country?: string; label?: { fr?: string } }>;
+  onResubmitId: (value: string) => void;
+  onComplementTarget: (value: string) => void;
+  onAskReason: (value: string) => void;
+  onRequestDocuments: (event: FormEvent, mode: "resubmit" | "additional", target: string) => void;
+}) {
+  const isAnalyst = reviewState === "analystReview";
+  const isChecker = reviewState === "checkerReview";
+  const canPartial = Boolean(canDecide && isChecker && !fundingReview);
+  const primaryLabel = TASK_ACTION[reviewState] || (isAnalyst ? "Transmettre au contrôle" : "Approuver");
+  return (
+    <div className="stack">
+      {notes.length ? (
+        <ul className="notes-list">
+          {notes.map((note) => (
+            <li key={note.id}>
+              <p className="note-meta">
+                {note.actor || "Équipe"}
+                {note.created_at ? ` · ${note.created_at}` : ""}
+                {note.action ? ` · ${NOTE_ACTION_LABEL[note.action] || note.action}` : ""}
+              </p>
+              <p>{note.comment}</p>
+            </li>
+          ))}
+        </ul>
+      ) : <p className="label">Aucune note sur ce dossier.</p>}
+      {finished ? <p className="label">Aucune action ouverte sur ce dossier.</p> : (
+        <div className="action-grid">
+          {canDecide ? (
+            <article className="card action-tile">
+              <h3>Note</h3>
+              <div className="form">
+                <textarea value={freeNote} onChange={(event) => onFreeNote(event.target.value)} placeholder="Ajouter une note sur le dossier" />
+                <button type="button" disabled={!freeNote.trim()} onClick={onAddNote}>Enregistrer la note</button>
+              </div>
+            </article>
+          ) : null}
+          {canDecide ? (
+            <article className="card action-tile">
+              <h3>Rejeter</h3>
+              <div className="form">
+                <textarea value={rejectNote} onChange={(event) => onRejectNote(event.target.value)} placeholder="Note de rejet" />
+                <button className="ghost" type="button" onClick={() => onDecide("reject", rejectNote)}>Rejeter</button>
+              </div>
+            </article>
+          ) : null}
+          {canDecide && (isAnalyst || isChecker || reviewState === "investigate") ? (
+            <article className="card action-tile">
+              <h3>{isAnalyst ? "Transmettre" : isChecker ? "Approuver" : "Décision"}</h3>
+              <div className="form">
+                <textarea
+                  value={approveNote}
+                  onChange={(event) => onApproveNote(event.target.value)}
+                  placeholder={isAnalyst ? "Note de transmission" : "Note d'approbation"}
+                />
+                <button type="button" disabled={!canApprove} onClick={() => onDecide("approve", approveNote)}>{primaryLabel}</button>
+              </div>
+            </article>
+          ) : null}
+          {canPartial ? (
+            <article className="card action-tile">
+              <h3>Approuver partiellement</h3>
+              <div className="form">
+                <textarea value={partialNote} onChange={(event) => onPartialNote(event.target.value)} placeholder="Note d'approbation partielle" />
+                <button type="button" disabled={!canApprove} onClick={() => onDecide("approve-partial", partialNote)}>Approuver partiellement</button>
+              </div>
+            </article>
+          ) : null}
+          {canDecide ? (
+            <>
+              <article className="card action-tile">
+                <h3>Demande de renvoi</h3>
+                <form className="form" onSubmit={(event) => onRequestDocuments(event, "resubmit", resubmitId)}>
+                  <label>
+                    Pièce déjà envoyée
+                    <select value={resubmitId} onChange={(event) => onResubmitId(event.target.value)} required>
+                      <option value="">Choisir</option>
+                      {sentDocuments.map((document) => (
+                        <option key={document.id} value={document.id}>{document.title || document.type}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <textarea value={askReason} onChange={(event) => onAskReason(event.target.value)} placeholder="Motif" />
+                  <button type="submit">Demander le renvoi</button>
+                </form>
+              </article>
+              <article className="card action-tile">
+                <h3>Demander un complément</h3>
+                <form className="form" onSubmit={(event) => onRequestDocuments(event, "additional", complementTarget)}>
+                  <label>
+                    Pièce complémentaire
+                    <select value={complementTarget} onChange={(event) => onComplementTarget(event.target.value)} required>
+                      <option value="">Choisir</option>
+                      {complements.map((row) => (
+                        <option key={`${row.type}-${row.category}`} value={`${row.type}|${row.category}|${row.country || "ZZ"}`}>
+                          {row.label?.fr || row.type}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <textarea value={askReason} onChange={(event) => onAskReason(event.target.value)} placeholder="Motif" />
+                  <button type="submit">Demander le complément</button>
+                </form>
+              </article>
+            </>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function KycDesk({ kind }: { kind?: "business" }) {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [selected, setSelected] = useState("");
@@ -144,6 +311,10 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
   const [askReason, setAskReason] = useState("");
   const [comparing, setComparing] = useState(false);
   const [faceTried, setFaceTried] = useState("");
+  const [rejectNote, setRejectNote] = useState("");
+  const [approveNote, setApproveNote] = useState("");
+  const [partialNote, setPartialNote] = useState("");
+  const [freeNote, setFreeNote] = useState("");
 
   async function loadQueue(prefer?: string, nextQuery = query, nextPage = page) {
     const body = await searchPage<QueueItem>(kind ? `/api/clarity/v1/desks/kyc?kind=${kind}` : "/api/clarity/v1/desks/kyc", nextQuery, nextPage);
@@ -170,18 +341,36 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
     void api<Detail>(`/api/clarity/v1/desks/kyc/${selected}`).then(setDetail).catch((err: Error) => setError(err.message));
   }, [selected]);
 
-  async function decideCase(action: "approve" | "reject" | "revision" | "approve-partial") {
+  async function decideCase(action: "approve" | "reject" | "revision" | "approve-partial", note = "") {
     setError("");
     try {
       const updated = await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}/decision`, {
         method: "POST",
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({ action, rationale: note }),
       });
       setDetail(updated);
+      setRejectNote("");
+      setApproveNote("");
+      setPartialNote("");
       setMessage(action === "revision" ? "Renvoi demandé. Le client doit fournir les pièces marquées." : "Décision enregistrée sur le dossier.");
       await loadQueue(selected);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Décision refusée");
+    }
+  }
+
+  async function addCaseNote() {
+    if (!selected || !freeNote.trim()) return;
+    setError("");
+    try {
+      setDetail(await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}/notes`, {
+        method: "POST",
+        body: JSON.stringify({ comment: freeNote }),
+      }));
+      setFreeNote("");
+      setMessage("Note enregistrée.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Note refusée");
     }
   }
 
@@ -290,7 +479,6 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
   const reviewState = taskKey || detail?.case.state || "";
   const canDecide = reviewState === "analystReview" || reviewState === "checkerReview" || reviewState === "investigate";
   const canApprove = canDecide && (fundingReview || piecesApproved) && !screeningPending;
-  const canPartial = Boolean(canDecide && (reviewState === "analystReview" || reviewState === "checkerReview") && !fundingReview);
   const finished = !detail || detail.case.status === "failed" || detail.case.state === "approved" || detail.case.state === "approved-partially" || detail.case.state === "rejected" || detail.case.state === "closed";
   const sentDocuments = (detail?.documents || []).filter((document) => document.status !== "requested");
   const complements = (detail?.tracker || []).filter((row) => !row.document_id);
@@ -463,53 +651,36 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
               <div className="stack">
                 {detail.alert_reasons?.includes("correspondence") ? <p className="alert-line">Les données lues sur la pièce ne correspondent pas aux informations saisies.</p> : null}
                 {detail.alert_reasons?.includes("screening") ? <p className="alert-line">Le criblage remonte une alerte.</p> : null}
-                {finished ? <p className="label">Aucune action ouverte sur ce dossier.</p> : (
-                  <>
-                    {fundingReview ? <p className="label">Virement reçu sur un compte limité. Vérifiez la provenance avant d'activer le compte.</p> : null}
-                    {canDecide && !piecesApproved && !fundingReview ? <p className="error">Approuvez chaque pièce pour activer la validation.</p> : null}
-                    <div className="action-lead">
-                      <button className="ghost" type="button" onClick={() => void decideCase("reject")}>Rejeter</button>
-                      {canDecide ? <button type="button" disabled={!canApprove} onClick={() => void decideCase("approve")}>{TASK_ACTION[reviewState] || TASK_ACTION[taskKey] || "Transmettre au contrôle"}</button> : null}
-                      {canPartial ? <button type="button" disabled={!canApprove} onClick={() => void decideCase("approve-partial")}>Approuver partiellement</button> : null}
-                    </div>
-                    {canDecide && screeningPending ? <p className="label">Vérifiez chaque correspondance de criblage avant de valider.</p> : null}
-                    <div className="action-grid">
-                      <article className="card">
-                        <h3>Demande de renvoi</h3>
-                        <form className="form" onSubmit={(event) => void requestDocuments(event, "resubmit", resubmitId)}>
-                          <label>
-                            Pièce déjà envoyée
-                            <select value={resubmitId} onChange={(event) => setResubmitId(event.target.value)} required>
-                              <option value="">Choisir</option>
-                              {sentDocuments.map((document) => (
-                                <option key={document.id} value={document.id}>{document.title || document.type}</option>
-                              ))}
-                            </select>
-                          </label>
-                          <input value={askReason} onChange={(event) => setAskReason(event.target.value)} placeholder="Motif" />
-                          <button type="submit">Demander le renvoi</button>
-                        </form>
-                      </article>
-                      <article className="card">
-                        <h3>Demander un complément</h3>
-                        <form className="form" onSubmit={(event) => void requestDocuments(event, "additional", complementTarget)}>
-                          <label>
-                            Pièce complémentaire
-                            <select value={complementTarget} onChange={(event) => setComplementTarget(event.target.value)} required>
-                              <option value="">Choisir</option>
-                              {complements.map((row) => (
-                                <option key={`${row.type}-${row.category}`} value={`${row.type}|${row.category}|${row.country || "ZZ"}`}>
-                                  {row.label?.fr || row.type}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <button type="submit">Demander le complément</button>
-                        </form>
-                      </article>
-                    </div>
-                  </>
-                )}
+                {fundingReview && !finished ? <p className="label">Virement reçu sur un compte limité. Vérifiez la provenance avant d'activer le compte.</p> : null}
+                {canDecide && !piecesApproved && !fundingReview && !finished ? <p className="error">Approuvez chaque pièce pour activer la validation.</p> : null}
+                {canDecide && screeningPending && !finished ? <p className="label">Vérifiez chaque correspondance de criblage avant de valider.</p> : null}
+                <ActionTiles
+                  reviewState={reviewState}
+                  fundingReview={Boolean(fundingReview)}
+                  canDecide={Boolean(canDecide)}
+                  canApprove={Boolean(canApprove)}
+                  finished={Boolean(finished)}
+                  notes={detail.notes || []}
+                  rejectNote={rejectNote}
+                  approveNote={approveNote}
+                  partialNote={partialNote}
+                  freeNote={freeNote}
+                  onRejectNote={setRejectNote}
+                  onApproveNote={setApproveNote}
+                  onPartialNote={setPartialNote}
+                  onFreeNote={setFreeNote}
+                  onDecide={(action, note) => void decideCase(action, note)}
+                  onAddNote={() => void addCaseNote()}
+                  resubmitId={resubmitId}
+                  complementTarget={complementTarget}
+                  askReason={askReason}
+                  sentDocuments={sentDocuments}
+                  complements={complements}
+                  onResubmitId={setResubmitId}
+                  onComplementTarget={setComplementTarget}
+                  onAskReason={setAskReason}
+                  onRequestDocuments={(event, mode, target) => void requestDocuments(event, mode, target)}
+                />
                 {detail.requested_documents?.length ? (
                   <ul className="factors">
                     {detail.requested_documents.map((item) => (
@@ -536,6 +707,10 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
   const [resubmitId, setResubmitId] = useState("");
   const [complementTarget, setComplementTarget] = useState("");
   const [askReason, setAskReason] = useState("");
+  const [rejectNote, setRejectNote] = useState("");
+  const [approveNote, setApproveNote] = useState("");
+  const [partialNote, setPartialNote] = useState("");
+  const [freeNote, setFreeNote] = useState("");
 
   useEffect(() => {
     setDetail(null);
@@ -546,6 +721,10 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
     setResubmitId("");
     setComplementTarget("");
     setAskReason("");
+    setRejectNote("");
+    setApproveNote("");
+    setPartialNote("");
+    setFreeNote("");
     void api<Detail>(`/api/clarity/v1/desks/kyc/${runtimeId}`).then(setDetail).catch((err: Error) => setError(err.message));
   }, [runtimeId]);
 
@@ -589,17 +768,36 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
     }
   }
 
-  async function decideCase(action: "approve" | "reject" | "approve-partial") {
+  async function decideCase(action: "approve" | "reject" | "approve-partial", note = "") {
     setError("");
     try {
       setDetail(await api<Detail>(`/api/clarity/v1/desks/kyc/${runtimeId}/decision`, {
         method: "POST",
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({ action, rationale: note }),
       }));
+      setRejectNote("");
+      setApproveNote("");
+      setPartialNote("");
       setMessage(action === "approve-partial" ? "Approbation partielle enregistrée." : "Décision enregistrée sur le dossier.");
       onChanged?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Décision refusée");
+    }
+  }
+
+  async function addCaseNote() {
+    if (!freeNote.trim()) return;
+    setError("");
+    try {
+      setDetail(await api<Detail>(`/api/clarity/v1/desks/kyc/${runtimeId}/notes`, {
+        method: "POST",
+        body: JSON.stringify({ comment: freeNote }),
+      }));
+      setFreeNote("");
+      setMessage("Note enregistrée.");
+      onChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Note refusée");
     }
   }
 
@@ -613,7 +811,6 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
   const screeningPending = matches.some((item) => item.status === "pending");
   const canDecide = reviewState === "analystReview" || reviewState === "checkerReview" || reviewState === "investigate";
   const canApprove = canDecide && (fundingReview || piecesApproved) && !screeningPending;
-  const canPartial = Boolean(canDecide && (reviewState === "analystReview" || reviewState === "checkerReview") && !fundingReview);
   const finished = detail.case.status === "failed" || detail.case.state === "approved" || detail.case.state === "approved-partially" || detail.case.state === "rejected" || detail.case.state === "closed";
   const sentDocuments = (detail.documents || []).filter((document) => document.status !== "requested");
   const complements = (detail.tracker || []).filter((row) => !row.document_id);
@@ -698,53 +895,35 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
         ) : null}
         {tab === "Action" ? (
           <div className="stack">
-            {finished ? <p className="label">Aucune action ouverte sur ce dossier.</p> : (
-              <>
-                {fundingReview ? <p className="label">Virement reçu sur un compte limité. Vérifiez la provenance avant d'activer le compte.</p> : null}
-                {canDecide && !piecesApproved && !fundingReview ? <p className="error">Approuvez chaque pièce pour activer la validation.</p> : null}
-                <div className="action-lead">
-                  <button className="ghost" type="button" onClick={() => void decideCase("reject")}>Rejeter</button>
-                  {canDecide ? <button type="button" disabled={!canApprove} onClick={() => void decideCase("approve")}>{TASK_ACTION[reviewState] || "Transmettre au contrôle"}</button> : null}
-                  {canPartial ? <button type="button" disabled={!canApprove} onClick={() => void decideCase("approve-partial")}>Approuver partiellement</button> : null}
-                </div>
-              <div className="action-grid">
-                <article className="card">
-                  <h3>Demande de renvoi</h3>
-                  <form className="form" onSubmit={(event) => void requestDocuments(event, "resubmit", resubmitId)}>
-                    <label>
-                      Pièce déjà envoyée
-                      <select value={resubmitId} onChange={(event) => setResubmitId(event.target.value)} required>
-                        <option value="">Choisir</option>
-                        {sentDocuments.map((document) => (
-                          <option key={document.id} value={document.id}>{document.title || document.type}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <input value={askReason} onChange={(event) => setAskReason(event.target.value)} placeholder="Motif" />
-                    <button type="submit">Demander le renvoi</button>
-                  </form>
-                </article>
-                <article className="card">
-                  <h3>Demander un complément</h3>
-                  <form className="form" onSubmit={(event) => void requestDocuments(event, "additional", complementTarget)}>
-                    <label>
-                      Pièce complémentaire
-                      <select value={complementTarget} onChange={(event) => setComplementTarget(event.target.value)} required>
-                        <option value="">Choisir</option>
-                        {complements.map((row) => (
-                          <option key={`${row.type}|${row.category}|${row.country || "ZZ"}`} value={`${row.type}|${row.category}|${row.country || "ZZ"}`}>
-                            {row.label?.fr || row.type}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <input value={askReason} onChange={(event) => setAskReason(event.target.value)} placeholder="Motif" />
-                    <button type="submit">Demander la pièce</button>
-                  </form>
-                </article>
-              </div>
-              </>
-            )}
+            {fundingReview && !finished ? <p className="label">Virement reçu sur un compte limité. Vérifiez la provenance avant d'activer le compte.</p> : null}
+            {canDecide && !piecesApproved && !fundingReview && !finished ? <p className="error">Approuvez chaque pièce pour activer la validation.</p> : null}
+            <ActionTiles
+              reviewState={reviewState}
+              fundingReview={Boolean(fundingReview)}
+              canDecide={Boolean(canDecide)}
+              canApprove={Boolean(canApprove)}
+              finished={Boolean(finished)}
+              notes={detail.notes || []}
+              rejectNote={rejectNote}
+              approveNote={approveNote}
+              partialNote={partialNote}
+              freeNote={freeNote}
+              onRejectNote={setRejectNote}
+              onApproveNote={setApproveNote}
+              onPartialNote={setPartialNote}
+              onFreeNote={setFreeNote}
+              onDecide={(action, note) => void decideCase(action, note)}
+              onAddNote={() => void addCaseNote()}
+              resubmitId={resubmitId}
+              complementTarget={complementTarget}
+              askReason={askReason}
+              sentDocuments={sentDocuments}
+              complements={complements}
+              onResubmitId={setResubmitId}
+              onComplementTarget={setComplementTarget}
+              onAskReason={setAskReason}
+              onRequestDocuments={(event, mode, target) => void requestDocuments(event, mode, target)}
+            />
             {detail.requested_documents?.length ? (
               <ul className="factors">
                 {detail.requested_documents.map((item) => (

@@ -2025,6 +2025,19 @@ def test_partial_approval_opens_the_account_and_reviews_the_funding_transfer(tmp
         db.add(IdentityDocument(tenant_id=customer.tenant_id, customer_id=customer.id, workflow_id=workflow_id, doc_type="passport", decision="approved", properties={"title": "Passeport"}))
         db.commit()
         db.close()
+        noted = client.post(
+            f"/api/clarity/v1/desks/kyc/{workflow_id}/notes",
+            headers=analyst_headers,
+            json={"comment": "Pièces contrôlées, transmission au checker."},
+        )
+        assert noted.status_code == 200, noted.text
+        assert any(row["comment"].startswith("Pièces contrôlées") for row in noted.json()["notes"])
+        refused_partial = client.post(
+            f"/api/clarity/v1/workflows/{workflow_id}/actions",
+            headers=analyst_headers,
+            json={"action": "approvePartial", "rationale": "L'analyste ne doit pas approuver partiellement."},
+        )
+        assert refused_partial.status_code in {403, 422}, refused_partial.text
         transmitted = client.post(
             f"/api/clarity/v1/workflows/{workflow_id}/actions",
             headers=analyst_headers,
