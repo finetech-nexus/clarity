@@ -836,19 +836,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
         {detail ? (
           <div className="case-panel" aria-label={t("verify.detail")}>
           <div className="case-sheet">
-            <header className="case-bar case-bar-score-right">
-              <div>
-                <p className="panel-kicker">{t("verify.detail")}</p>
-                <h2>{detail.customer?.display_name || detail.case.name}</h2>
-                <p className="label">{detail.case.definition} · {statusLabel(detail.case.status, detail.case.state)} · {detail.task?.name || stepLabel(detail.case.state, "sans tâche ouverte")}</p>
-                {detail.steps?.length ? (
-                  <ol className="stepper">
-                    {detail.steps.map((step) => (
-                      <li className={step.status} key={step.key}><span className="dot" />{step.label}</li>
-                    ))}
-                  </ol>
-                ) : null}
-              </div>
+            <header className="case-bar case-bar-score-top">
               <RiskScoreChip
                 score={detail.customer?.risk?.score}
                 tier={detail.customer?.risk?.tier}
@@ -861,6 +849,18 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                   click: t("verify.score.click"),
                 }}
               />
+              <div className="case-bar-identity">
+                <p className="panel-kicker">{t("verify.detail")}</p>
+                <h2>{detail.customer?.display_name || detail.case.name}</h2>
+                <p className="label">{detail.case.definition} · {statusLabel(detail.case.status, detail.case.state)} · {detail.task?.name || stepLabel(detail.case.state, "sans tâche ouverte")}</p>
+              </div>
+              {detail.steps?.length ? (
+                <ol className="stepper">
+                  {detail.steps.map((step) => (
+                    <li className={step.status} key={step.key}><span className="dot" />{step.label}</li>
+                  ))}
+                </ol>
+              ) : null}
             </header>
             <div className="case-layout">
             <div className="tabs case-tabs">
