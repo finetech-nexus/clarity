@@ -327,25 +327,38 @@ button.active, button.active:hover {
 .queue button, .thumbs button { display: grid; text-align: left; border-radius: 12px; }
 .case-sheet { display: grid; gap: 0.8rem; }
 .case-bar, .viewer-caption, .file-row, .actions { display: flex; justify-content: space-between; gap: 1rem; align-items: center; flex-wrap: wrap; }
-.case-bar-score-top {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  justify-content: start;
-  align-items: start;
-  gap: 0.55rem 1rem;
+.customer-fiche-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 0.35rem;
 }
-.case-bar-score-top .score-chip {
-  justify-self: start;
-  align-self: start;
-}
-.case-bar-score-top .case-bar-identity {
+.customer-fiche-head > div:first-child {
   min-width: 0;
 }
-.case-bar-score-top .stepper {
-  grid-column: 1 / -1;
-  margin-top: 0.15rem;
+.customer-fiche-head .score-chip {
+  flex: none;
+  margin-left: auto;
+  justify-items: end;
+  text-align: right;
 }
-html[dir="rtl"] .case-bar-score-top .score-chip { justify-self: start; }
+.customer-fiche-head .score-chip-toggle {
+  justify-items: end;
+  text-align: right;
+}
+.customer-fiche-head .score-breakdown {
+  text-align: right;
+}
+.customer-fiche-head .score-breakdown .factors {
+  padding-left: 0;
+  padding-right: 1rem;
+  list-style-position: inside;
+}
+html[dir="rtl"] .customer-fiche-head .score-chip {
+  margin-left: 0;
+  margin-right: auto;
+}
 .kv span { display: contents; }
 .form label { display: grid; gap: 0.25rem; color: var(--muted); font-size: 0.85rem; }
 .form label.mismatch input { border-color: var(--danger); background: #fdecee; }

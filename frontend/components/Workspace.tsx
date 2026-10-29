@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { FormEvent, Fragment, useEffect, useState } from "react";
 import CaseDesk from "./CaseDesk";
-import KycDesk, { VerificationPreview } from "./KycDesk";
+import KycDesk, { RiskScoreChip, VerificationPreview } from "./KycDesk";
 import ScreeningDesk from "./ScreeningDesk";
 import StudioDesk from "./StudioDesk";
 import WorkflowEditor from "./WorkflowEditor";
@@ -513,6 +513,8 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
 
 function CustomerView({ profile, onChange }: { profile: Record<string, unknown>; onChange: (next: Record<string, unknown>) => void }) {
   const cycles = (profile.kyc_cycles as KycCycle[]) || [];
+  const risk = (profile.risk as { score?: number | null; tier?: string | null; formula_note?: string; factors?: Array<{ code: string; points: number; explanation: string }> } | null) || null;
+  const latestCycle = cycles[0];
   const [openId, setOpenId] = useState(cycles[0]?.id || "");
   useEffect(() => {
     if (!cycles.some((cycle) => cycle.id === openId)) setOpenId(cycles[0]?.id || "");
@@ -522,8 +524,22 @@ function CustomerView({ profile, onChange }: { profile: Record<string, unknown>;
   }
   return (
     <>
-      <h1>{String(profile.display_name)}</h1>
-      <p className="lede">Statut {String(profile.status)} · risque {String(profile.risk_tier || "non calculé")} · référence {String(profile.external_ref || "—")}</p>
+      <header className="customer-fiche-head">
+        <div>
+          <h1>{String(profile.display_name)}</h1>
+          <p className="lede">
+            Statut {String(profile.status)}
+            {latestCycle ? ` · dernière vérification ${latestCycle.label}` : ""}
+            {" · "}référence {String(profile.external_ref || "—")}
+          </p>
+        </div>
+        <RiskScoreChip
+          score={risk?.score}
+          tier={risk?.tier || (typeof profile.risk_tier === "string" ? profile.risk_tier : null)}
+          note={risk?.formula_note}
+          factors={risk?.factors || []}
+        />
+      </header>
       <h2>Vérifications</h2>
       <table className="inbox sheet">
         <thead>

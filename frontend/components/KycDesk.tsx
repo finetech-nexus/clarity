@@ -128,7 +128,7 @@ function tabHasAlert(tab: string, reasons: string[] | undefined) {
 }
 
 const TABS = ["Informations saisies", "Documents", "Données du document", "Reconnaissance faciale", "Criblage", "Notes", "Action"] as const;
-const PREVIEW_TABS = ["Informations saisies", "Documents", "Données du document", "Reconnaissance faciale", "Score", "Criblage", "Notes", "Action"] as const;
+const PREVIEW_TABS = ["Informations saisies", "Documents", "Données du document", "Reconnaissance faciale", "Criblage", "Notes", "Action"] as const;
 
 const STEP_LABEL: Record<string, string> = {
   collect: "Collecte",
@@ -227,7 +227,7 @@ function riskScoreChipStyle(score: number | null | undefined): CSSProperties | u
   };
 }
 
-function RiskScoreChip({
+export function RiskScoreChip({
   score,
   tier,
   note,
@@ -733,7 +733,6 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
   const screeningFactors = (detail?.customer?.risk?.factors || []).filter((factor) =>
     factor.code === "screening_confirmed" || factor.code === "screening_candidate"
   );
-  const riskFactors = detail?.customer?.risk?.factors || [];
   const alertReasons = detail?.alert_reasons || [];
   const selectedIndex = queue.findIndex((item) => item.id === selected);
   const canPrevCase = selectedIndex > 0;
@@ -836,31 +835,19 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
         {detail ? (
           <div className="case-panel" aria-label={t("verify.detail")}>
           <div className="case-sheet">
-            <header className="case-bar case-bar-score-top">
-              <RiskScoreChip
-                score={detail.customer?.risk?.score}
-                tier={detail.customer?.risk?.tier}
-                note={detail.customer?.risk?.formula_note}
-                factors={riskFactors}
-                labels={{
-                  score: t("verify.score"),
-                  breakdown: t("verify.score.breakdown"),
-                  empty: t("verify.score.empty"),
-                  click: t("verify.score.click"),
-                }}
-              />
-              <div className="case-bar-identity">
+            <header className="case-bar">
+              <div>
                 <p className="panel-kicker">{t("verify.detail")}</p>
                 <h2>{detail.customer?.display_name || detail.case.name}</h2>
                 <p className="label">{detail.case.definition} · {statusLabel(detail.case.status, detail.case.state)} · {detail.task?.name || stepLabel(detail.case.state, "sans tâche ouverte")}</p>
+                {detail.steps?.length ? (
+                  <ol className="stepper">
+                    {detail.steps.map((step) => (
+                      <li className={step.status} key={step.key}><span className="dot" />{step.label}</li>
+                    ))}
+                  </ol>
+                ) : null}
               </div>
-              {detail.steps?.length ? (
-                <ol className="stepper">
-                  {detail.steps.map((step) => (
-                    <li className={step.status} key={step.key}><span className="dot" />{step.label}</li>
-                  ))}
-                </ol>
-              ) : null}
             </header>
             <div className="case-layout">
             <div className="tabs case-tabs">
@@ -1176,20 +1163,6 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
             <p className="label">{detail.face_match?.source === "video" ? "Visage extrait de la vidéo, comparé à la photo de la pièce." : "Selfie comparé à la photo de la pièce."}</p>
             {detail.face_match?.detail ? <p className="label">{detail.face_match.detail}</p> : null}
             <button type="button" disabled={comparing} onClick={() => void compareFaces()}>Comparer à nouveau</button>
-          </article>
-        ) : null}
-        {tab === "Score" ? (
-          <article className="card">
-            <RiskScoreChip
-              score={detail.customer?.risk?.score}
-              tier={detail.customer?.risk?.tier}
-              note={detail.customer?.risk?.formula_note}
-              factors={detail.customer?.risk?.factors || []}
-              metric
-            />
-            {(detail.customer?.risk?.factors || []).map((factor) => (
-              <p className="factor" key={factor.code}>{factor.points} pts — {factor.explanation}</p>
-            ))}
           </article>
         ) : null}
         {tab === "Criblage" ? (
