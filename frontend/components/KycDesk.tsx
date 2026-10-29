@@ -836,19 +836,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
         {detail ? (
           <div className="case-panel" aria-label={t("verify.detail")}>
           <div className="case-sheet">
-            <header className="case-bar case-bar-score-left">
-              <RiskScoreChip
-                score={detail.customer?.risk?.score}
-                tier={detail.customer?.risk?.tier}
-                note={detail.customer?.risk?.formula_note}
-                factors={riskFactors}
-                labels={{
-                  score: t("verify.score"),
-                  breakdown: t("verify.score.breakdown"),
-                  empty: t("verify.score.empty"),
-                  click: t("verify.score.click"),
-                }}
-              />
+            <header className="case-bar case-bar-score-right">
               <div>
                 <p className="panel-kicker">{t("verify.detail")}</p>
                 <h2>{detail.customer?.display_name || detail.case.name}</h2>
@@ -861,6 +849,18 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                   </ol>
                 ) : null}
               </div>
+              <RiskScoreChip
+                score={detail.customer?.risk?.score}
+                tier={detail.customer?.risk?.tier}
+                note={detail.customer?.risk?.formula_note}
+                factors={riskFactors}
+                labels={{
+                  score: t("verify.score"),
+                  breakdown: t("verify.score.breakdown"),
+                  empty: t("verify.score.empty"),
+                  click: t("verify.score.click"),
+                }}
+              />
             </header>
             <div className="case-layout">
             <div className="tabs case-tabs">
