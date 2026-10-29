@@ -312,6 +312,25 @@ button.active, button.active:hover {
 }
 .queue-panel { padding: 0.85rem; background: linear-gradient(180deg, #fbfcfd 0%, #fff 40%); }
 .case-panel { padding: 1rem 1.05rem 1.15rem; border-color: #d9e2ea; }
+.case-panel-score {
+  position: relative;
+  padding-right: 6.1rem;
+}
+.case-panel-score > .score-chip {
+  position: absolute;
+  top: 1rem;
+  right: 1.05rem;
+  margin: 0;
+  z-index: 3;
+}
+html[dir="rtl"] .case-panel-score {
+  padding-right: 1.05rem;
+  padding-left: 6.1rem;
+}
+html[dir="rtl"] .case-panel-score > .score-chip {
+  right: auto;
+  left: 1.05rem;
+}
 .panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
 .panel-head h3, .panel-kicker { margin: 0; }
 .panel-kicker {
