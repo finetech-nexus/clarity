@@ -1621,7 +1621,19 @@ def finish_document_request_if_ready(db: Session, engine, tenant: Tenant, princi
     documents = list(db.scalars(select(IdentityDocument).where(IdentityDocument.id.in_(ids))).all())
     if len(documents) != len(ids) or any(document.status == "requested" or not document.storage_path for document in documents):
         return False
-    advance_workflow(db, engine, tenant, principal, workflow, "submit", "Pièces reçues")
+    task = db.scalar(select(WorkflowTask).where(WorkflowTask.workflow_id == workflow.id, WorkflowTask.status == "open"))
+    if task and task.task_key == "documentsRequested":
+        advance_workflow(db, engine, tenant, principal, workflow, "submit", "Pièces reçues")
+    else:
+        workflow.status = "active"
+        _sync_task(
+            db,
+            workflow,
+            {"taskDefinitionKey": "analystReview", "name": "Revue analyste", "id": f"local:{workflow.id}:analystReview"},
+        )
+        customer = db.get(Customer, workflow.customer_id) if workflow.customer_id else None
+        if customer:
+            customer.canonical_status = "in_review"
     from sqlalchemy.orm.attributes import flag_modified
 
     context = dict(workflow.context or {})
