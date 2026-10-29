@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { CSSProperties, FormEvent, useEffect, useState } from "react";
 import DocumentViewer, { ViewerDocument } from "./DocumentViewer";
 import { api, searchPage } from "../lib/api";
 
@@ -188,6 +188,59 @@ function ScoreFormulaHint({ note }: { note?: string }) {
       </button>
       {open ? <span className="formula-note" role="note">{note || DEFAULT_FORMULA_NOTE}</span> : null}
     </span>
+  );
+}
+
+function mixChannel(from: number, to: number, t: number) {
+  return Math.round(from + (to - from) * t);
+}
+
+function riskScoreColor(score: number | null | undefined) {
+  if (score == null || Number.isNaN(score)) return null;
+  const value = Math.max(0, Math.min(100, Number(score)));
+  // 0 → green, 50 → yellow, 100 → red
+  const low: [number, number, number] = [46, 174, 134];
+  const mid: [number, number, number] = [232, 176, 48];
+  const high: [number, number, number] = [201, 76, 83];
+  const [from, to, t] = value <= 50
+    ? [low, mid, value / 50]
+    : [mid, high, (value - 50) / 50];
+  const rgb = [
+    mixChannel(from[0], to[0], t),
+    mixChannel(from[1], to[1], t),
+    mixChannel(from[2], to[2], t),
+  ];
+  return `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+}
+
+function riskScoreChipStyle(score: number | null | undefined): CSSProperties | undefined {
+  const color = riskScoreColor(score);
+  if (!color) return undefined;
+  return {
+    color,
+    borderColor: color,
+    background: `color-mix(in srgb, ${color} 14%, white)`,
+  };
+}
+
+function RiskScoreChip({
+  score,
+  tier,
+  note,
+  metric,
+}: {
+  score?: number | null;
+  tier?: string | null;
+  note?: string;
+  metric?: boolean;
+}) {
+  const value = score == null ? "—" : score;
+  return (
+    <div className="score-chip" style={riskScoreChipStyle(score)}>
+      <span className="label">Score de risque <ScoreFormulaHint note={note} /></span>
+      {metric ? <div className="metric">{value}</div> : <strong>{value}</strong>}
+      {metric ? <p>{tier || "Score non calculé"}</p> : <span className="label">{tier || "non calculé"}</span>}
+    </div>
   );
 }
 
@@ -729,11 +782,11 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                   </ul>
                 ) : null}
               </div>
-              <div className="score-chip">
-                <span className="label">Score de risque <ScoreFormulaHint note={detail.customer?.risk?.formula_note} /></span>
-                <strong>{detail.customer?.risk ? detail.customer.risk.score : "—"}</strong>
-                <span className="label">{detail.customer?.risk?.tier || "non calculé"}</span>
-              </div>
+              <RiskScoreChip
+                score={detail.customer?.risk?.score}
+                tier={detail.customer?.risk?.tier}
+                note={detail.customer?.risk?.formula_note}
+              />
             </header>
             <div className="case-layout">
             <div className="tabs case-tabs">
@@ -1052,11 +1105,12 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
         ) : null}
         {tab === "Score" ? (
           <article className="card">
-            <div className="score-chip">
-              <span className="label">Score de risque <ScoreFormulaHint note={detail.customer?.risk?.formula_note} /></span>
-              <div className="metric">{detail.customer?.risk ? detail.customer.risk.score : "—"}</div>
-              <p>{detail.customer?.risk?.tier || "Score non calculé"}</p>
-            </div>
+            <RiskScoreChip
+              score={detail.customer?.risk?.score}
+              tier={detail.customer?.risk?.tier}
+              note={detail.customer?.risk?.formula_note}
+              metric
+            />
             {(detail.customer?.risk?.factors || []).map((factor) => (
               <p className="factor" key={factor.code}>{factor.points} pts — {factor.explanation}</p>
             ))}
