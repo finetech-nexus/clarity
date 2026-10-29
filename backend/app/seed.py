@@ -118,6 +118,51 @@ def ensure_oidc_admins(db: Session) -> None:
     db.flush()
 
 
+DEMO_SEED_VERSION = "tn-100-v1"
+
+
+def _demo_seed_version(db: Session) -> str | None:
+    from app.models import ConfigDocument
+
+    row = db.scalar(
+        select(ConfigDocument).where(
+            ConfigDocument.tenant_id == TENANT_ID,
+            ConfigDocument.kind == "demo_seed",
+            ConfigDocument.name == "version",
+        )
+    )
+    if not row or not isinstance(row.payload, dict):
+        return None
+    return str(row.payload.get("version") or "") or None
+
+
+def _set_demo_seed_version(db: Session, version: str) -> None:
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.models import ConfigDocument
+
+    row = db.scalar(
+        select(ConfigDocument).where(
+            ConfigDocument.tenant_id == TENANT_ID,
+            ConfigDocument.kind == "demo_seed",
+            ConfigDocument.name == "version",
+        )
+    )
+    if row:
+        row.payload = {"version": version}
+        flag_modified(row, "payload")
+        return
+    db.add(
+        ConfigDocument(
+            tenant_id=TENANT_ID,
+            kind="demo_seed",
+            name="version",
+            status="active",
+            payload={"version": version},
+        )
+    )
+
+
 def seed_demo(db: Session, engine=None, seed_clients: bool = True) -> None:
     if db.get(Tenant, TENANT_ID):
         from app.catalog import ensure_studio
@@ -126,15 +171,15 @@ def seed_demo(db: Session, engine=None, seed_clients: bool = True) -> None:
         ensure_studio(db)
         ensure_demo_logins(db)
         ensure_env_admin(db)
+        if seed_clients and _demo_seed_version(db) != DEMO_SEED_VERSION:
+            purge_clients(db, TENANT_ID)
+            tenant = db.get(Tenant, TENANT_ID)
+            user_ids = {row.email: row.id for row in db.scalars(select(User).where(User.tenant_id == TENANT_ID)).all()}
+            if tenant:
+                seed_tunisian_cases(db, engine, tenant, user_ids)
+            _set_demo_seed_version(db, DEMO_SEED_VERSION)
         ensure_risk_score_case(db, engine, seed_clients=seed_clients)
         if seed_clients:
-            has_tn = db.scalar(select(Customer).where(Customer.tenant_id == TENANT_ID, Customer.external_ref.like("tn-%")))
-            if not has_tn:
-                purge_clients(db, TENANT_ID)
-                tenant = db.get(Tenant, TENANT_ID)
-                user_ids = {row.email: row.id for row in db.scalars(select(User).where(User.tenant_id == TENANT_ID)).all()}
-                if tenant:
-                    seed_tunisian_cases(db, engine, tenant, user_ids)
             ensure_kyc_cycles(db)
         return
     tenant = Tenant(
@@ -289,6 +334,7 @@ def seed_demo(db: Session, engine=None, seed_clients: bool = True) -> None:
         )
     if seed_clients:
         seed_tunisian_cases(db, engine, tenant, user_ids)
+        _set_demo_seed_version(db, DEMO_SEED_VERSION)
     from app.catalog import ensure_studio
 
     ensure_studio(db)
@@ -367,12 +413,17 @@ _TN_SCENARIOS = (
 
 def reseed_demo_clients(db: Session, engine=None) -> dict:
     """Reload 100 Tunisian verification cases with distinct risk scenarios."""
+    from app.services import purge_clients
+
     tenant = db.get(Tenant, TENANT_ID)
     if not tenant:
         return {"seeded_customers": 0, "scenarios": 0}
     ensure_watchlist_entries(db)
+    purge_clients(db, TENANT_ID)
+    tenant = db.get(Tenant, TENANT_ID)
     user_ids = {row.email: row.id for row in db.scalars(select(User).where(User.tenant_id == TENANT_ID)).all()}
-    seeded = seed_tunisian_cases(db, engine, tenant, user_ids)
+    seeded = seed_tunisian_cases(db, engine, tenant, user_ids) if tenant else {"customers": 0, "scenarios": 0}
+    _set_demo_seed_version(db, DEMO_SEED_VERSION)
     ensure_risk_score_case(db, engine, seed_clients=True)
     ensure_kyc_cycles(db)
     return {"seeded_customers": seeded.get("customers", 0), "scenarios": seeded.get("scenarios", 0)}
