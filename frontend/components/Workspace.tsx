@@ -536,7 +536,7 @@ function CustomerView({ profile, onChange }: { profile: Record<string, unknown>;
           ))}
         </tbody>
       </table>
-      <p className="label">Les pièces se demandent dans l'onglet Action de la vérification. À l'expiration, une nouvelle vérification est créée pour mettre à jour le client.</p>
+      <p className="label">Les notes sont dans l&apos;onglet Notes. Les pièces se demandent dans l&apos;onglet Action. Une nouvelle vérification pour le même téléphone ou e-mail reste rattachée à ce client.</p>
     </>
   );
 }

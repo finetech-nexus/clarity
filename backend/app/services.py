@@ -981,6 +981,43 @@ def _kyc_is_current(db: Session, customer: Customer) -> bool:
     return bool(cycle and cycle.status == "valid")
 
 
+def _normalize_email(value: str | None) -> str:
+    return str(value or "").strip().lower()
+
+
+def _phone_digits(value: str | None) -> str:
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
+def _contact_from_data(data: dict) -> tuple[str, str]:
+    additional = data.get("additionalInfo") if isinstance(data.get("additionalInfo"), dict) else {}
+    email = _normalize_email(data.get("email") or additional.get("email"))
+    phone = _phone_digits(data.get("phone") or data.get("phoneNumber") or additional.get("phone") or additional.get("phoneNumber"))
+    return email, phone
+
+
+def find_customer_by_contact(db: Session, tenant_id: str, kind: str, data: dict) -> Customer | None:
+    """Reuse the same client when phone or email already belongs to an individual."""
+    if kind != "individual":
+        return None
+    email, phone = _contact_from_data(data)
+    if not email and not phone:
+        return None
+    profiles = db.scalars(
+        select(IndividualProfile)
+        .join(Customer, Customer.id == IndividualProfile.customer_id)
+        .where(Customer.tenant_id == tenant_id, Customer.kind == "individual")
+        .order_by(Customer.created_at.asc())
+    ).all()
+    for profile in profiles:
+        if email and _normalize_email(profile.email) == email:
+            return db.get(Customer, profile.customer_id)
+        profile_phone = _phone_digits(profile.phone)
+        if phone and profile_phone and (phone == profile_phone or phone.endswith(profile_phone[-9:]) or profile_phone.endswith(phone[-9:])):
+            return db.get(Customer, profile.customer_id)
+    return None
+
+
 def _sync_customer(db: Session, customer: Customer, kind: str, data: dict) -> None:
     customer.display_name = _display_name(kind, data)
     customer.updated_at = utcnow()
@@ -1134,6 +1171,8 @@ def start_customer_workflow(
     customer = None
     if external_ref:
         customer = db.scalar(select(Customer).where(Customer.tenant_id == tenant.id, Customer.external_ref == external_ref))
+    if customer is None:
+        customer = find_customer_by_contact(db, tenant.id, kind, data)
     definition = definition_key or ("clarityKycIndividual" if kind == "individual" else "clarityKybBusiness")
     if definition not in PROCESS_CATALOG:
         raise clarity_error(400, "unknown_workflow", "Cette définition de workflow n'a pas de processus exécutable.")

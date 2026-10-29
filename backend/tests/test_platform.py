@@ -2093,6 +2093,76 @@ def test_partial_approval_opens_the_account_and_reviews_the_funding_transfer(tmp
         assert not any(row["display_name"] == "Lea Martin" for row in again.json())
 
 
+def test_verifications_reuse_the_same_client_by_email_or_phone(tmp_path):
+    from sqlalchemy import select
+
+    from app.models import Customer, WorkflowInstance
+
+    with _client(tmp_path) as client:
+        headers = {"Authorization": f"Bearer {BALLERINE_API_KEY}"}
+        first = client.post(
+            "/api/v1/external/workflows/run",
+            headers=headers,
+            json={
+                "workflowId": "kyc_collection_flow",
+                "context": {
+                    "entity": {
+                        "type": "individual",
+                        "id": "user-session-one",
+                        "data": {
+                            "firstName": "Nora",
+                            "lastName": "Petit",
+                            "email": "nora.petit@example.test",
+                            "phone": "+33199887766",
+                        },
+                    },
+                    "documents": [],
+                },
+            },
+        )
+        assert first.status_code == 200, first.text
+        customer_id = first.json()["ballerineEntityId"]
+        db = client.app.state.database.session_factory()
+        from app.models import KycCycle
+
+        workflow = db.scalar(select(WorkflowInstance).where(WorkflowInstance.ballerine_runtime_id == first.json()["workflowRuntimeId"]))
+        workflow.status = "failed"
+        workflow.state = "rejected"
+        customer = db.get(Customer, customer_id)
+        customer.canonical_status = "rejected"
+        cycle = db.scalar(select(KycCycle).where(KycCycle.customer_id == customer_id).order_by(KycCycle.created_at.desc()))
+        if cycle:
+            cycle.status = "rejected"
+        db.commit()
+        db.close()
+        second = client.post(
+            "/api/v1/external/workflows/run",
+            headers=headers,
+            json={
+                "workflowId": "kyc_collection_flow",
+                "context": {
+                    "entity": {
+                        "type": "individual",
+                        "id": "user-session-two",
+                        "data": {
+                            "firstName": "Nora",
+                            "lastName": "Petit",
+                            "email": "nora.petit@example.test",
+                            "phone": "01 99 88 77 66",
+                        },
+                    },
+                    "documents": [],
+                },
+            },
+        )
+        assert second.status_code == 200, second.text
+        assert second.json()["ballerineEntityId"] == customer_id
+        profile = client.get(f"/api/clarity/v1/customers/{customer_id}", headers={"Authorization": f"Bearer {_login(client, ANALYST_EMAIL)}"})
+        assert profile.status_code == 200, profile.text
+        assert len(profile.json()["kyc_cycles"]) >= 2
+        assert second.json()["entity"]["id"] == "user-session-two"
+
+
 def normalize_template(path: str) -> str:
     import re
 

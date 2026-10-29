@@ -168,8 +168,23 @@ h2 { font-size: 1.05rem; margin: 0.2rem 0 0.45rem; }
   font-weight: 700;
 }
 .tabs { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.8rem 0 1rem; }
-.case-tabs { flex-wrap: nowrap; overflow-x: auto; }
-.case-tabs button { flex: 0 0 auto; white-space: nowrap; }
+.case-layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 0.9rem; align-items: start; }
+.case-tabs {
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 0.35rem;
+  margin: 0;
+  overflow: visible;
+}
+.case-tabs button {
+  flex: 0 0 auto;
+  width: 100%;
+  white-space: normal;
+  text-align: left;
+  justify-content: flex-start;
+}
+.verify-side .case-tabs { margin-top: 0.6rem; }
 .face-scale { display: grid; gap: 0.45rem; width: 14rem; max-width: 100%; margin: 0.4rem 0 0.8rem; }
 .face-track { position: relative; height: 36px; border-radius: 10px; background: linear-gradient(90deg, #d64545 0%, #e8893a 22%, #f0c14a 40%, #7dbe62 70%, #2eae86 100%); }
 .face-mark { position: absolute; top: 0; bottom: 0; width: 2px; background: #17212b; transform: translateX(-50%); }
@@ -374,5 +389,5 @@ button.flow-node.selected, button.flow-node.selected:hover { box-shadow: 0 0 0 2
 @media (max-width: 960px) {
   .shell { grid-template-columns: 1fr; }
   .nav { position: relative; height: auto; }
-  .grid, .split, .form, .kyc-shell, .kyc-body, .manager-grid, .editor, .screen-shell, .flow-desk, .flow-transition, .verify-preview, .action-grid { grid-template-columns: 1fr; }
+  .grid, .split, .form, .kyc-shell, .kyc-body, .manager-grid, .editor, .screen-shell, .flow-desk, .flow-transition, .verify-preview, .case-layout, .action-grid { grid-template-columns: 1fr; }
 }

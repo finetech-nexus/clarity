@@ -52,8 +52,8 @@ type Detail = {
   notes?: Array<{ id: string; comment: string; actor?: string; created_at?: string; action?: string | null }>;
 };
 
-const TABS = ["Informations saisies", "Documents", "Données du document", "Reconnaissance faciale", "Criblage", "Action"] as const;
-const PREVIEW_TABS = ["Informations saisies", "Documents", "Données du document", "Reconnaissance faciale", "Score", "Criblage", "Action"] as const;
+const TABS = ["Informations saisies", "Documents", "Données du document", "Reconnaissance faciale", "Criblage", "Notes", "Action"] as const;
+const PREVIEW_TABS = ["Informations saisies", "Documents", "Données du document", "Reconnaissance faciale", "Score", "Criblage", "Notes", "Action"] as const;
 
 const STEP_LABEL: Record<string, string> = {
   collect: "Collecte",
@@ -133,23 +133,61 @@ const NOTE_ACTION_LABEL: Record<string, string> = {
   "approve-partial": "Approbation partielle",
 };
 
+function NotesHistory({
+  notes,
+  freeNote,
+  onFreeNote,
+  onAddNote,
+  canAdd,
+}: {
+  notes: Array<{ id: string; comment: string; actor?: string; created_at?: string; action?: string | null }>;
+  freeNote: string;
+  onFreeNote: (value: string) => void;
+  onAddNote: () => void;
+  canAdd: boolean;
+}) {
+  return (
+    <div className="stack">
+      {canAdd ? (
+        <article className="card">
+          <h3>Ajouter une note</h3>
+          <div className="form">
+            <textarea value={freeNote} onChange={(event) => onFreeNote(event.target.value)} placeholder="Note sur le dossier" />
+            <button type="button" disabled={!freeNote.trim()} onClick={onAddNote}>Enregistrer la note</button>
+          </div>
+        </article>
+      ) : null}
+      {notes.length ? (
+        <ul className="notes-list">
+          {[...notes].reverse().map((note) => (
+            <li key={note.id}>
+              <p className="note-meta">
+                {note.actor || "Équipe"}
+                {note.created_at ? ` · ${note.created_at}` : ""}
+                {note.action ? ` · ${NOTE_ACTION_LABEL[note.action] || note.action}` : ""}
+              </p>
+              <p>{note.comment}</p>
+            </li>
+          ))}
+        </ul>
+      ) : <p className="label">Aucune note sur ce dossier.</p>}
+    </div>
+  );
+}
+
 function ActionTiles({
   reviewState,
   fundingReview,
   canDecide,
   canApprove,
   finished,
-  notes,
   rejectNote,
   approveNote,
   partialNote,
-  freeNote,
   onRejectNote,
   onApproveNote,
   onPartialNote,
-  onFreeNote,
   onDecide,
-  onAddNote,
   resubmitId,
   complementTarget,
   askReason,
@@ -165,17 +203,13 @@ function ActionTiles({
   canDecide: boolean;
   canApprove: boolean;
   finished: boolean;
-  notes: Array<{ id: string; comment: string; actor?: string; created_at?: string; action?: string | null }>;
   rejectNote: string;
   approveNote: string;
   partialNote: string;
-  freeNote: string;
   onRejectNote: (value: string) => void;
   onApproveNote: (value: string) => void;
   onPartialNote: (value: string) => void;
-  onFreeNote: (value: string) => void;
   onDecide: (action: "approve" | "reject" | "approve-partial", note: string) => void;
-  onAddNote: () => void;
   resubmitId: string;
   complementTarget: string;
   askReason: string;
@@ -192,31 +226,8 @@ function ActionTiles({
   const primaryLabel = TASK_ACTION[reviewState] || (isAnalyst ? "Transmettre au contrôle" : "Approuver");
   return (
     <div className="stack">
-      {notes.length ? (
-        <ul className="notes-list">
-          {notes.map((note) => (
-            <li key={note.id}>
-              <p className="note-meta">
-                {note.actor || "Équipe"}
-                {note.created_at ? ` · ${note.created_at}` : ""}
-                {note.action ? ` · ${NOTE_ACTION_LABEL[note.action] || note.action}` : ""}
-              </p>
-              <p>{note.comment}</p>
-            </li>
-          ))}
-        </ul>
-      ) : <p className="label">Aucune note sur ce dossier.</p>}
       {finished ? <p className="label">Aucune action ouverte sur ce dossier.</p> : (
         <div className="action-grid">
-          {canDecide ? (
-            <article className="card action-tile">
-              <h3>Note</h3>
-              <div className="form">
-                <textarea value={freeNote} onChange={(event) => onFreeNote(event.target.value)} placeholder="Ajouter une note sur le dossier" />
-                <button type="button" disabled={!freeNote.trim()} onClick={onAddNote}>Enregistrer la note</button>
-              </div>
-            </article>
-          ) : null}
           {canDecide ? (
             <article className="card action-tile">
               <h3>Rejeter</h3>
@@ -574,11 +585,13 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                 <span className="label">{detail.customer?.risk?.tier || "non calculé"}</span>
               </div>
             </header>
+            <div className="case-layout">
             <div className="tabs case-tabs">
               {TABS.map((item) => (
                 <button className={tab === item ? "active" : ""} key={item} type="button" onClick={() => setTab(item)}>{item}</button>
               ))}
             </div>
+            <div className="case-pane">
             {tab === "Informations saisies" ? (
               <article className="card">
                 {detail.submitted?.length ? (
@@ -647,6 +660,15 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                 )) : <p className="label">Aucune correspondance sur ce dossier.</p>}
               </article>
             ) : null}
+            {tab === "Notes" ? (
+              <NotesHistory
+                notes={detail.notes || []}
+                freeNote={freeNote}
+                onFreeNote={setFreeNote}
+                onAddNote={() => void addCaseNote()}
+                canAdd={!finished}
+              />
+            ) : null}
             {tab === "Action" ? (
               <div className="stack">
                 {detail.alert_reasons?.includes("correspondence") ? <p className="alert-line">Les données lues sur la pièce ne correspondent pas aux informations saisies.</p> : null}
@@ -660,17 +682,13 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                   canDecide={Boolean(canDecide)}
                   canApprove={Boolean(canApprove)}
                   finished={Boolean(finished)}
-                  notes={detail.notes || []}
                   rejectNote={rejectNote}
                   approveNote={approveNote}
                   partialNote={partialNote}
-                  freeNote={freeNote}
                   onRejectNote={setRejectNote}
                   onApproveNote={setApproveNote}
                   onPartialNote={setPartialNote}
-                  onFreeNote={setFreeNote}
                   onDecide={(action, note) => void decideCase(action, note)}
-                  onAddNote={() => void addCaseNote()}
                   resubmitId={resubmitId}
                   complementTarget={complementTarget}
                   askReason={askReason}
@@ -690,6 +708,8 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                 ) : null}
               </div>
             ) : null}
+            </div>
+            </div>
           </div>
         ) : selected ? <p>Chargement du dossier…</p> : null}
       </div>
@@ -893,6 +913,15 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
             )) : <p className="label">Aucune correspondance sur ce dossier.</p>}
           </article>
         ) : null}
+        {tab === "Notes" ? (
+          <NotesHistory
+            notes={detail.notes || []}
+            freeNote={freeNote}
+            onFreeNote={setFreeNote}
+            onAddNote={() => void addCaseNote()}
+            canAdd={!finished}
+          />
+        ) : null}
         {tab === "Action" ? (
           <div className="stack">
             {fundingReview && !finished ? <p className="label">Virement reçu sur un compte limité. Vérifiez la provenance avant d'activer le compte.</p> : null}
@@ -903,17 +932,13 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
               canDecide={Boolean(canDecide)}
               canApprove={Boolean(canApprove)}
               finished={Boolean(finished)}
-              notes={detail.notes || []}
               rejectNote={rejectNote}
               approveNote={approveNote}
               partialNote={partialNote}
-              freeNote={freeNote}
               onRejectNote={setRejectNote}
               onApproveNote={setApproveNote}
               onPartialNote={setPartialNote}
-              onFreeNote={setFreeNote}
               onDecide={(action, note) => void decideCase(action, note)}
-              onAddNote={() => void addCaseNote()}
               resubmitId={resubmitId}
               complementTarget={complementTarget}
               askReason={askReason}
