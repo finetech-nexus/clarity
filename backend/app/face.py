@@ -48,8 +48,8 @@ def stored_face_match(db, workflow: WorkflowInstance) -> dict | None:
 
 
 def compare_case_faces(db, workflow: WorkflowInstance, documents: list[IdentityDocument]) -> dict:
-    identity = _identity_photo(documents)
-    probe, source = _probe_photo(documents)
+    identity = _identity_photo(documents, db=db)
+    probe, source = _probe_photo(documents, db=db)
     if identity is None or probe is None:
         raise clarity_error(422, "face_missing", "Il faut une photo de pièce et un selfie ou une vidéo pour comparer les visages.")
     url = current_settings().face_api_url.strip().rstrip("/")
@@ -139,35 +139,42 @@ def _save(workflow: WorkflowInstance, result: dict) -> None:
     flag_modified(workflow, "context")
 
 
-def _file_bytes(document: IdentityDocument) -> bytes | None:
+def _file_bytes(document: IdentityDocument, db=None) -> bytes | None:
+    from app.storage import is_object_uri, read_stored_bytes
+
     path = document.storage_path
-    if not path or not Path(path).is_file():
+    if not path:
         return None
-    data = Path(path).read_bytes()
+    if is_object_uri(path):
+        data = read_stored_bytes(path, document.tenant_id, db=db)
+    elif Path(path).is_file():
+        data = Path(path).read_bytes()
+    else:
+        data = read_stored_bytes(path, document.tenant_id, db=db)
     if not data or data.lstrip().startswith(b"<") or data.lstrip().startswith(b"<?xml"):
         return None
     return data
 
 
-def _identity_photo(documents: list[IdentityDocument]) -> bytes | None:
+def _identity_photo(documents: list[IdentityDocument], db=None) -> bytes | None:
     ranked = [document for document in documents if document.doc_type in _IDENTITY_TYPES and document.status != "requested"]
     ranked.sort(key=lambda document: 0 if (document.properties or {}).get("side") == "front" else 1)
     for document in ranked:
-        data = _file_bytes(document)
+        data = _file_bytes(document, db=db)
         if data:
             return data
     return None
 
 
-def _probe_photo(documents: list[IdentityDocument]) -> tuple[bytes | None, str]:
+def _probe_photo(documents: list[IdentityDocument], db=None) -> tuple[bytes | None, str]:
     selfies = [document for document in documents if document.doc_type == "selfie" and document.status != "requested"]
     for document in selfies:
-        data = _file_bytes(document)
+        data = _file_bytes(document, db=db)
         if data:
             return data, "selfie"
     videos = [document for document in documents if document.doc_type == "liveness_video" and document.status != "requested"]
     for document in videos:
-        data = _file_bytes(document)
+        data = _file_bytes(document, db=db)
         if not data:
             continue
         frame = _video_frame(data)

@@ -412,8 +412,28 @@ function roleList(row: Row): string[] {
   return String(row.role || "").split(",").map((item) => item.trim()).filter(Boolean);
 }
 
+type StorageConfig = {
+  provider: "filesystem" | "s3" | "minio";
+  bucket: string;
+  access_key: string;
+  secret_key: string;
+  endpoint: string;
+  region: string;
+  force_path_style: boolean;
+};
+
+const EMPTY_STORAGE: StorageConfig = {
+  provider: "minio",
+  bucket: "ballerine-documents",
+  access_key: "",
+  secret_key: "",
+  endpoint: "https://minio.payment-hub.dev.sandbox.internal.nbank.fr",
+  region: "",
+  force_path_style: true,
+};
+
 export function AdminBoard() {
-  const [tab, setTab] = useState<"equipe" | "config">("equipe");
+  const [tab, setTab] = useState<"equipe" | "config" | "stockage">("equipe");
   const [rows, setRows] = useState<Row[]>([]);
   const [me, setMe] = useState<Row | null>(null);
   const [error, setError] = useState("");
@@ -421,6 +441,8 @@ export function AdminBoard() {
   const [threshold, setThreshold] = useState("40");
   const [saved, setSaved] = useState("");
   const [thresholdSaved, setThresholdSaved] = useState("");
+  const [storage, setStorage] = useState<StorageConfig>(EMPTY_STORAGE);
+  const [storageSaved, setStorageSaved] = useState("");
   const [givenName, setGivenName] = useState("");
   const [familyName, setFamilyName] = useState("");
   const [email, setEmail] = useState("");
@@ -432,6 +454,17 @@ export function AdminBoard() {
     void api<Row[]>("/api/clarity/v1/administration/users").then(setRows).catch((err: Error) => setError(err.message));
     void api<{ kyc_validity_years: number }>("/api/clarity/v1/administration/kyc").then((body) => setYears(String(body.kyc_validity_years))).catch(() => undefined);
     void api<{ threshold: number }>("/api/clarity/v1/administration/face-threshold").then((body) => setThreshold(String(body.threshold))).catch(() => undefined);
+    void api<StorageConfig>("/api/clarity/v1/administration/storage")
+      .then((body) => setStorage({
+        provider: body.provider === "s3" || body.provider === "filesystem" ? body.provider : "minio",
+        bucket: body.bucket || EMPTY_STORAGE.bucket,
+        access_key: body.access_key || "",
+        secret_key: body.secret_key || "",
+        endpoint: body.endpoint || EMPTY_STORAGE.endpoint,
+        region: body.region || "",
+        force_path_style: body.force_path_style !== false,
+      }))
+      .catch(() => undefined);
     void api<{ mode: string }>("/api/clarity/v1/auth/mode").then((body) => setPasswordMode(body.mode === "password")).catch(() => undefined);
   }, []);
   async function savePolicy(event: FormEvent) {
@@ -460,6 +493,29 @@ export function AdminBoard() {
       });
       setThreshold(String(body.threshold));
       setThresholdSaved("Seuil de correspondance enregistré.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Enregistrement refusé");
+    }
+  }
+  async function saveStorage(event: FormEvent) {
+    event.preventDefault();
+    setStorageSaved("");
+    setError("");
+    try {
+      const body = await api<StorageConfig>("/api/clarity/v1/administration/storage", {
+        method: "PATCH",
+        body: JSON.stringify(storage),
+      });
+      setStorage({
+        provider: body.provider === "s3" || body.provider === "filesystem" ? body.provider : "minio",
+        bucket: body.bucket || "",
+        access_key: body.access_key || "",
+        secret_key: body.secret_key || "",
+        endpoint: body.endpoint || "",
+        region: body.region || "",
+        force_path_style: body.force_path_style !== false,
+      });
+      setStorageSaved("Stockage enregistré.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Enregistrement refusé");
     }
@@ -496,8 +552,72 @@ export function AdminBoard() {
       <div className="tabs">
         <button className={tab === "equipe" ? "active" : ""} type="button" onClick={() => setTab("equipe")}>Équipe</button>
         <button className={tab === "config" ? "active" : ""} type="button" onClick={() => setTab("config")}>Configuration globale</button>
+        <button className={tab === "stockage" ? "active" : ""} type="button" onClick={() => setTab("stockage")}>Stockage</button>
       </div>
       {error ? <p className="error">{error}</p> : null}
+      {tab === "stockage" ? (
+        <form className="form card" onSubmit={(event) => void saveStorage(event)}>
+          <h3>Stockage des pièces</h3>
+          {storageSaved ? <p className="label">{storageSaved}</p> : null}
+          <label>
+            Fournisseur
+            <select
+              value={storage.provider}
+              onChange={(event) => {
+                const provider = event.target.value as StorageConfig["provider"];
+                setStorage((current) => ({
+                  ...current,
+                  provider,
+                  ...(provider === "minio" && !current.endpoint
+                    ? { endpoint: EMPTY_STORAGE.endpoint, bucket: current.bucket || EMPTY_STORAGE.bucket, force_path_style: true }
+                    : {}),
+                  ...(provider === "filesystem" ? { bucket: "", endpoint: "", access_key: "", secret_key: "", region: "" } : {}),
+                }));
+              }}
+            >
+              <option value="filesystem">Disque local</option>
+              <option value="minio">MinIO</option>
+              <option value="s3">Amazon S3</option>
+            </select>
+          </label>
+          {storage.provider !== "filesystem" ? (
+            <>
+              <label>
+                Bucket
+                <input value={storage.bucket} onChange={(event) => setStorage((current) => ({ ...current, bucket: event.target.value }))} required />
+              </label>
+              <label>
+                Clé d&apos;accès
+                <input value={storage.access_key} onChange={(event) => setStorage((current) => ({ ...current, access_key: event.target.value }))} autoComplete="off" required />
+              </label>
+              <label>
+                Secret
+                <input value={storage.secret_key} onChange={(event) => setStorage((current) => ({ ...current, secret_key: event.target.value }))} autoComplete="off" required />
+              </label>
+              <label>
+                Endpoint
+                <input value={storage.endpoint} onChange={(event) => setStorage((current) => ({ ...current, endpoint: event.target.value }))} placeholder="https://minio…" required={storage.provider === "minio"} />
+              </label>
+              <label>
+                Région
+                <input value={storage.region} onChange={(event) => setStorage((current) => ({ ...current, region: event.target.value }))} placeholder="optionnel" />
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={storage.force_path_style}
+                  onChange={(event) => setStorage((current) => ({ ...current, force_path_style: event.target.checked }))}
+                />
+                Path-style (requis pour MinIO)
+              </label>
+              <p className="label">Même paramétrage que Ballerine : bucket, clé visible, secret, endpoint MinIO et path-style.</p>
+            </>
+          ) : (
+            <p className="label">Les fichiers restent sur le disque de l&apos;API tant qu&apos;aucun S3 ou MinIO n&apos;est enregistré.</p>
+          )}
+          <button type="submit">Enregistrer</button>
+        </form>
+      ) : null}
       {tab === "config" ? (
         <div className="action-grid">
           <form className="form card" onSubmit={(event) => void savePolicy(event)}>
@@ -521,7 +641,8 @@ export function AdminBoard() {
             <button type="submit">Enregistrer</button>
           </form>
         </div>
-      ) : (
+      ) : null}
+      {tab === "equipe" ? (
         <>
           <form className="form" onSubmit={(event) => void addMember(event)}>
             <label>Prénom<input value={givenName} onChange={(event) => setGivenName(event.target.value)} required /></label>
@@ -575,7 +696,7 @@ export function AdminBoard() {
             </tbody>
           </table>
         </>
-      )}
+      ) : null}
     </Board>
   );
 }

@@ -874,10 +874,18 @@ def keep_reader_values(document, result: dict) -> None:
     flag_modified(document, "properties")
 
 
-def run_on_document(document) -> dict | None:
-    if not document.storage_path or not Path(document.storage_path).is_file():
+def run_on_document(document, db=None) -> dict | None:
+    from app.storage import is_object_uri, read_stored_bytes
+
+    if not document.storage_path:
         return None
-    result = read_identity(Path(document.storage_path).read_bytes())
+    if is_object_uri(document.storage_path) or not Path(document.storage_path).is_file():
+        content = read_stored_bytes(document.storage_path, document.tenant_id, db=db)
+        if not content:
+            return None
+    else:
+        content = Path(document.storage_path).read_bytes()
+    result = read_identity(content)
     apply_read(document, result)
     return result
 

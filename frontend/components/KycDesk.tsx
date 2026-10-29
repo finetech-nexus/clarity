@@ -286,10 +286,12 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
   const matches = (detail?.customer?.screening || []).flatMap((item) => item.matches || []);
   const piecesApproved = Boolean(detail?.documents.length) && detail!.documents.every((item) => item.decision === "approved");
   const screeningPending = matches.some((item) => item.status === "pending");
-  const canDecide = taskKey === "analystReview" || taskKey === "checkerReview" || taskKey === "investigate";
-  const canApprove = canDecide && piecesApproved && !screeningPending;
-  const finished = !detail || detail.case.status === "failed" || detail.case.state === "approved" || detail.case.state === "approved-partially" || detail.case.state === "rejected" || detail.case.state === "closed";
   const fundingReview = detail?.case.definition_key === "clarityFundingOrigin";
+  const reviewState = taskKey || detail?.case.state || "";
+  const canDecide = reviewState === "analystReview" || reviewState === "checkerReview" || reviewState === "investigate";
+  const canApprove = canDecide && (fundingReview || piecesApproved) && !screeningPending;
+  const canPartial = Boolean(canDecide && (reviewState === "analystReview" || reviewState === "checkerReview") && !fundingReview);
+  const finished = !detail || detail.case.status === "failed" || detail.case.state === "approved" || detail.case.state === "approved-partially" || detail.case.state === "rejected" || detail.case.state === "closed";
   const sentDocuments = (detail?.documents || []).filter((document) => document.status !== "requested");
   const complements = (detail?.tracker || []).filter((row) => !row.document_id);
   const screeningFactors = (detail?.customer?.risk?.factors || []).filter((factor) => factor.code === "screening_confirmed");
@@ -467,8 +469,8 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                     {canDecide && !piecesApproved && !fundingReview ? <p className="error">Approuvez chaque pièce pour activer la validation.</p> : null}
                     <div className="action-lead">
                       <button className="ghost" type="button" onClick={() => void decideCase("reject")}>Rejeter</button>
-                      {canDecide ? <button type="button" disabled={!fundingReview && !canApprove} onClick={() => void decideCase("approve")}>{TASK_ACTION[taskKey] || "Transmettre au contrôle"}</button> : null}
-                      {canDecide && taskKey === "checkerReview" && !fundingReview ? <button className="ghost" type="button" disabled={!canApprove} onClick={() => void decideCase("approve-partial")}>Approuver partiellement</button> : null}
+                      {canDecide ? <button type="button" disabled={!canApprove} onClick={() => void decideCase("approve")}>{TASK_ACTION[reviewState] || TASK_ACTION[taskKey] || "Transmettre au contrôle"}</button> : null}
+                      {canPartial ? <button type="button" disabled={!canApprove} onClick={() => void decideCase("approve-partial")}>Approuver partiellement</button> : null}
                     </div>
                     {canDecide && screeningPending ? <p className="label">Vérifiez chaque correspondance de criblage avant de valider.</p> : null}
                     <div className="action-grid">
@@ -587,9 +589,31 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
     }
   }
 
+  async function decideCase(action: "approve" | "reject" | "approve-partial") {
+    setError("");
+    try {
+      setDetail(await api<Detail>(`/api/clarity/v1/desks/kyc/${runtimeId}/decision`, {
+        method: "POST",
+        body: JSON.stringify({ action }),
+      }));
+      setMessage(action === "approve-partial" ? "Approbation partielle enregistrée." : "Décision enregistrée sur le dossier.");
+      onChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Décision refusée");
+    }
+  }
+
   if (error && !detail) return <p className="error">{error}</p>;
   if (!detail) return <p className="label">Chargement de la vérification…</p>;
   const matches = (detail.customer?.screening || []).flatMap((item) => item.matches || []);
+  const taskKey = detail.task?.key || "";
+  const fundingReview = detail.case.definition_key === "clarityFundingOrigin";
+  const reviewState = taskKey || detail.case.state || "";
+  const piecesApproved = Boolean(detail.documents.length) && detail.documents.every((item) => item.decision === "approved");
+  const screeningPending = matches.some((item) => item.status === "pending");
+  const canDecide = reviewState === "analystReview" || reviewState === "checkerReview" || reviewState === "investigate";
+  const canApprove = canDecide && (fundingReview || piecesApproved) && !screeningPending;
+  const canPartial = Boolean(canDecide && (reviewState === "analystReview" || reviewState === "checkerReview") && !fundingReview);
   const finished = detail.case.status === "failed" || detail.case.state === "approved" || detail.case.state === "approved-partially" || detail.case.state === "rejected" || detail.case.state === "closed";
   const sentDocuments = (detail.documents || []).filter((document) => document.status !== "requested");
   const complements = (detail.tracker || []).filter((row) => !row.document_id);
@@ -675,6 +699,14 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
         {tab === "Action" ? (
           <div className="stack">
             {finished ? <p className="label">Aucune action ouverte sur ce dossier.</p> : (
+              <>
+                {fundingReview ? <p className="label">Virement reçu sur un compte limité. Vérifiez la provenance avant d'activer le compte.</p> : null}
+                {canDecide && !piecesApproved && !fundingReview ? <p className="error">Approuvez chaque pièce pour activer la validation.</p> : null}
+                <div className="action-lead">
+                  <button className="ghost" type="button" onClick={() => void decideCase("reject")}>Rejeter</button>
+                  {canDecide ? <button type="button" disabled={!canApprove} onClick={() => void decideCase("approve")}>{TASK_ACTION[reviewState] || "Transmettre au contrôle"}</button> : null}
+                  {canPartial ? <button type="button" disabled={!canApprove} onClick={() => void decideCase("approve-partial")}>Approuver partiellement</button> : null}
+                </div>
               <div className="action-grid">
                 <article className="card">
                   <h3>Demande de renvoi</h3>
@@ -711,6 +743,7 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
                   </form>
                 </article>
               </div>
+              </>
             )}
             {detail.requested_documents?.length ? (
               <ul className="factors">

@@ -417,7 +417,7 @@ async def upload_storage(file: UploadFile = File(...), principal: Principal = De
         raise nest_error(400, "file is required")
     if len(content) > 5_000_000:
         raise nest_error(400, "file exceeds 5MB")
-    path, digest = store_bytes(ROOT / "data" / "uploads", principal.tenant_id, file.filename or "upload.bin", content)
+    path, digest = store_bytes(ROOT / "data" / "uploads", principal.tenant_id, file.filename or "upload.bin", content, db=db)
     document = IdentityDocument(tenant_id=principal.tenant_id, category="storage", doc_type="file", storage_path=path, sha256=digest, properties={"fileName": file.filename})
     db.add(document)
     db.flush()
@@ -603,7 +603,7 @@ async def upload_collection_file(
     if len(content) > 20 * 1024 * 1024:
         raise nest_error(422, "file exceeds 20MB")
     root = Path(request.app.state.settings.upload_dir)
-    path, digest = store_bytes(root, principal.tenant_id, file.filename or "document.bin", content)
+    path, digest = store_bytes(root, principal.tenant_id, file.filename or "document.bin", content, db=db)
     document = IdentityDocument(
         tenant_id=principal.tenant_id,
         customer_id=workflow.customer_id,
@@ -675,7 +675,7 @@ async def collection_add_document(
     content = await file.read()
     if not content:
         raise nest_error(422, "file is required")
-    path, digest = store_bytes(ROOT / "data" / "uploads", principal.tenant_id, file.filename or "document.bin", content)
+    path, digest = store_bytes(ROOT / "data" / "uploads", principal.tenant_id, file.filename or "document.bin", content, db=db)
     document = IdentityDocument(
         tenant_id=principal.tenant_id,
         customer_id=workflow.customer_id,
@@ -707,7 +707,7 @@ async def collection_replace_document(
     content = await file.read()
     if not content:
         raise nest_error(422, "file is required")
-    path, digest = store_bytes(ROOT / "data" / "uploads", principal.tenant_id, file.filename or "document.bin", content)
+    path, digest = store_bytes(ROOT / "data" / "uploads", principal.tenant_id, file.filename or "document.bin", content, db=db)
     document.storage_path = path
     document.sha256 = digest
     document.status = "provided"

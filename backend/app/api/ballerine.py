@@ -52,7 +52,7 @@ def run_document_ocr(runtime_id: str, document_id: str, principal: Principal = D
     document = db.get(IdentityDocument, document_id)
     if not document or document.tenant_id != principal.tenant_id or document.workflow_id not in {None, workflow.id}:
         raise nest_error(404, f"No resource was found for {document_id}")
-    result = run_on_document(document)
+    result = run_on_document(document, db=db)
     if result is None:
         raise nest_error(400, "Cannot run document OCR on document without pages")
     return result
@@ -228,7 +228,7 @@ async def create_document(
         raise nest_error(422, "file is required")
     if len(content) > 10 * 1024 * 1024:
         raise nest_error(422, "file exceeds 10MB")
-    path, digest = store_bytes(ROOT / "data" / "uploads", principal.tenant_id, file.filename or "document.bin", content)
+    path, digest = store_bytes(ROOT / "data" / "uploads", principal.tenant_id, file.filename or "document.bin", content, db=db)
     workflow = None
     if workflowRuntimeDataId:
         workflow = _workflow(db, principal, workflowRuntimeDataId)
@@ -595,7 +595,7 @@ async def reupload_document_file(
     content = await file.read()
     if not content:
         raise nest_error(422, "file is required")
-    path, digest = store_bytes(ROOT / "data" / "uploads", principal.tenant_id, file.filename or "document.bin", content)
+    path, digest = store_bytes(ROOT / "data" / "uploads", principal.tenant_id, file.filename or "document.bin", content, db=db)
     document.storage_path = path
     document.sha256 = digest
     document.status = "provided"

@@ -586,7 +586,7 @@ def read_document_ocr(runtime_id: str, document_id: str, principal: Principal = 
         raise clarity_error(404, "not_found", "Document introuvable.")
     if document.workflow_id not in {None, workflow.id} and document.customer_id != workflow.customer_id:
         raise clarity_error(404, "not_found", "Document introuvable sur ce dossier.")
-    result = run_on_document(document)
+    result = run_on_document(document, db=db)
     if result is None:
         raise clarity_error(400, "invalid", "Cette pièce n'a pas de fichier à lire.")
     audit(db, principal.tenant_id, actor_label(principal), "document.ocr", "document", document.id, {"engine": result["engine"], "confidence": result["confidence"]})
@@ -620,7 +620,7 @@ def read_identity_documents(runtime_id: str, principal: Principal = Depends(clar
     identity = _identity_documents(_case_documents(db, workflow))
     reads = []
     for document in identity:
-        result = run_on_document(document)
+        result = run_on_document(document, db=db)
         if result is None:
             continue
         reads.append(result["parsedData"])
@@ -676,7 +676,7 @@ def document_content(document_id: str, principal: Principal = Depends(clarity_pr
     document = db.get(IdentityDocument, document_id)
     if not document or document.tenant_id != principal.tenant_id:
         raise clarity_error(404, "not_found", "Fichier introuvable.")
-    return _stored_response(document.storage_path, document.tenant_id, (document.properties or {}).get("fileName"), (document.properties or {}).get("mime"))
+    return _stored_response(document.storage_path, document.tenant_id, (document.properties or {}).get("fileName"), (document.properties or {}).get("mime"), db=db)
 
 
 def _case_row(db: Session, case: CaseRecord) -> dict:
@@ -768,10 +768,19 @@ def file_content(file_id: str, principal: Principal = Depends(clarity_principal)
     row = db.get(Evidence, file_id)
     if not row or row.tenant_id != principal.tenant_id:
         raise clarity_error(404, "not_found", "Fichier introuvable.")
-    return _stored_response(row.storage_path, row.tenant_id, row.file_name, None)
+    return _stored_response(row.storage_path, row.tenant_id, row.file_name, None, db=db)
 
 
-def _stored_response(storage_path: str | None, tenant_id: str, file_name: str | None, mime: str | None) -> Response:
+def _stored_response(storage_path: str | None, tenant_id: str, file_name: str | None, mime: str | None, db=None) -> Response:
+    from app.storage import is_object_uri, read_stored_bytes
+
+    if is_object_uri(storage_path):
+        content = read_stored_bytes(storage_path, tenant_id, db=db)
+        if content is None:
+            raise clarity_error(404, "not_found", "Fichier introuvable.")
+        name = _safe_filename(file_name or Path(str(storage_path)).name)
+        media = _safe_mime(mime, name)
+        return Response(content=content, media_type=media, headers={"Content-Disposition": f'inline; filename="{name}"'})
     path = _resolve_stored_file(storage_path, tenant_id)
     if path is None:
         raise clarity_error(404, "not_found", "Fichier introuvable.")
@@ -781,7 +790,9 @@ def _stored_response(storage_path: str | None, tenant_id: str, file_name: str | 
 
 
 def _resolve_stored_file(storage_path: str | None, tenant_id: str) -> Path | None:
-    if not storage_path:
+    from app.storage import is_object_uri
+
+    if not storage_path or is_object_uri(storage_path):
         return None
     path = Path(storage_path)
     if path.is_file():
@@ -889,7 +900,7 @@ async def upload_case_file(
     content = await file.read()
     if not content:
         raise clarity_error(400, "invalid", "Le fichier est vide.")
-    path, digest = store_bytes(ROOT / "data" / "uploads", principal.tenant_id, file.filename or "piece.bin", content)
+    path, digest = store_bytes(ROOT / "data" / "uploads", principal.tenant_id, file.filename or "piece.bin", content, db=db)
     row = Evidence(tenant_id=principal.tenant_id, case_id=case.id, customer_id=case.customer_id, file_name=file.filename or "piece.bin", storage_path=path, sha256=digest)
     db.add(row)
     audit(db, principal.tenant_id, actor_label(principal), "case.file", "case", case.id, {"file": row.file_name})

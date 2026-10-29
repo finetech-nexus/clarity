@@ -18,3 +18,4 @@ pytest>=8.3
 pyjwt>=2.9
 cryptography>=43
 psycopg[binary]>=3.2
+boto3>=1.35

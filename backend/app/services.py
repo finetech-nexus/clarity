@@ -1692,7 +1692,7 @@ def store_liveness_video(db: Session, principal: Principal, workflow: WorkflowIn
     kind = (mime or "").split(";")[0].strip().lower()
     if kind not in allowed and not name.lower().endswith((".mp4", ".webm", ".mov")):
         raise clarity_error(415, "unsupported", "Le fichier doit être une vidéo mp4, webm ou mov.")
-    path, digest = store_bytes(ROOT / "data" / "uploads", principal.tenant_id, name, content)
+    path, digest = store_bytes(ROOT / "data" / "uploads", principal.tenant_id, name, content, db=db)
     document = IdentityDocument(
         tenant_id=principal.tenant_id,
         customer_id=workflow.customer_id,
@@ -1872,14 +1872,10 @@ def case_payload(db: Session, case: CaseRecord) -> dict:
     }
 
 
-def store_bytes(root: Path, tenant_id: str, filename: str, content: bytes) -> tuple[str, str]:
-    digest = hashlib.sha256(content).hexdigest()
-    safe = Path(filename).name or "evidence.bin"
-    folder = root / tenant_id
-    folder.mkdir(parents=True, exist_ok=True)
-    path = folder / f"{digest[:16]}-{safe}"
-    path.write_bytes(content)
-    return str(path), digest
+def store_bytes(root: Path, tenant_id: str, filename: str, content: bytes, db: Session | None = None) -> tuple[str, str]:
+    from app.storage import store_bytes as persist
+
+    return persist(root, tenant_id, filename, content, db=db)
 
 
 def workflow_list_item(workflow: WorkflowInstance, customer: Customer | None) -> dict:

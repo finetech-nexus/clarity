@@ -1962,6 +1962,35 @@ def test_kyb_verification_lists_only_businesses(tmp_path):
         assert "Amina El Fassi" in {row["name"] for row in everyone.json()}
 
 
+def test_admin_can_configure_minio_storage(tmp_path):
+    with _client(tmp_path) as client:
+        admin = {"Authorization": f"Bearer {_login(client, ADMIN_EMAIL)}"}
+        current = client.get("/api/clarity/v1/administration/storage", headers=admin)
+        assert current.status_code == 200, current.text
+        body = current.json()
+        assert body["provider"] in {"filesystem", "minio", "s3"}
+        assert "access_key" in body
+        saved = client.patch(
+            "/api/clarity/v1/administration/storage",
+            headers=admin,
+            json={
+                "provider": "minio",
+                "bucket": "ballerine-documents",
+                "access_key": "clarity-minio-key",
+                "secret_key": "clarity-minio-secret",
+                "endpoint": "https://minio.payment-hub.dev.sandbox.internal.nbank.fr",
+                "region": "",
+                "force_path_style": True,
+            },
+        )
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["provider"] == "minio"
+        assert saved.json()["access_key"] == "clarity-minio-key"
+        assert saved.json()["bucket"] == "ballerine-documents"
+        again = client.get("/api/clarity/v1/administration/storage", headers=admin)
+        assert again.json()["secret_key"] == "clarity-minio-secret"
+
+
 def test_partial_approval_opens_the_account_and_reviews_the_funding_transfer(tmp_path):
     with _client(tmp_path) as client:
         analyst = _login(client, ANALYST_EMAIL)

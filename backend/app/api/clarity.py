@@ -846,7 +846,7 @@ async def upload_evidence(
     content = await file.read()
     if len(content) > 10 * 1024 * 1024:
         raise clarity_error(400, "invalid", "Fichier trop volumineux.")
-    path, digest = store_bytes(ROOT / "data" / "uploads", principal.tenant_id, file.filename or "evidence.bin", content)
+    path, digest = store_bytes(ROOT / "data" / "uploads", principal.tenant_id, file.filename or "evidence.bin", content, db=db)
     evidence = Evidence(tenant_id=principal.tenant_id, case_id=case.id, customer_id=case.customer_id, file_name=file.filename or "evidence.bin", storage_path=path, sha256=digest)
     db.add(evidence)
     audit(db, principal.tenant_id, actor_label(principal), "evidence.upload", "case", case.id, {"sha256": digest})
@@ -1064,6 +1064,42 @@ def update_admin_face_threshold(body: FaceThresholdBody, principal: Principal = 
     saved = set_face_threshold(db, principal.tenant_id, body.threshold)
     audit(db, principal.tenant_id, actor_label(principal), "face.threshold", "tenant", principal.tenant_id, {"threshold": saved})
     return {"threshold": saved}
+
+
+class StorageBody(BaseModel):
+    provider: str = "filesystem"
+    bucket: str = ""
+    access_key: str = ""
+    secret_key: str = ""
+    endpoint: str = ""
+    region: str = ""
+    force_path_style: bool = True
+
+
+@router.get("/administration/storage")
+def read_storage(principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    from app.storage import storage_config, storage_view
+
+    return storage_view(storage_config(db, principal.tenant_id))
+
+
+@router.patch("/administration/storage")
+def update_storage(body: StorageBody, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    if not principal.allows("admin"):
+        raise clarity_error(403, "forbidden", "Réservé à l'administration.")
+    from app.storage import set_storage_config, storage_view
+
+    saved = set_storage_config(db, principal.tenant_id, body.model_dump())
+    audit(
+        db,
+        principal.tenant_id,
+        actor_label(principal),
+        "storage.config",
+        "tenant",
+        principal.tenant_id,
+        {"provider": saved["provider"], "bucket": saved["bucket"], "endpoint": saved["endpoint"]},
+    )
+    return storage_view(saved)
 
 
 @router.post("/administration/purge-clients")

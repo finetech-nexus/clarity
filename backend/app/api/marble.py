@@ -798,7 +798,7 @@ async def upload_case_file(
         raise marble_error(400, "invalid_payload", "file is required")
     if len(content) > 5_242_880:
         raise marble_error(400, "invalid_payload", "file exceeds 5MB")
-    path, digest = store_bytes(ROOT / "data" / "uploads", principal.tenant_id, file.filename or "case-file.bin", content)
+    path, digest = store_bytes(ROOT / "data" / "uploads", principal.tenant_id, file.filename or "case-file.bin", content, db=db)
     row = Evidence(tenant_id=principal.tenant_id, case_id=case.id, file_name=file.filename or "case-file.bin", storage_path=path, sha256=digest)
     db.add(row)
     db.flush()
@@ -1143,7 +1143,7 @@ async def create_record_file_annotation(
         content = await upload.read()
         if not content:
             continue
-        path, digest = store_bytes(ROOT / "data" / "uploads", principal.tenant_id, upload.filename or "annotation.bin", content)
+        path, digest = store_bytes(ROOT / "data" / "uploads", principal.tenant_id, upload.filename or "annotation.bin", content, db=db)
         parts.append({"id": digest[:32], "file_name": upload.filename or "annotation.bin", "path": path, "sha256": digest})
     if not parts:
         raise marble_error(400, "invalid_payload", "a file is required")
