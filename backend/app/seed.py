@@ -1,4 +1,5 @@
 from datetime import timedelta
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -638,14 +639,12 @@ def _store_seed_file(tenant_id: str, filename: str, content: bytes) -> tuple[str
     """Keep demo specimens on local disk so MinIO SSL issues never block startup seed."""
     import hashlib
 
-    folder = Path(ROOT / "data" / "uploads" / tenant_id)
-    # Prefer the runtime upload dir when Clarity runs in the cluster.
     from app.config import current_settings
 
     try:
         upload = Path(current_settings().upload_dir) / tenant_id
     except Exception:
-        upload = folder
+        upload = ROOT / "data" / "uploads" / tenant_id
     upload.mkdir(parents=True, exist_ok=True)
     path = upload / filename
     path.write_bytes(content)
