@@ -1549,10 +1549,11 @@ def test_admin_can_purge_clients_and_verifications(tmp_path):
         assert client.get("/api/clarity/v1/administration/users", headers=admin).json()
         reseed = client.post("/api/clarity/v1/administration/reseed-clients", headers=admin)
         assert reseed.status_code == 200, reseed.text
-        assert reseed.json()["seeded_customers"] >= 1
-        restored = client.get("/api/clarity/v1/customers", headers=analyst, params={"kind": "individual", "limit": 50}).json()
-        names = {row["display_name"] for row in (restored.get("items") or restored)}
-        assert "Vladimir Putin" in names or "Claire Dumont" in names
+        assert reseed.json()["seeded_customers"] >= 50
+        restored = client.get("/api/clarity/v1/customers", headers=analyst, params={"kind": "individual", "limit": 120}).json()
+        items = restored.get("items") or restored
+        assert len(items) >= 50
+        assert any("Ben" in row["display_name"] or "Trabelsi" in row["display_name"] or "Gharbi" in row["display_name"] for row in items)
 
 
 def test_oidc_user_stays_pending_until_an_admin_assigns_a_role(tmp_path):

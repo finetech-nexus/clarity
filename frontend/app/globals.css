@@ -327,6 +327,15 @@ button.active, button.active:hover {
 .queue button, .thumbs button { display: grid; text-align: left; border-radius: 12px; }
 .case-sheet { display: grid; gap: 0.8rem; }
 .case-bar, .viewer-caption, .file-row, .actions { display: flex; justify-content: space-between; gap: 1rem; align-items: center; flex-wrap: wrap; }
+.case-bar-score-left {
+  justify-content: flex-start;
+  align-items: flex-start;
+  gap: 1.1rem;
+}
+.case-bar-score-left .score-chip {
+  justify-self: start;
+  align-self: flex-start;
+}
 .kv span { display: contents; }
 .form label { display: grid; gap: 0.25rem; color: var(--muted); font-size: 0.85rem; }
 .form label.mismatch input { border-color: var(--danger); background: #fdecee; }
@@ -447,18 +456,20 @@ button.active, button.active:hover {
 .score-chip {
   position: relative;
   display: grid;
-  justify-items: stretch;
+  justify-items: start;
   min-width: 8.5rem;
-  max-width: 18rem;
+  max-width: 22rem;
+  width: min(100%, 22rem);
   padding: 0;
   border: 1.5px solid var(--line);
   border-radius: 12px;
   background: #fff;
   transition: color 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
+  text-align: left;
 }
 .score-chip-toggle {
   display: grid;
-  justify-items: center;
+  justify-items: start;
   gap: 0.1rem;
   width: 100%;
   padding: 0.5rem 0.85rem;
@@ -468,6 +479,7 @@ button.active, button.active:hover {
   box-shadow: none;
   color: inherit;
   cursor: pointer;
+  text-align: left;
 }
 .score-chip-toggle:hover { filter: brightness(0.98); }
 .score-chip strong, .score-chip .metric {

@@ -127,7 +127,6 @@ def seed_demo(db: Session, engine=None, seed_clients: bool = True) -> None:
         ensure_env_admin(db)
         ensure_risk_score_case(db, engine, seed_clients=seed_clients)
         if seed_clients:
-            ensure_review_pack(db, engine)
             ensure_kyc_cycles(db)
         return
     tenant = Tenant(
@@ -281,15 +280,13 @@ def seed_demo(db: Session, engine=None, seed_clients: bool = True) -> None:
             )
         )
     if seed_clients:
-        _seed_clients(db, tenant, user_ids)
+        seed_tunisian_cases(db, engine, tenant, user_ids)
     from app.catalog import ensure_studio
 
     ensure_studio(db)
     ensure_risk_score_case(db, engine, seed_clients=seed_clients)
     if seed_clients:
-        ensure_review_pack(db, engine)
         ensure_kyc_cycles(db)
-        seed_score_scenarios(db, engine)
 
 
 def ensure_watchlist_entries(db: Session) -> None:
@@ -337,129 +334,248 @@ def ensure_watchlist_entries(db: Session) -> None:
     db.flush()
 
 
+_TN_GIVEN = [
+    "Amine", "Youssef", "Sami", "Karim", "Mehdi", "Anis", "Hichem", "Nabil", "Rami", "Oussama",
+    "Fatma", "Sarra", "Ines", "Mariem", "Nour", "Aya", "Salma", "Yasmine", "Chiraz", "Emna",
+    "Skander", "Bilel", "Walid", "Tarek", "Imed", "Hana", "Lina", "Rania", "Olfa", "Sonia",
+]
+_TN_FAMILY = [
+    "Ben Ali", "Trabelsi", "Gharbi", "Jebali", "Mansouri", "Khelifi", "Bouazizi", "Hammami",
+    "Chaabane", "Dridi", "Sassi", "Mejri", "Ayari", "Riahi", "Lahmar", "Jouini", "Bouzid",
+    "Feki", "Messaoudi", "Karray", "Ben Romdhane", "Belhaj", "Cherif", "Slimani", "Othmani",
+]
+
+_TN_SCENARIOS = (
+    "clean",
+    "face_weak",
+    "mrz_bad",
+    "pep",
+    "sanction",
+    "multi_topic",
+    "ops",
+    "face_fail",
+)
+
+
 def reseed_demo_clients(db: Session, engine=None) -> dict:
-    """Reload demo customers/verifications with distinct risk-score scenarios."""
+    """Reload 100 Tunisian verification cases with distinct risk scenarios."""
     tenant = db.get(Tenant, TENANT_ID)
     if not tenant:
         return {"seeded_customers": 0, "scenarios": 0}
     ensure_watchlist_entries(db)
     user_ids = {row.email: row.id for row in db.scalars(select(User).where(User.tenant_id == TENANT_ID)).all()}
-    _seed_clients(db, tenant, user_ids)
+    seeded = seed_tunisian_cases(db, engine, tenant, user_ids)
     ensure_risk_score_case(db, engine, seed_clients=True)
-    ensure_review_pack(db, engine)
     ensure_kyc_cycles(db)
-    scenarios = seed_score_scenarios(db, engine)
-    return {"seeded_customers": scenarios.get("customers", 0), "scenarios": scenarios.get("scenarios", 0)}
+    return {"seeded_customers": seeded.get("customers", 0), "scenarios": seeded.get("scenarios", 0)}
 
 
-def _seed_clients(db: Session, tenant: Tenant, user_ids: dict) -> None:
-    customers = [
-        ("cus-amina", "Amina El Fassi", "1982-11-02", "MA", "FR", "amina.elfassi@example.test"),
-        ("cus-viktor", "Viktor Petrov", "1974-03-12", "RU", "FR", "viktor.petrov@example.test"),
-        ("cus-noah", "Noah Keller", "1990-01-19", "DE", "FR", "noah.keller@example.test"),
-        ("cus-claire", "Claire Dumont", "1995-07-09", "FR", "FR", "claire.dumont@example.test"),
-        ("cus-putin", "Vladimir Putin", "1952-10-07", "RU", "RU", "vladimir.putin@example.test"),
-        ("cus-sofia", "Sofia Martin", "1991-02-14", "FR", "FR", "sofia.martin@example.test"),
-    ]
-    customer_rows = {}
-    for ref, name, dob, nationality, residence, email in customers:
-        given, family = name.split(" ", 1)
+def seed_tunisian_cases(db: Session, engine, tenant: Tenant, user_ids: dict | None = None) -> dict:
+    """Create 100 Tunisian-named clients with verification dossiers and varied scores."""
+    import uuid
+
+    from app.models import Alert, ScreeningCheck, ScreeningMatch, WorkflowTask
+    from app.services import store_bytes
+
+    if db.scalar(select(Customer).where(Customer.tenant_id == TENANT_ID, Customer.external_ref.like("tn-%"))):
+        return {"customers": 0, "scenarios": 0}
+    analyst = db.scalar(select(User).where(User.tenant_id == TENANT_ID, User.email == ANALYST_EMAIL))
+    if not analyst:
+        return {"customers": 0, "scenarios": 0}
+    created = 0
+    for index in range(100):
+        scenario = _TN_SCENARIOS[index % len(_TN_SCENARIOS)]
+        given = _TN_GIVEN[index % len(_TN_GIVEN)]
+        family = _TN_FAMILY[(index * 3) % len(_TN_FAMILY)]
+        if index >= len(_TN_GIVEN):
+            given = f"{given}"
+            family = f"{family} {index // len(_TN_GIVEN) + 1}"
+        name = f"{given} {family}"
+        ref = f"tn-{index + 1:03d}"
+        year = 1970 + (index % 30)
+        month = 1 + (index % 12)
+        day = 1 + (index % 27)
+        dob = f"{year:04d}-{month:02d}-{day:02d}"
         customer = Customer(
             tenant_id=TENANT_ID,
             kind="individual",
             display_name=name,
             external_ref=ref,
-            canonical_status="approved" if ref in {"cus-claire", "cus-sofia"} else "in_review",
+            canonical_status="in_review" if scenario != "clean" else "approved",
             purpose="Compte de dépôt",
-            expected_activity="Virements européens mensuels",
+            expected_activity="Virements locaux et régionaux",
             source_of_funds="Salaire",
             synthetic=True,
         )
         db.add(customer)
         db.flush()
-        profile = IndividualProfile(
-            customer_id=customer.id,
-            legal_name=name,
-            given_name=given,
-            family_name=family,
-            date_of_birth=dob,
-            nationality=nationality,
-            residence_country=residence,
-            address="10 rue de la Paix, Paris",
-            email=email,
-            phone="+33100000000",
+        db.add(
+            IndividualProfile(
+                customer_id=customer.id,
+                legal_name=name,
+                given_name=given,
+                family_name=family,
+                date_of_birth=dob,
+                nationality="TN",
+                residence_country="TN",
+                address=f"{10 + (index % 80)} avenue Habib Bourguiba, Tunis",
+                email=f"{given.lower().replace(' ', '')}.{family.lower().replace(' ', '')}.{index + 1}@example.test",
+                phone=f"+2162{index:07d}"[:12],
+            )
         )
-        customer.individual = profile
-        db.add(profile)
-        customer_rows[ref] = customer
-    db.flush()
-    for ref in ("cus-viktor", "cus-noah", "cus-amina", "cus-claire"):
-        customer = customer_rows[ref]
-        persist_screening(
-            db,
-            tenant,
-            {"Person": {"name": customer.display_name, "birthDate": customer.individual.date_of_birth, "nationality": customer.individual.nationality}},
-            rule_id=None,
-            decision_id=None,
-            customer_id=customer.id,
-            counterparty=ref,
-        )
-        assess_customer(db, tenant, customer)
-    now = utcnow()
-    samples = [
-        ("tx-claire-1", "cus-claire", 450.0, "FR", "Salaire", now - timedelta(days=2)),
-        ("tx-claire-border", "cus-claire", 2500.0, "DE", "Fournisseur", now - timedelta(days=1)),
-        ("tx-viktor-high", "cus-viktor", 18000.0, "AE", "Transfert", now - timedelta(hours=5)),
-        ("tx-round-1", "cus-amina", 5000.0, "FR", "Virement", now - timedelta(hours=30)),
-        ("tx-round-2", "cus-amina", 4000.0, "FR", "Virement", now - timedelta(hours=20)),
-        ("tx-round-3", "cus-amina", 3000.0, "FR", "Virement", now - timedelta(hours=6)),
-    ]
-    for correlation, ref, amount, country, description, occurred in samples:
-        tx = Transaction(
+        instance_id = str(uuid.uuid4())
+        workflow = WorkflowInstance(
             tenant_id=TENANT_ID,
-            customer_id=customer_rows[ref].id,
-            correlation_id=correlation,
-            amount=amount,
-            currency="EUR",
-            base_amount=amount,
-            base_currency="EUR",
-            direction="outbound",
-            country=country,
-            counterparty_name="Contrepartie démonstration",
-            description=description,
-            occurred_at=occurred,
-            payload={"synthetic": True},
-            synthetic=True,
+            customer_id=customer.id,
+            definition_key="clarityKycIndividual",
+            definition_name="KYC individuel",
+            engine="in-process-fallback",
+            engine_instance_id=instance_id,
+            ballerine_runtime_id=str(uuid.uuid4()),
+            state="analystReview",
+            status="active",
+            context={
+                "review_pack": True,
+                "scenario": scenario,
+                "entity": {"type": "individual", "data": {"firstName": given, "lastName": family, "dateOfBirth": dob, "nationality": "TN"}},
+                "faceMatch": _tn_face(scenario),
+            },
+            config={},
+            created_by=analyst.email,
         )
-        db.add(tx)
+        db.add(workflow)
         db.flush()
-        evaluate_transaction(db, tenant, tx)
-    db.flush()
-    for index in range(1, 6):
-        tx = Transaction(
+        db.add(
+            WorkflowTask(
+                tenant_id=TENANT_ID,
+                workflow_id=workflow.id,
+                task_key="analystReview",
+                name="Revue analyste",
+                status="open",
+            )
+        )
+        mrz_ok = scenario in {"clean", "pep", "ops"}
+        mrz_text = "" if mrz_ok else f"P<TUN{family.upper().replace(' ', '')[:8]}<<{given.upper()[:8]}<<<<<<<<<<<<"
+        title = "Carte d'identité"
+        path, digest = store_bytes(
+            ROOT / "data" / "uploads",
+            TENANT_ID,
+            f"{ref}-id.svg",
+            _specimen(title, [name, "Nationalité tunisienne", f"Scénario {scenario}"]),
+            db=db,
+        )
+        document = IdentityDocument(
             tenant_id=TENANT_ID,
-            customer_id=customer_rows["cus-noah"].id,
-            correlation_id=f"tx-noah-{index}",
-            amount=700 + index,
-            currency="EUR",
-            base_amount=700 + index,
-            base_currency="EUR",
-            direction="outbound",
-            country="FR",
-            counterparty_name="Commerce",
-            description="Série de démonstration",
-            occurred_at=now - timedelta(hours=index),
-            payload={"synthetic": True},
-            synthetic=True,
+            customer_id=customer.id,
+            workflow_id=workflow.id,
+            category="identity",
+            doc_type="id_card",
+            issuing_country="TN",
+            issuing_version="clarity-tn-pack",
+            status="provided",
+            properties={
+                "fileName": f"{title}.svg",
+                "title": "id_card front",
+                "mime": "image/svg+xml",
+                "synthetic": True,
+                "ocr": {
+                    "engine": "seed",
+                    "confidence": 0.9 if mrz_ok else 0.35,
+                    "production": False,
+                    "mrz": mrz_ok,
+                    "extracted_text": "MRZ OK" if mrz_ok else mrz_text,
+                },
+            },
+            storage_path=path,
+            sha256=digest,
         )
-        db.add(tx)
+        db.add(document)
+        screening = ScreeningCheck(
+            tenant_id=TENANT_ID,
+            customer_id=customer.id,
+            status="no_hit",
+            query={"queries": {"seed": {"Person": {"name": name}}}},
+            match_count=0,
+            production=False,
+            provider="clarity-synthetic-watchlist",
+        )
+        db.add(screening)
         db.flush()
-        evaluate_transaction(db, tenant, tx)
-    open_case = db.scalar(select(CaseRecord).where(CaseRecord.tenant_id == TENANT_ID))
-    if open_case:
-        open_case.assignee_id = user_ids[INVESTIGATOR_EMAIL]
-        open_case.status = "investigating"
+        topics = _tn_topics(scenario)
+        if topics:
+            screening.status = "confirmed_hit" if scenario in {"sanction", "multi_topic", "face_fail"} else "in_review"
+            screening.match_count = 1
+            db.add(
+                ScreeningMatch(
+                    tenant_id=TENANT_ID,
+                    screening_id=screening.id,
+                    entity_id=f"syn-tn-{index + 1:03d}",
+                    status="confirmed_hit" if screening.status == "confirmed_hit" else "pending",
+                    score=88 + (index % 10),
+                    explanation=[f"Correspondance de démonstration ({scenario})."],
+                    payload={
+                        "caption": name,
+                        "topics": topics,
+                        "properties": {"topics": topics, "name": [name]},
+                        "provider": "clarity-synthetic-watchlist",
+                        "synthetic": True,
+                    },
+                )
+            )
+        if scenario == "ops":
+            case = CaseRecord(
+                tenant_id=TENANT_ID,
+                inbox_id=INBOX_ID,
+                customer_id=customer.id,
+                name=f"Opération à risque — {name}",
+                status="closed",
+                outcome="confirmed_risk",
+            )
+            db.add(case)
+            db.flush()
+            db.add(
+                Alert(
+                    tenant_id=TENANT_ID,
+                    customer_id=customer.id,
+                    case_id=case.id,
+                    title=case.name,
+                    priority="high",
+                    status="closed",
+                    disposition="valuable_alert",
+                    dedup_key=f"seed-ops-{customer.id}",
+                    rationale="Scénario démo : risque confirmé par un gestionnaire.",
+                )
+            )
+            if user_ids and user_ids.get(INVESTIGATOR_EMAIL):
+                case.assignee_id = user_ids[INVESTIGATOR_EMAIL]
+        assess_customer(db, tenant, customer, source="ruleset")
+        created += 1
+        if created % 20 == 0:
+            db.flush()
     db.flush()
+    return {"customers": created, "scenarios": created}
+
+
+def _tn_face(scenario: str) -> dict:
+    if scenario == "face_fail":
+        return {"score": 0.18, "match": False, "threshold": 40, "source": "selfie", "detail": "Échec facial (scénario).", "engine": "seed"}
+    if scenario == "face_weak":
+        return {"score": 0.46, "match": True, "threshold": 40, "source": "selfie", "detail": "Visage juste au-dessus du seuil.", "engine": "seed"}
+    if scenario in {"sanction", "multi_topic"}:
+        return {"score": 0.55, "match": True, "threshold": 40, "source": "selfie", "detail": "Correspondance moyenne.", "engine": "seed"}
+    return {"score": 0.86, "match": True, "threshold": 40, "source": "selfie", "detail": "Correspondance OK.", "engine": "seed"}
+
+
+def _tn_topics(scenario: str) -> list[str]:
+    if scenario == "pep":
+        return ["role.pep"]
+    if scenario == "sanction":
+        return ["sanction"]
+    if scenario == "multi_topic":
+        return ["sanction", "export.control", "wanted", "debarment", "disqualified", "role.pep", "poi", "politician"]
+    if scenario == "face_fail":
+        return ["wanted"]
+    return []
 
 
 def _specimen(title: str, lines: list[str]) -> bytes:
@@ -573,7 +689,7 @@ def ensure_risk_score_case(db: Session, engine=None, seed_clients: bool = True) 
     customer = Customer(
         tenant_id=TENANT_ID,
         kind="individual",
-        display_name="Nadia Benali",
+        display_name="Nadia Ben Romdhane",
         external_ref="cus-risk-score",
         canonical_status="in_review",
         purpose="Compte de dépôt",
@@ -586,14 +702,14 @@ def ensure_risk_score_case(db: Session, engine=None, seed_clients: bool = True) 
     db.add(
         IndividualProfile(
             customer_id=customer.id,
-            legal_name="Nadia Benali",
+            legal_name="Nadia Ben Romdhane",
             given_name="Nadia",
-            family_name="Benali",
+            family_name="Ben Romdhane",
             date_of_birth="1988-04-12",
-            nationality="FR",
-            residence_country="FR",
-            address="14 rue des Martyrs, Paris",
-            email="nadia.benali@example.test",
+            nationality="TN",
+            residence_country="TN",
+            address="14 avenue de la Liberté, Tunis",
+            email="nadia.benromdhane@example.test",
         )
     )
     instance_id, task = engine.start("risk-score-improvement", customer.id, {})
