@@ -346,7 +346,6 @@ html[dir="rtl"] .case-panel-score > .score-chip {
 .queue button, .thumbs button { display: grid; text-align: left; border-radius: 12px; }
 .case-sheet { display: grid; gap: 0.8rem; }
 .case-bar, .viewer-caption, .file-row, .actions { display: flex; justify-content: space-between; gap: 1rem; align-items: center; flex-wrap: wrap; }
-.case-bar-score,
 .customer-fiche-head,
 .verify-side-head {
   display: flex;
@@ -354,7 +353,6 @@ html[dir="rtl"] .case-panel-score > .score-chip {
   align-items: flex-start;
   gap: 1rem;
 }
-.case-bar-score > div:first-child,
 .customer-fiche-head > div:first-child,
 .verify-side-head h3 {
   min-width: 0;
@@ -365,13 +363,11 @@ html[dir="rtl"] .case-panel-score > .score-chip {
   gap: 0.55rem;
 }
 .verify-side-head h3 { margin: 0; flex: 1; }
-.case-bar-score .score-chip,
 .customer-fiche-head .score-chip,
 .verify-side-head .score-chip {
   flex: none;
   margin-left: auto;
 }
-html[dir="rtl"] .case-bar-score .score-chip,
 html[dir="rtl"] .customer-fiche-head .score-chip,
 html[dir="rtl"] .verify-side-head .score-chip {
   margin-left: 0;
