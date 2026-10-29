@@ -155,11 +155,18 @@ def send_event(
     from app.services import EVENT_ACTIONS, _advance_if_ready
 
     if body["name"] in {"USER_NEXT_STEP", "COLLECTION_FLOW_FINISHED"}:
-        _advance_if_ready(db, request.app.state.engine, workflow)
+        from app.services import _progress_verification
+
+        tenant = _tenant(db, principal)
+        customer = db.get(Customer, workflow.customer_id) if workflow.customer_id else None
+        if body["name"] == "COLLECTION_FLOW_FINISHED" and customer is not None:
+            # Leave collect, run screening/score, and open analyst review when ready.
+            _progress_verification(db, request.app.state.engine, tenant, customer, workflow)
+        else:
+            _advance_if_ready(db, request.app.state.engine, workflow)
         context = dict(workflow.context or {})
         context["events"] = [*(context.get("events") or []), body["name"]]
         workflow.context = context
-        customer = db.get(Customer, workflow.customer_id) if workflow.customer_id else None
         return workflow_list_item(workflow, customer)
     action = EVENT_ACTIONS.get(body["name"])
     if not action:

@@ -888,7 +888,13 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
             {tab === "Documents" ? (
               <div className="document-data">
                 <h3>Liste des pièces</h3>
-                {!detail.documents.length ? <p className="label">Aucune pièce fournie.</p> : null}
+                {!detail.documents.length ? (
+                  <p className="label">
+                    {detail.case.state === "collect"
+                      ? "Aucune pièce pour l'instant. Le dossier est encore en collecte — les documents apparaissent après l'envoi du parcours client."
+                      : "Aucune pièce fournie."}
+                  </p>
+                ) : null}
                 <DocumentViewer documents={detail.documents} onDecide={(id, decision) => void decideDocument(id, decision)} />
               </div>
             ) : null}
@@ -938,7 +944,13 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                       onConfirm: () => void disposition(match.id, "confirmed_hit"),
                     } : null}
                   />
-                )) : <p className="label">Aucune correspondance sur ce dossier.</p>}
+                )) : (
+                  <p className="label">
+                    {detail.case.state === "collect"
+                      ? "Criblage non lancé. Il démarre à la fin de la collecte client."
+                      : "Aucune correspondance sur ce dossier."}
+                  </p>
+                )}
               </article>
             ) : null}
             {tab === "Notes" ? (
@@ -952,6 +964,13 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
             ) : null}
             {tab === "Action" ? (
               <div className="stack">
+                {!canDecide && !finished ? (
+                  <p className="label">
+                    {detail.case.state === "collect"
+                      ? "Aucune action de revue pour l'instant. Le dossier est encore en collecte — les décisions s'ouvrent à l'étape Revue analyste."
+                      : `Aucune action ouverte à l'étape « ${stepLabel(detail.case.state, detail.task?.name || detail.case.state)} ».`}
+                  </p>
+                ) : null}
                 {fundingReview && !finished ? <p className="label">Virement reçu sur un compte limité. Vérifiez la provenance avant d'activer le compte.</p> : null}
                 {canDecide && !piecesApproved && !fundingReview && !finished ? <p className="error">Approuvez chaque pièce pour activer la validation.</p> : null}
                 {canDecide && screeningPending && !finished ? <p className="label">Vérifiez chaque correspondance de criblage avant de valider.</p> : null}

@@ -331,10 +331,11 @@ def _review_flags(db: Session, workflow: WorkflowInstance, customer: Customer | 
     declared = _declared_identity(workflow, customer)
     identity = [document for document in documents if document.doc_type in _IDENTITY_TYPES]
     mismatched = []
-    for key in _ACCOUNT_FIELDS:
-        read = next((_document_values(document).get(key, "") for document in identity if _document_values(document).get(key, "")), "")
-        if not _same(key, declared.get(key, ""), read):
-            mismatched.append(key)
+    if identity:
+        for key in _ACCOUNT_FIELDS:
+            read = next((_document_values(document).get(key, "") for document in identity if _document_values(document).get(key, "")), "")
+            if not _same(key, declared.get(key, ""), read):
+                mismatched.append(key)
     reasons = []
     if mismatched:
         reasons.append("correspondence")
