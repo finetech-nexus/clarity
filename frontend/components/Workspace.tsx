@@ -109,6 +109,7 @@ const CLIENT_STATUSES = [
   { value: "valid", label: "Valide" },
   { value: "expired", label: "Expiré" },
   { value: "overdue", label: "Relance" },
+  { value: "approved-partially", label: "Approuvé partiellement" },
 ];
 
 const CLIENT_RISKS = [

@@ -8,6 +8,7 @@ type QueueItem = {
   id: string;
   name: string;
   definition: string;
+  definition_key?: string;
   status: string;
   state: string | null;
   documents: number;
@@ -64,6 +65,7 @@ const STEP_LABEL: Record<string, string> = {
   remediate: "Complément",
   investigate: "Investigation",
   approved: "Approuvé",
+  "approved-partially": "Approuvé partiellement",
   rejected: "Rejeté",
   closed: "Clôturé",
 };
@@ -99,11 +101,13 @@ function stepLabel(state: string | null | undefined, fallback: string) {
 const STATUS_FILTERS = [
   { value: "active", label: "En cours" },
   { value: "completed", label: "Terminée" },
+  { value: "approved-partially", label: "Approuvé partiellement" },
   { value: "failed", label: "Échec" },
 ];
 
 function statusLabel(status: string, state?: string | null) {
   if (status === "failed" || state === "rejected") return "Échec";
+  if (status === "approved-partially" || state === "approved-partially") return "Approuvé partiellement";
   return STATUS_FILTERS.find((item) => item.value === status)?.label || stepLabel(state, status);
 }
 
@@ -166,7 +170,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
     void api<Detail>(`/api/clarity/v1/desks/kyc/${selected}`).then(setDetail).catch((err: Error) => setError(err.message));
   }, [selected]);
 
-  async function decideCase(action: "approve" | "reject" | "revision") {
+  async function decideCase(action: "approve" | "reject" | "revision" | "approve-partial") {
     setError("");
     try {
       const updated = await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}/decision`, {
@@ -284,7 +288,8 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
   const screeningPending = matches.some((item) => item.status === "pending");
   const canDecide = taskKey === "analystReview" || taskKey === "checkerReview" || taskKey === "investigate";
   const canApprove = canDecide && piecesApproved && !screeningPending;
-  const finished = !detail || detail.case.status === "failed" || detail.case.state === "approved" || detail.case.state === "rejected" || detail.case.state === "closed";
+  const finished = !detail || detail.case.status === "failed" || detail.case.state === "approved" || detail.case.state === "approved-partially" || detail.case.state === "rejected" || detail.case.state === "closed";
+  const fundingReview = detail?.case.definition_key === "clarityFundingOrigin";
   const sentDocuments = (detail?.documents || []).filter((document) => document.status !== "requested");
   const complements = (detail?.tracker || []).filter((row) => !row.document_id);
   const screeningFactors = (detail?.customer?.risk?.factors || []).filter((factor) => factor.code === "screening_confirmed");
@@ -458,10 +463,12 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                 {detail.alert_reasons?.includes("screening") ? <p className="alert-line">Le criblage remonte une alerte.</p> : null}
                 {finished ? <p className="label">Aucune action ouverte sur ce dossier.</p> : (
                   <>
-                    {canDecide && !piecesApproved ? <p className="error">Approuvez chaque pièce pour activer la validation.</p> : null}
+                    {fundingReview ? <p className="label">Virement reçu sur un compte limité. Vérifiez la provenance avant d'activer le compte.</p> : null}
+                    {canDecide && !piecesApproved && !fundingReview ? <p className="error">Approuvez chaque pièce pour activer la validation.</p> : null}
                     <div className="action-lead">
                       <button className="ghost" type="button" onClick={() => void decideCase("reject")}>Rejeter</button>
-                      {canDecide ? <button type="button" disabled={!canApprove} onClick={() => void decideCase("approve")}>{TASK_ACTION[taskKey] || "Transmettre au contrôle"}</button> : null}
+                      {canDecide ? <button type="button" disabled={!fundingReview && !canApprove} onClick={() => void decideCase("approve")}>{TASK_ACTION[taskKey] || "Transmettre au contrôle"}</button> : null}
+                      {canDecide && taskKey === "checkerReview" && !fundingReview ? <button className="ghost" type="button" disabled={!canApprove} onClick={() => void decideCase("approve-partial")}>Approuver partiellement</button> : null}
                     </div>
                     {canDecide && screeningPending ? <p className="label">Vérifiez chaque correspondance de criblage avant de valider.</p> : null}
                     <div className="action-grid">

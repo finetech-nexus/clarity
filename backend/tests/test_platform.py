@@ -1962,6 +1962,95 @@ def test_kyb_verification_lists_only_businesses(tmp_path):
         assert "Amina El Fassi" in {row["name"] for row in everyone.json()}
 
 
+def test_partial_approval_opens_the_account_and_reviews_the_funding_transfer(tmp_path):
+    with _client(tmp_path) as client:
+        analyst = _login(client, ANALYST_EMAIL)
+        checker = _login(client, CHECKER_EMAIL)
+        analyst_headers = {"Authorization": f"Bearer {analyst}"}
+        checker_headers = {"Authorization": f"Bearer {checker}"}
+        opened = client.post(
+            "/api/clarity/v1/onboarding/individuals",
+            headers=analyst_headers,
+            json={
+                "given_name": "Lea",
+                "family_name": "Martin",
+                "date_of_birth": "1992-04-04",
+                "nationality": "FR",
+                "residence_country": "FR",
+                "address": "4 rue du Virement, Paris",
+                "email": "lea.martin@example.test",
+                "phone": "+33111223344",
+                "purpose": "Compte courant",
+                "expected_activity": "Salaire",
+                "source_of_funds": "Salaire",
+                "external_ref": "lea-martin",
+            },
+        )
+        assert opened.status_code == 200, opened.text
+        workflow_id = opened.json()["workflow_id"]
+        customer_id = opened.json()["customer"]["id"]
+        from app.models import IdentityDocument
+
+        db = client.app.state.database.session_factory()
+        customer = db.get(Customer, customer_id)
+        db.add(IdentityDocument(tenant_id=customer.tenant_id, customer_id=customer.id, workflow_id=workflow_id, doc_type="passport", decision="approved", properties={"title": "Passeport"}))
+        db.commit()
+        db.close()
+        transmitted = client.post(
+            f"/api/clarity/v1/workflows/{workflow_id}/actions",
+            headers=analyst_headers,
+            json={"action": "approve", "rationale": "Dossier prêt pour un compte limité."},
+        )
+        assert transmitted.status_code == 200, transmitted.text
+        partial = client.post(
+            f"/api/clarity/v1/workflows/{workflow_id}/actions",
+            headers=checker_headers,
+            json={"action": "approvePartial", "rationale": "Compte créé, activation après virement."},
+        )
+        assert partial.status_code == 200, partial.text
+        assert partial.json()["state"] == "approved-partially"
+        assert partial.json()["status"] == "approved-partially"
+        assert partial.json()["customer"]["status"] == "approved-partially"
+        listed = client.get("/api/clarity/v1/customers", headers=analyst_headers, params={"status": "approved-partially"})
+        assert any(row["display_name"] == "Lea Martin" for row in listed.json())
+        queue = client.get("/api/clarity/v1/desks/kyc", headers=analyst_headers, params={"q": "status:approved-partially"})
+        assert any(row["name"] == "Lea Martin" and row["status"] == "approved-partially" for row in queue.json())
+        ignored = client.post(
+            "/api/clarity/v1/transactions",
+            headers=analyst_headers,
+            json={"customer_id": customer_id, "amount": 20, "currency": "EUR", "country": "FR", "counterparty_name": "Lea Martin", "direction": "outbound", "description": "Retrait"},
+        )
+        assert ignored.status_code == 200, ignored.text
+        quiet = client.get("/api/clarity/v1/desks/kyc", headers=analyst_headers)
+        assert not any(row.get("definition_key") == "clarityFundingOrigin" and row["name"] == "Lea Martin" for row in quiet.json())
+        received = client.post(
+            "/api/clarity/v1/transactions",
+            headers=analyst_headers,
+            json={"customer_id": customer_id, "amount": 150, "currency": "EUR", "country": "FR", "counterparty_name": "Banque source", "direction": "inbound", "description": "Virement d'activation"},
+        )
+        assert received.status_code == 200, received.text
+        funding_queue = client.get("/api/clarity/v1/desks/kyc", headers=analyst_headers, params={"q": "status:active"})
+        funding = next(row for row in funding_queue.json() if row.get("definition_key") == "clarityFundingOrigin" and row["name"] == "Lea Martin")
+        assert funding["state"] == "analystReview"
+        moved = client.post(
+            f"/api/clarity/v1/workflows/{funding['workflow_id']}/actions",
+            headers=analyst_headers,
+            json={"action": "approve", "rationale": "Le donneur d'ordre correspond au client."},
+        )
+        assert moved.status_code == 200, moved.text
+        assert moved.json()["state"] == "checkerReview"
+        activated = client.post(
+            f"/api/clarity/v1/workflows/{funding['workflow_id']}/actions",
+            headers=checker_headers,
+            json={"action": "approve", "rationale": "Provenance acceptée, compte opérationnel."},
+        )
+        assert activated.status_code == 200, activated.text
+        assert activated.json()["state"] == "approved"
+        assert activated.json()["customer"]["status"] == "approved"
+        again = client.get("/api/clarity/v1/customers", headers=analyst_headers, params={"status": "approved-partially"})
+        assert not any(row["display_name"] == "Lea Martin" for row in again.json())
+
+
 def normalize_template(path: str) -> str:
     import re
 

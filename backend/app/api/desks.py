@@ -126,6 +126,11 @@ _FIELD_LABELS = {
     "pepFamilyAssociate": "Êtes-vous un membre de la famille ou un proche associé d'une personne politiquement exposée ?",
     "pepFinancialInvolvement": "Une personne politiquement exposée intervient-elle dans vos activités ou vos opérations financières ?",
     "amlScore": "Score AML",
+    "amount": "Montant",
+    "currency": "Devise",
+    "counterpartyName": "Donneur d'ordre",
+    "direction": "Sens",
+    "description": "Libellé",
     "amlOutcome": "Résultat AML",
     "screeningTags": "Étiquettes de criblage",
 }
@@ -416,7 +421,8 @@ def _kyc_card(db: Session, workflow: WorkflowInstance) -> dict:
         "workflow_id": workflow.id,
         "name": customer.display_name if customer else workflow.definition_name,
         "definition": _definition_title(db, workflow),
-        "status": "failed" if workflow.state == "rejected" else workflow.status,
+        "definition_key": workflow.definition_key,
+        "status": "failed" if workflow.state == "rejected" else "approved-partially" if workflow.state == "approved-partially" else workflow.status,
         "state": workflow.state,
         "task": None if not task else {"key": task.task_key, "name": task.name},
         "documents": len(documents),
@@ -514,9 +520,9 @@ def _document_tracker(db: Session, principal: Principal, workflow: WorkflowInsta
 
 @router.post("/kyc/{runtime_id}/decision")
 def decide_kyc(runtime_id: str, body: dict, request: Request, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
-    action = {"approve": "approve", "reject": "reject", "revision": "remediate"}.get(str(body.get("action") or ""))
+    action = {"approve": "approve", "reject": "reject", "revision": "remediate", "approve-partial": "approvePartial"}.get(str(body.get("action") or ""))
     if not action:
-        raise clarity_error(400, "invalid", "L'action doit être approve, reject ou revision.")
+        raise clarity_error(400, "invalid", "L'action doit être approve, reject, revision ou approve-partial.")
     workflow = _workflow(db, principal, runtime_id)
     tenant = _tenant(db, principal)
     rationale = str(body.get("rationale") or "")

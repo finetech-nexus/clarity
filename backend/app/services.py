@@ -115,6 +115,8 @@ KYC_OVERDUE_DAYS = 30
 def kyc_label(status: str) -> str:
     if status == "overdue":
         return "pending · overdue"
+    if status == "approved-partially":
+        return "Approuvé partiellement"
     return status
 
 
@@ -738,7 +740,69 @@ def evaluate_transaction(db: Session, tenant: Tenant, tx: Transaction) -> list[A
         notify(db, tenant.id, "Nouvelle alerte", detail)
         audit(db, tenant.id, "monitoring", "alert.create", "alert", alert.id, {"rule": rule.name})
         created.append(alert)
+    maybe_open_funding_review(db, tenant, tx)
     return created
+
+
+def maybe_open_funding_review(db: Session, tenant: Tenant, tx: Transaction) -> WorkflowInstance | None:
+    """A transfer on a limited account opens a provenance review for the manager."""
+    if not tx.customer_id or not _incoming_transfer(tx.direction):
+        return None
+    customer = db.get(Customer, tx.customer_id)
+    if not customer or customer.canonical_status != "approved-partially":
+        return None
+    existing = db.scalar(
+        select(WorkflowInstance).where(
+            WorkflowInstance.customer_id == customer.id,
+            WorkflowInstance.definition_key == "clarityFundingOrigin",
+            WorkflowInstance.status == "active",
+        )
+    )
+    if existing:
+        return existing
+    from app.engine import InProcessEngine
+
+    engine = InProcessEngine()
+    instance_id, task = engine.start("clarityFundingOrigin", customer.id, {})
+    workflow = WorkflowInstance(
+        tenant_id=tenant.id,
+        customer_id=customer.id,
+        definition_key="clarityFundingOrigin",
+        definition_name=PROCESS_CATALOG["clarityFundingOrigin"]["name"],
+        engine=engine.mode,
+        engine_instance_id=instance_id,
+        ballerine_runtime_id=str(uuid.uuid4()),
+        context={
+            "entity": {
+                "type": customer.kind,
+                "id": customer.external_ref or customer.id,
+                "data": {
+                    "amount": tx.amount,
+                    "currency": tx.currency,
+                    "counterpartyName": tx.counterparty_name or "",
+                    "direction": tx.direction or "",
+                    "description": tx.description or "",
+                    "country": tx.country or "",
+                },
+            },
+            "source": "funding-transfer",
+            "transaction_id": tx.id,
+        },
+        config={},
+        created_by="clarity",
+    )
+    db.add(workflow)
+    db.flush()
+    _sync_task(db, workflow, task)
+    audit(db, tenant.id, "clarity", "workflow.start", "workflow", workflow.id, {"definition": "clarityFundingOrigin", "transaction_id": tx.id})
+    return workflow
+
+
+def _incoming_transfer(direction: str | None) -> bool:
+    value = str(direction or "").strip().lower()
+    if not value:
+        return True
+    return value not in {"out", "outbound", "outgoing", "debit", "sortant", "débit"}
 
 
 def _default_inbox_id(db: Session, tenant_id: str) -> str:
@@ -859,16 +923,23 @@ def _complete_active(db: Session, engine, workflow: WorkflowInstance, variables:
         engine.restore(workflow.engine_instance_id, workflow.definition_key, task.task_key, serial)
     nxt = engine.complete(workflow.engine_instance_id, task.engine_task_id, variables)
     if not nxt:
-        terminal = variables.get("action")
-        if terminal == "approve":
+        action = variables.get("action")
+        if action == "approve":
             terminal = "approved"
-        elif terminal == "reject":
+        elif action == "approvePartial":
+            terminal = "approved-partially"
+        elif action == "reject":
             terminal = "rejected"
-        elif terminal == "close":
+        elif action == "close":
             terminal = "closed"
         else:
             terminal = "completed"
-        workflow.status = "failed" if variables.get("action") == "reject" else "completed"
+        if action == "reject":
+            workflow.status = "failed"
+        elif action == "approvePartial":
+            workflow.status = "approved-partially"
+        else:
+            workflow.status = "completed"
         workflow.state = terminal if terminal in TERMINAL or terminal == "completed" else terminal
         workflow.resolved_at = utcnow()
         _sync_task(db, workflow, None)
@@ -1436,6 +1507,35 @@ def deliver_account_hook(db: Session, workflow: WorkflowInstance, customer: Cust
     audit(db, customer.tenant_id, "clarity", "workflow.account_hook", "workflow", workflow.id, {"delivered": record["delivered"], "event": "workflow.completed"})
 
 
+def _mark_partially_approved(db: Session, tenant: Tenant, customer: Customer, workflow: WorkflowInstance) -> None:
+    """The client exists, but the account stays limited to its IBAN until the funding transfer is checked."""
+    customer.canonical_status = "approved-partially"
+    cycle = latest_kyc_cycle(db, customer.id)
+    if cycle and cycle.status == "pending" and cycle.workflow_id in {None, workflow.id}:
+        cycle.status = "approved-partially"
+    deliver_account_hook(db, workflow, customer)
+
+
+def _activate_funded_customer(db: Session, tenant: Tenant, customer: Customer, workflow: WorkflowInstance) -> None:
+    """The incoming transfer was accepted, so the limited account becomes operational."""
+    customer.canonical_status = "approved"
+    years = tenant.kyc_validity_years or 1
+    customer.next_review_at = utcnow() + timedelta(days=365 * years)
+    partials = list(
+        db.scalars(
+            select(WorkflowInstance).where(
+                WorkflowInstance.customer_id == customer.id,
+                WorkflowInstance.state == "approved-partially",
+            )
+        ).all()
+    )
+    for partial in partials:
+        partial.state = "approved"
+        partial.status = "completed"
+        partial.resolved_at = partial.resolved_at or utcnow()
+    validate_kyc_cycle(db, customer, partials[0].id if partials else workflow.id, customer.next_review_at)
+
+
 DOCUMENT_LABELS = {
     "passport": {"fr": "Passeport", "en": "Passport", "ar": "جواز السفر"},
     "id_card": {"fr": "Carte d'identité", "en": "Identity card", "ar": "بطاقة التعريف"},
@@ -1484,7 +1584,7 @@ def refuse_verification(db: Session, engine, tenant: Tenant, principal: Principa
     """Refuse the case even when it is not sitting on the analyst or checker step."""
     if not principal.allows("analyst", "investigator", "checker"):
         raise clarity_error(403, "forbidden", "Le refus exige le rôle analyste, investigateur ou checker.")
-    if workflow.status == "failed" or workflow.state in {"approved", "rejected", "closed"}:
+    if workflow.status == "failed" or workflow.state in {"approved", "approved-partially", "rejected", "closed"}:
         raise clarity_error(422, "closed", "Ce dossier est déjà terminé.")
     from app.engine import ADVANCE
 
@@ -1507,7 +1607,7 @@ def refuse_verification(db: Session, engine, tenant: Tenant, principal: Principa
 def request_documents(db: Session, engine, tenant: Tenant, principal: Principal, workflow: WorkflowInstance, items: list, reason: str) -> list[dict]:
     if not isinstance(items, list) or not items:
         raise clarity_error(400, "invalid", "Indiquez au moins une pièce à demander.")
-    if workflow.status == "failed" or workflow.state in {"approved", "rejected", "closed"}:
+    if workflow.status == "failed" or workflow.state in {"approved", "approved-partially", "rejected", "closed"}:
         raise clarity_error(422, "closed", "Ce dossier est déjà terminé.")
     if not principal.allows("analyst", "investigator", "checker"):
         raise clarity_error(403, "forbidden", "La demande de pièce exige le rôle analyste, investigateur ou checker.")
@@ -1659,12 +1759,12 @@ def advance_workflow(db: Session, engine, tenant: Tenant, principal: Principal, 
     identity = principal.user_id or principal.credential_id
     if task.task_key == "checkerReview" and maker and maker == identity:
         raise clarity_error(403, "maker_checker", "La personne qui a instruit le dossier ne peut pas l'approuver.")
-    if action == "approve":
+    if action in {"approve", "approvePartial"} and workflow.definition_key != "clarityFundingOrigin":
         _require_approval_ready(db, workflow)
     if task.task_key == "analystReview":
         context["maker_id"] = identity
         workflow.context = context
-    if action in {"approve", "reject"} and task.task_key == "checkerReview":
+    if action in {"approve", "reject", "approvePartial"} and task.task_key == "checkerReview":
         db.add(
             Approval(
                 tenant_id=tenant.id,
@@ -1677,12 +1777,16 @@ def advance_workflow(db: Session, engine, tenant: Tenant, principal: Principal, 
         )
     _complete_active(db, engine, workflow, {"action": action, "rationale": rationale})
     customer = db.get(Customer, workflow.customer_id) if workflow.customer_id else None
-    if customer and workflow.state == "approved":
+    if customer and workflow.state == "approved" and workflow.definition_key == "clarityFundingOrigin":
+        _activate_funded_customer(db, tenant, customer, workflow)
+    elif customer and workflow.state == "approved":
         customer.canonical_status = "approved"
         years = tenant.kyc_validity_years or 1
         customer.next_review_at = utcnow() + timedelta(days=365 * years)
         validate_kyc_cycle(db, customer, workflow.id, customer.next_review_at)
         deliver_account_hook(db, workflow, customer)
+    elif customer and workflow.state == "approved-partially":
+        _mark_partially_approved(db, tenant, customer, workflow)
     elif customer and workflow.state == "rejected":
         _mark_refused(db, workflow, customer)
     elif customer and action == "remediate":

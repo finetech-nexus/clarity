@@ -52,6 +52,14 @@ PROCESS_CATALOG = {
             "remediate": "Demande de complément",
         },
     },
+    "clarityFundingOrigin": {
+        "name": "Provenance du virement",
+        "start": "analystReview",
+        "tasks": {
+            "analystReview": "Revue de la provenance",
+            "checkerReview": "Contrôle de la provenance",
+        },
+    },
 }
 
 ADVANCE = {
@@ -61,7 +69,7 @@ ADVANCE = {
         "screen": {"_": "score"},
         "score": {"_": "analystReview"},
         "analystReview": {"approve": "checkerReview", "reject": "rejected", "remediate": "remediate", "requestDocuments": "documentsRequested"},
-        "checkerReview": {"approve": "approved", "reject": "rejected", "return": "analystReview", "requestDocuments": "documentsRequested"},
+        "checkerReview": {"approve": "approved", "approvePartial": "approved-partially", "reject": "rejected", "return": "analystReview", "requestDocuments": "documentsRequested"},
         "documentsRequested": {"submit": "analystReview"},
         "remediate": {"_": "collect"},
     },
@@ -71,7 +79,7 @@ ADVANCE = {
         "screen": {"_": "score"},
         "score": {"_": "analystReview"},
         "analystReview": {"approve": "checkerReview", "reject": "rejected", "remediate": "remediate", "requestDocuments": "documentsRequested"},
-        "checkerReview": {"approve": "approved", "reject": "rejected", "return": "analystReview", "requestDocuments": "documentsRequested"},
+        "checkerReview": {"approve": "approved", "approvePartial": "approved-partially", "reject": "rejected", "return": "analystReview", "requestDocuments": "documentsRequested"},
         "documentsRequested": {"submit": "analystReview"},
         "remediate": {"_": "collect"},
     },
@@ -83,13 +91,17 @@ ADVANCE = {
         "screen": {"_": "score"},
         "score": {"_": "analystReview"},
         "analystReview": {"approve": "checkerReview", "reject": "rejected", "remediate": "remediate", "requestDocuments": "documentsRequested"},
-        "checkerReview": {"approve": "approved", "reject": "rejected", "return": "analystReview", "requestDocuments": "documentsRequested"},
+        "checkerReview": {"approve": "approved", "approvePartial": "approved-partially", "reject": "rejected", "return": "analystReview", "requestDocuments": "documentsRequested"},
         "documentsRequested": {"submit": "analystReview"},
         "remediate": {"_": "screen"},
     },
+    "clarityFundingOrigin": {
+        "analystReview": {"approve": "checkerReview", "reject": "rejected"},
+        "checkerReview": {"approve": "approved", "reject": "rejected", "return": "analystReview"},
+    },
 }
 
-TERMINAL_LABELS = {"approved": "Approuvé", "rejected": "Rejeté", "closed": "Clôturé"}
+TERMINAL_LABELS = {"approved": "Approuvé", "approved-partially": "Approuvé partiellement", "rejected": "Rejeté", "closed": "Clôturé"}
 _ORPHAN_STATES = {"criblage", "evaluation_score", "manual_review"}
 
 
@@ -169,7 +181,7 @@ def process_steps(process_key: str, state: str | None) -> list[dict]:
         steps.append({"key": key, "label": labels.get(key, key), "status": status})
     return steps
 
-TERMINAL = {"approved", "rejected", "closed"}
+TERMINAL = {"approved", "approved-partially", "rejected", "closed"}
 
 
 class WorkflowEngineError(RuntimeError):
