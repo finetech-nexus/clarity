@@ -495,26 +495,11 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
 function CustomerView({ profile, onChange }: { profile: Record<string, unknown>; onChange: (next: Record<string, unknown>) => void }) {
   const cycles = (profile.kyc_cycles as KycCycle[]) || [];
   const [openId, setOpenId] = useState(cycles[0]?.id || "");
-  const [requestCycle, setRequestCycle] = useState<KycCycle | null>(null);
-  const [chosen, setChosen] = useState<string[]>([]);
-  const [requestError, setRequestError] = useState("");
   useEffect(() => {
     if (!cycles.some((cycle) => cycle.id === openId)) setOpenId(cycles[0]?.id || "");
   }, [cycles, openId]);
-  async function requestPieces(event: FormEvent) {
-    event.preventDefault();
-    if (!requestCycle || !chosen.length) return;
-    setRequestError("");
-    try {
-      await api(`/api/clarity/v1/customers/${profile.id}/verifications/${requestCycle.id}/remind`, {
-        method: "POST",
-        body: JSON.stringify({ document_ids: chosen }),
-      });
-      setRequestCycle(null);
-      onChange(await api(`/api/clarity/v1/customers/${profile.id}`));
-    } catch (err) {
-      setRequestError(err instanceof Error ? err.message : "Demande refusée");
-    }
+  async function refreshProfile() {
+    onChange(await api(`/api/clarity/v1/customers/${profile.id}`));
   }
   return (
     <>
@@ -534,25 +519,16 @@ function CustomerView({ profile, onChange }: { profile: Record<string, unknown>;
                 <td>{day(cycle.created_at)}</td>
                 <td>{day(cycle.validated_at)}</td>
                 <td>{day(cycle.expires_at)}</td>
-                <td onClick={(event) => event.stopPropagation()}>
-                  <div>{cycle.reminder === "none" ? "—" : `${cycle.reminder} · ${day(cycle.reminded_at)}`}</div>
-                  <button
-                    className="ghost"
-                    type="button"
-                    onClick={() => {
-                      setRequestError("");
-                      setChosen([]);
-                      setRequestCycle(cycle);
-                    }}
-                  >
-                    Demander des pièces
-                  </button>
-                </td>
+                <td>{cycle.reminder === "none" ? "—" : `${cycle.reminder} · ${day(cycle.reminded_at)}`}</td>
               </tr>
               {cycle.id === openId ? (
                 <tr className="detail-row">
                   <td colSpan={5}>
-                    {cycle.workflow_runtime_id ? <VerificationPreview runtimeId={cycle.workflow_runtime_id} /> : <p className="label">Aucun dossier ouvert pour cette vérification.</p>}
+                    {cycle.workflow_runtime_id ? (
+                      <VerificationPreview runtimeId={cycle.workflow_runtime_id} onChanged={() => void refreshProfile()} />
+                    ) : (
+                      <p className="label">Aucun dossier ouvert pour cette vérification. Ouvrez le bureau Vérification pour instruire le dossier.</p>
+                    )}
                   </td>
                 </tr>
               ) : null}
@@ -560,29 +536,7 @@ function CustomerView({ profile, onChange }: { profile: Record<string, unknown>;
           ))}
         </tbody>
       </table>
-      {requestCycle ? (
-        <div className="modal-back" role="presentation" onClick={() => setRequestCycle(null)}>
-          <form className="modal" role="dialog" aria-modal="true" aria-labelledby="request-title" onClick={(event) => event.stopPropagation()} onSubmit={(event) => void requestPieces(event)}>
-            <h2 id="request-title">Pièces à demander</h2>
-            {(requestCycle.documents || []).length ? (requestCycle.documents || []).map((piece) => (
-              <label key={piece.id}>
-                <input
-                  type="checkbox"
-                  checked={chosen.includes(piece.id)}
-                  onChange={() => setChosen((current) => current.includes(piece.id) ? current.filter((id) => id !== piece.id) : [...current, piece.id])}
-                />
-                {piece.title}
-              </label>
-            )) : <p className="label">Aucune pièce sur cette vérification.</p>}
-            {requestError ? <p className="error">{requestError}</p> : null}
-            <div className="actions">
-              <button className="ghost" type="button" onClick={() => setRequestCycle(null)}>Annuler</button>
-              <button type="submit" disabled={!chosen.length}>Demander</button>
-            </div>
-          </form>
-        </div>
-      ) : null}
-      <p className="label">À l'expiration, une nouvelle vérification est créée pour mettre à jour le client. Une relance automatique est enregistrée sur la vérification expirée. Trente jours plus tard, cette vérification expirée passe en retard. La relance manuelle reste disponible.</p>
+      <p className="label">Les pièces se demandent dans l'onglet Action de la vérification. À l'expiration, une nouvelle vérification est créée pour mettre à jour le client.</p>
     </>
   );
 }

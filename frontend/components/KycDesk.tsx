@@ -52,7 +52,7 @@ type Detail = {
 };
 
 const TABS = ["Informations saisies", "Documents", "Données du document", "Reconnaissance faciale", "Criblage", "Action"] as const;
-const PREVIEW_TABS = ["Informations saisies", "Documents", "Données du document", "Reconnaissance faciale", "Score", "Criblage"] as const;
+const PREVIEW_TABS = ["Informations saisies", "Documents", "Données du document", "Reconnaissance faciale", "Score", "Criblage", "Action"] as const;
 
 const STEP_LABEL: Record<string, string> = {
   collect: "Collecte",
@@ -524,32 +524,88 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
   );
 }
 
-export function VerificationPreview({ runtimeId }: { runtimeId: string }) {
+export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: string; onChanged?: () => void }) {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
   const [tab, setTab] = useState<(typeof PREVIEW_TABS)[number]>("Informations saisies");
+  const [comparing, setComparing] = useState(false);
+  const [faceTried, setFaceTried] = useState("");
+  const [resubmitId, setResubmitId] = useState("");
+  const [complementTarget, setComplementTarget] = useState("");
+  const [askReason, setAskReason] = useState("");
 
   useEffect(() => {
     setDetail(null);
     setError("");
+    setMessage("");
     setTab("Informations saisies");
+    setFaceTried("");
+    setResubmitId("");
+    setComplementTarget("");
+    setAskReason("");
     void api<Detail>(`/api/clarity/v1/desks/kyc/${runtimeId}`).then(setDetail).catch((err: Error) => setError(err.message));
   }, [runtimeId]);
 
-  if (error) return <p className="error">{error}</p>;
+  async function compareFaces() {
+    setError("");
+    setComparing(true);
+    try {
+      setDetail(await api<Detail>(`/api/clarity/v1/desks/kyc/${runtimeId}/face-match`, { method: "POST" }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Comparaison des visages refusée");
+    } finally {
+      setComparing(false);
+    }
+  }
+
+  useEffect(() => {
+    if (tab !== "Reconnaissance faciale" || !detail || detail.face_match || faceTried === runtimeId || comparing) return;
+    setFaceTried(runtimeId);
+    void compareFaces();
+  }, [tab, detail, faceTried, comparing, runtimeId]);
+
+  async function requestDocuments(event: FormEvent, mode: "resubmit" | "additional", target: string) {
+    event.preventDefault();
+    if (!target) return;
+    setError("");
+    const item = mode === "resubmit"
+      ? { document_id: target }
+      : { type: target.split("|")[0], category: target.split("|")[1], country: target.split("|")[2] || "ZZ" };
+    try {
+      setDetail(await api<Detail>(`/api/clarity/v1/desks/kyc/${runtimeId}/document-requests`, {
+        method: "POST",
+        body: JSON.stringify({ reason: askReason, items: [item] }),
+      }));
+      setAskReason("");
+      setResubmitId("");
+      setComplementTarget("");
+      setMessage(mode === "resubmit" ? "Renvoi demandé au client." : "Pièce complémentaire demandée au client.");
+      onChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Demande refusée");
+    }
+  }
+
+  if (error && !detail) return <p className="error">{error}</p>;
   if (!detail) return <p className="label">Chargement de la vérification…</p>;
   const matches = (detail.customer?.screening || []).flatMap((item) => item.matches || []);
+  const finished = detail.case.status === "failed" || detail.case.state === "approved" || detail.case.state === "approved-partially" || detail.case.state === "rejected" || detail.case.state === "closed";
+  const sentDocuments = (detail.documents || []).filter((document) => document.status !== "requested");
+  const complements = (detail.tracker || []).filter((row) => !row.document_id);
   return (
     <div className="verify-preview">
       <aside className="verify-side">
         <h3>{detail.customer?.display_name || detail.case.name}</h3>
-        <div className="tabs">
+        <div className="tabs case-tabs">
           {PREVIEW_TABS.map((item) => (
             <button className={tab === item ? "active" : ""} key={item} type="button" onClick={() => setTab(item)}>{item}</button>
           ))}
         </div>
       </aside>
       <div>
+        {error ? <p className="error">{error}</p> : null}
+        {message ? <p className="label">{message}</p> : null}
         {tab === "Informations saisies" ? (
           <article className="card">
             {detail.submitted?.length ? (
@@ -585,8 +641,10 @@ export function VerificationPreview({ runtimeId }: { runtimeId: string }) {
         {tab === "Reconnaissance faciale" ? (
           <article className="card">
             <FaceScale score={detail.face_match?.score} threshold={detail.face_threshold ?? detail.face_match?.threshold ?? 40} />
-            <p>{detail.face_match?.score == null ? "Comparaison non faite" : detail.face_match.match ? "OK — correspondance" : "KO — pas de correspondance"}</p>
+            <p>{detail.face_match?.score == null ? (comparing ? "Comparaison des visages…" : "Comparaison non faite") : detail.face_match.match ? "OK — correspondance" : "KO — pas de correspondance"}</p>
             <p className="label">{detail.face_match?.source === "video" ? "Visage extrait de la vidéo, comparé à la photo de la pièce." : "Selfie comparé à la photo de la pièce."}</p>
+            {detail.face_match?.detail ? <p className="label">{detail.face_match.detail}</p> : null}
+            <button type="button" disabled={comparing} onClick={() => void compareFaces()}>Comparer à nouveau</button>
           </article>
         ) : null}
         {tab === "Score" ? (
@@ -613,6 +671,55 @@ export function VerificationPreview({ runtimeId }: { runtimeId: string }) {
               </p>
             )) : <p className="label">Aucune correspondance sur ce dossier.</p>}
           </article>
+        ) : null}
+        {tab === "Action" ? (
+          <div className="stack">
+            {finished ? <p className="label">Aucune action ouverte sur ce dossier.</p> : (
+              <div className="action-grid">
+                <article className="card">
+                  <h3>Demande de renvoi</h3>
+                  <form className="form" onSubmit={(event) => void requestDocuments(event, "resubmit", resubmitId)}>
+                    <label>
+                      Pièce déjà envoyée
+                      <select value={resubmitId} onChange={(event) => setResubmitId(event.target.value)} required>
+                        <option value="">Choisir</option>
+                        {sentDocuments.map((document) => (
+                          <option key={document.id} value={document.id}>{document.title || document.type}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <input value={askReason} onChange={(event) => setAskReason(event.target.value)} placeholder="Motif" />
+                    <button type="submit">Demander le renvoi</button>
+                  </form>
+                </article>
+                <article className="card">
+                  <h3>Demander un complément</h3>
+                  <form className="form" onSubmit={(event) => void requestDocuments(event, "additional", complementTarget)}>
+                    <label>
+                      Pièce complémentaire
+                      <select value={complementTarget} onChange={(event) => setComplementTarget(event.target.value)} required>
+                        <option value="">Choisir</option>
+                        {complements.map((row) => (
+                          <option key={`${row.type}|${row.category}|${row.country || "ZZ"}`} value={`${row.type}|${row.category}|${row.country || "ZZ"}`}>
+                            {row.label?.fr || row.type}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <input value={askReason} onChange={(event) => setAskReason(event.target.value)} placeholder="Motif" />
+                    <button type="submit">Demander la pièce</button>
+                  </form>
+                </article>
+              </div>
+            )}
+            {detail.requested_documents?.length ? (
+              <ul className="factors">
+                {detail.requested_documents.map((item) => (
+                  <li key={item.id}>{item.label?.fr || item.type} — {item.mode === "resubmit" ? "à renvoyer" : "pièce complémentaire"}{item.reason ? ` · ${item.reason}` : ""}</li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
         ) : null}
       </div>
     </div>
