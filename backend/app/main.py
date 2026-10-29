@@ -63,8 +63,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         session = database.session_factory()
         try:
             if settings.seed_demo:
-                seed_demo(session, engine, seed_clients=settings.seed_clients)
-                session.commit()
+                try:
+                    seed_demo(session, engine, seed_clients=settings.seed_clients)
+                    session.commit()
+                except Exception:
+                    session.rollback()
+                    _logger.exception("demo seed failed; continuing startup")
             load_overlay(session)
         finally:
             session.close()

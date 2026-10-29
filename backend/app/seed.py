@@ -434,7 +434,6 @@ def seed_tunisian_cases(db: Session, engine, tenant: Tenant, user_ids: dict | No
     import uuid
 
     from app.models import Alert, ScreeningCheck, ScreeningMatch, WorkflowTask
-    from app.services import store_bytes
 
     if db.scalar(select(Customer).where(Customer.tenant_id == TENANT_ID, Customer.external_ref.like("tn-%"))):
         return {"customers": 0, "scenarios": 0}
@@ -516,12 +515,10 @@ def seed_tunisian_cases(db: Session, engine, tenant: Tenant, user_ids: dict | No
         mrz_ok = scenario in {"clean", "pep", "ops"}
         mrz_text = "" if mrz_ok else f"P<TUN{family.upper().replace(' ', '')[:8]}<<{given.upper()[:8]}<<<<<<<<<<<<"
         title = "Carte d'identité"
-        path, digest = store_bytes(
-            ROOT / "data" / "uploads",
+        path, digest = _store_seed_file(
             TENANT_ID,
             f"{ref}-id.svg",
-            _specimen(title, [name, "Nationalité tunisienne", f"Scénario {scenario}"]),
-            db=db,
+            _specimen(title, [name, "Nationalite tunisienne", f"Scenario {scenario}"]),
         )
         document = IdentityDocument(
             tenant_id=TENANT_ID,
@@ -635,6 +632,24 @@ def _tn_topics(scenario: str) -> list[str]:
     if scenario == "face_fail":
         return ["wanted"]
     return []
+
+
+def _store_seed_file(tenant_id: str, filename: str, content: bytes) -> tuple[str, str]:
+    """Keep demo specimens on local disk so MinIO SSL issues never block startup seed."""
+    import hashlib
+
+    folder = Path(ROOT / "data" / "uploads" / tenant_id)
+    # Prefer the runtime upload dir when Clarity runs in the cluster.
+    from app.config import current_settings
+
+    try:
+        upload = Path(current_settings().upload_dir) / tenant_id
+    except Exception:
+        upload = folder
+    upload.mkdir(parents=True, exist_ok=True)
+    path = upload / filename
+    path.write_bytes(content)
+    return str(path), hashlib.sha256(content).hexdigest()
 
 
 def _specimen(title: str, lines: list[str]) -> bytes:
