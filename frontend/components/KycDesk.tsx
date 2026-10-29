@@ -162,7 +162,7 @@ function FaceScale({ score, threshold }: { score: number | null | undefined; thr
       </div>
       <div className="face-axis">
         <span>0</span>
-        <span className="face-threshold-label" style={{ left: `${cut}%` }}>{cut}</span>
+        <span className="face-threshold-label" style={{ left: `${cut}%` }}>seuil {cut}</span>
         <span>100</span>
       </div>
     </div>

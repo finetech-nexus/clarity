@@ -226,7 +226,7 @@ h2 { font-size: 1.05rem; margin: 0.2rem 0 0.45rem; }
 .face-axis { position: relative; height: 1.1rem; color: var(--muted); font-size: 0.75rem; }
 .face-axis > span:first-child { position: absolute; left: 0; }
 .face-axis > span:last-child { position: absolute; right: 0; }
-.face-threshold-label { position: absolute; transform: translateX(-50%); font-weight: 700; color: var(--ink); }
+.face-threshold-label { position: absolute; transform: translateX(-50%); white-space: nowrap; font-weight: 700; color: var(--ink); }
 .action-lead { display: flex; justify-content: flex-start; align-items: center; gap: 0.6rem; }
 .action-grid {
   display: grid;
