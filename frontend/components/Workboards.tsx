@@ -588,11 +588,11 @@ export function AdminBoard() {
               </label>
               <label>
                 Clé d&apos;accès
-                <input value={storage.access_key} onChange={(event) => setStorage((current) => ({ ...current, access_key: event.target.value }))} autoComplete="off" required />
+                <input type="text" value={storage.access_key} onChange={(event) => setStorage((current) => ({ ...current, access_key: event.target.value }))} autoComplete="off" spellCheck={false} required />
               </label>
               <label>
                 Secret
-                <input value={storage.secret_key} onChange={(event) => setStorage((current) => ({ ...current, secret_key: event.target.value }))} autoComplete="off" required />
+                <input type="text" value={storage.secret_key} onChange={(event) => setStorage((current) => ({ ...current, secret_key: event.target.value }))} autoComplete="off" spellCheck={false} required />
               </label>
               <label>
                 Endpoint
