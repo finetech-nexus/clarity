@@ -2188,10 +2188,30 @@ def test_risk_score_weights_aml_topics_face_and_document(tmp_path):
 
     assert match_topics({"properties": {"topics": ["sanction", "role.pep"]}}) == ["Sanctioned", "PEP"]
     assert match_topics({"topics": ["export.control", "wanted", "politician"]}) == [
-        "Export controlled",
         "Wanted",
+        "Export controlled",
         "Politician",
     ]
+    from app.services import _match_topic_points, _screening_candidate_points, match_topic_details
+
+    putin_payload = {
+        "topics": [
+            "export.control",
+            "sanction",
+            "wanted",
+            "debarment",
+            "disqualified",
+            "role.pep",
+            "poi",
+            "politician",
+        ]
+    }
+    details = match_topic_details(putin_payload)
+    assert {row["label"] for row in details} >= {"Sanctioned", "Wanted", "PEP", "Politician"}
+    assert details[0]["tier"] == "critical"
+    putin_weight = _match_topic_points(putin_payload)
+    assert putin_weight >= 70
+    assert _screening_candidate_points(putin_weight, 96) >= 65
 
     with _client(tmp_path) as client:
         db = client.app.state.database.session_factory()
@@ -2240,11 +2260,11 @@ def test_risk_score_weights_aml_topics_face_and_document(tmp_path):
         codes = {factor["code"] for factor in assessment.factors}
         assert assessment.methodology_version == RISK_METHODOLOGY
         assert assessment.score != 40
-        assert assessment.score >= 50
+        assert assessment.score >= 70
         assert "screening_confirmed" in codes
         assert "document_mrz_invalid" in codes or "document_mrz_missing" in codes or "face_pending" in codes
         confirmed = next(factor for factor in assessment.factors if factor["code"] == "screening_confirmed")
-        assert confirmed["points"] >= 50
+        assert confirmed["points"] >= 70
         assert "Sanctioned" in confirmed["explanation"]
         pep = ScreeningMatch(
             tenant_id=TENANT_ID,

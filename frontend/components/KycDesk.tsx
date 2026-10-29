@@ -25,12 +25,15 @@ type OcrRead = {
   extracted_text?: string;
 };
 
+type TopicDetail = { key?: string; label: string; points?: number; tier?: "critical" | "elevated" | "info" | string };
+
 type ScreeningMatch = {
   id: string;
   status: string;
   score: number;
   name?: string;
   topics?: string[];
+  topic_details?: TopicDetail[];
   datasets?: string[];
   note?: string;
   explanation?: string[] | string;
@@ -73,12 +76,43 @@ type Detail = {
 
 const DEFAULT_FORMULA_NOTE =
   "Score = somme des points AML + visage + authenticité des pièces + historique d'opérations + pays/structure. "
-  + "AML : pondération selon les topics (Sanctioned, Export controlled, Wanted, Debarred, Disqualified, PEP, Person of interest, Politician) "
-  + "et le statut (candidat / confirmé). Visage : échec ou score faible sous le seuil. "
-  + "Pièces : MRZ/code-barres absent (passeport) ou invalide (checksum). "
-  + "Opérations : dossiers clôturés en risque confirmé ou alerte utile par un gestionnaire, "
-  + "et dispositions d'alertes utiles/escaladées. "
+  + "AML : chaque topic a une pondération distincte (Sanctioned / Wanted / Export controlled élevés ; "
+  + "Debarred / Disqualified / PEP moyens ; Person of interest / Politician informatifs). "
+  + "Plusieurs topics se cumulent. Un hit sanctions reste élevé même en candidat. "
   + "Seuils : <30 faible, 30–59 moyen, ≥60 élevé.";
+
+const TOPIC_TIER_FALLBACK: Record<string, TopicDetail["tier"]> = {
+  "Export controlled": "critical",
+  Sanctioned: "critical",
+  Wanted: "critical",
+  Debarred: "elevated",
+  Disqualified: "elevated",
+  PEP: "elevated",
+  "Person of interest": "info",
+  Politician: "info",
+};
+
+function topicRows(match: ScreeningMatch): TopicDetail[] {
+  if (match.topic_details?.length) return match.topic_details;
+  return (match.topics || []).map((label) => ({
+    label,
+    tier: TOPIC_TIER_FALLBACK[label] || "info",
+  }));
+}
+
+function TopicChips({ topics }: { topics: TopicDetail[] }) {
+  if (!topics.length) return <span className="label">—</span>;
+  return (
+    <div className="topic-chips" aria-label="Topics">
+      {topics.map((topic) => (
+        <span className={`topic-chip topic-${topic.tier || "info"}`} key={`${topic.label}-${topic.key || ""}`}>
+          {topic.label}
+          {topic.points != null ? <em>{topic.points}</em> : null}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 const TAB_ALERT_REASONS: Record<string, string[]> = {
   "Données du document": ["correspondence"],
@@ -164,7 +198,7 @@ function ScreeningMatchRow({
   match: ScreeningMatch;
   pendingActions?: { onClear: () => void; onConfirm: () => void } | null;
 }) {
-  const topics = match.topics?.length ? match.topics.join(", ") : "—";
+  const topics = topicRows(match);
   const datasets = match.datasets?.length ? match.datasets.join(", ") : "";
   const explanation = Array.isArray(match.explanation) ? match.explanation.join(" ") : match.explanation || "";
   return (
@@ -184,8 +218,11 @@ function ScreeningMatchRow({
           <span className="tag">{match.status === "no_hit" ? "Écartée" : match.status === "confirmed_hit" ? "Confirmée" : match.status}</span>
         )}
       </p>
+      <div className="screening-topics">
+        <span className="label">Topics</span>
+        <TopicChips topics={topics} />
+      </div>
       <dl className="kv screening-detail">
-        <span><dt>Topics</dt><dd>{topics}</dd></span>
         {datasets ? <span><dt>Jeux</dt><dd>{datasets}</dd></span> : null}
         {match.note ? <span><dt>Détail</dt><dd>{match.note}</dd></span> : null}
         {explanation ? <span><dt>Explication</dt><dd>{explanation}</dd></span> : null}

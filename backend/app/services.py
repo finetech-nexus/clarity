@@ -1361,49 +1361,61 @@ def _customer_has_pending_screening(db: Session, customer_id: str) -> bool:
     return pending is not None
 
 
-RISK_METHODOLOGY = "clarity-risk-2"
+RISK_METHODOLOGY = "clarity-risk-3"
 RISK_FORMULA_NOTE = (
     "Score = somme des points AML + visage + authenticité des pièces + historique d'opérations + pays/structure. "
-    "AML : pondération selon les topics (Sanctioned, Export controlled, Wanted, Debarred, Disqualified, PEP, Person of interest, Politician) "
-    "et le statut (candidat / confirmé). "
-    "Visage : échec ou score faible sous le seuil. "
-    "Pièces : MRZ/code-barres absent (passeport) ou invalide (checksum). "
-    "Opérations : dossiers d'investigation clôturés en « risque confirmé » ou alerte utile par un gestionnaire, "
-    "et dispositions d'alertes utiles/escaladées — plus il y en a, plus le score monte. "
-    "Seuils : <30 faible, 30–59 moyen, ≥60 élevé. Deux dossiers ne donnent le même score que si les mêmes facteurs sont présents."
+    "AML : chaque topic a une pondération distincte "
+    "(Sanctioned / Wanted / Export controlled élevés ; Debarred / Disqualified / PEP moyens ; "
+    "Person of interest / Politician informatifs). "
+    "Plusieurs topics se cumulent (le plus grave en entier, les autres en fraction). "
+    "Un hit sanctions/wanted reste élevé même en candidat. "
+    "Visage : échec ou score faible. Pièces : MRZ/code-barres. "
+    "Opérations : risque confirmé / alerte utile par un gestionnaire. "
+    "Seuils : <30 faible, 30–59 moyen, ≥60 élevé."
 )
 
+# Distinct weights — critical / elevated / info, aligned with OpenSanctions topics.
 _TOPIC_POINTS = {
-    "sanction": 50,
-    "sanctioned": 50,
-    "export.control": 45,
-    "export.controlled": 45,
-    "export controlled": 45,
-    "wanted": 48,
-    "debarment": 45,
-    "debarred": 45,
-    "disqualified": 42,
-    "role.pep": 35,
-    "pep": 35,
-    "politician": 32,
-    "role.pol": 32,
-    "gov.national": 32,
-    "poi": 28,
-    "person of interest": 28,
-    "personofinterest": 28,
-    "adverse_media": 25,
-    "adverse-media": 25,
-    "internal_watchlist": 20,
-    "role.pep.national": 35,
+    "sanction": 55,
+    "sanctioned": 55,
+    "sanction.linked": 42,
+    "sanction.control": 40,
+    "sanction.counter": 30,
+    "export.control": 50,
+    "export.controlled": 50,
+    "export controlled": 50,
+    "export.risk": 38,
+    "wanted": 52,
+    "crime.wanted": 52,
+    "debarment": 40,
+    "debarred": 40,
+    "disqualified": 38,
+    "role.pep": 34,
+    "pep": 34,
+    "role.pep.national": 34,
+    "role.rca": 30,
+    "politician": 22,
+    "role.pol": 22,
+    "gov.national": 24,
+    "poi": 20,
+    "person of interest": 20,
+    "personofinterest": 20,
+    "adverse_media": 24,
+    "adverse-media": 24,
+    "internal_watchlist": 18,
 }
 
 _TOPIC_LABELS = {
     "sanction": "Sanctioned",
     "sanctioned": "Sanctioned",
+    "sanction.linked": "Sanctioned",
+    "sanction.control": "Sanctioned",
     "export.control": "Export controlled",
     "export.controlled": "Export controlled",
     "export controlled": "Export controlled",
+    "export.risk": "Export controlled",
     "wanted": "Wanted",
+    "crime.wanted": "Wanted",
     "debarment": "Debarred",
     "debarred": "Debarred",
     "disqualified": "Disqualified",
@@ -1418,6 +1430,17 @@ _TOPIC_LABELS = {
     "personofinterest": "Person of interest",
 }
 
+_TOPIC_TIER = {
+    "Sanctioned": "critical",
+    "Export controlled": "critical",
+    "Wanted": "critical",
+    "Debarred": "elevated",
+    "Disqualified": "elevated",
+    "PEP": "elevated",
+    "Person of interest": "info",
+    "Politician": "info",
+}
+
 
 def _topic_key(value: str) -> str:
     return str(value or "").strip().lower().replace("_", ".")
@@ -1428,20 +1451,43 @@ def topic_label(value: str) -> str:
     return _TOPIC_LABELS.get(key) or _TOPIC_LABELS.get(key.replace(".", " ")) or str(value)
 
 
-def match_topics(payload: dict | None) -> list[str]:
+def _payload_topic_values(payload: dict | None) -> list[str]:
     raw = payload or {}
     props = raw.get("properties") if isinstance(raw.get("properties"), dict) else {}
-    values = props.get("topics") if props.get("topics") is not None else raw.get("topics")
-    if not isinstance(values, list):
-        return []
-    labels = []
+    values = []
+    for source in (props.get("topics"), raw.get("topics")):
+        if isinstance(source, list):
+            values.extend(str(item) for item in source if item is not None)
+        elif isinstance(source, str) and source.strip():
+            values.append(source.strip())
+    return values
+
+
+def match_topic_details(payload: dict | None) -> list[dict]:
+    """Labeled topics with distinct points and display tier for the criblage UI."""
+    details = []
     seen = set()
-    for item in values:
-        label = topic_label(str(item))
-        if label and label not in seen:
-            seen.add(label)
-            labels.append(label)
-    return labels
+    for item in _payload_topic_values(payload):
+        key = _topic_key(item)
+        label = topic_label(item)
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        points = _TOPIC_POINTS.get(key, _TOPIC_POINTS.get(key.replace(".", " "), 16))
+        details.append(
+            {
+                "key": key,
+                "label": label,
+                "points": points,
+                "tier": _TOPIC_TIER.get(label, "info"),
+            }
+        )
+    details.sort(key=lambda row: (-int(row["points"]), str(row["label"])))
+    return details
+
+
+def match_topics(payload: dict | None) -> list[str]:
+    return [row["label"] for row in match_topic_details(payload)]
 
 
 def match_display_name(payload: dict | None, entity_id: str | None = None) -> str:
@@ -1476,15 +1522,23 @@ def _match_confidence_boost(score: int | float | None) -> int:
 
 
 def _match_topic_points(payload: dict | None) -> int:
-    raw = payload or {}
-    props = raw.get("properties") if isinstance(raw.get("properties"), dict) else {}
-    values = props.get("topics") if props.get("topics") is not None else raw.get("topics")
-    if not isinstance(values, list) or not values:
+    """Highest topic in full, then a fraction of each extra topic — Putin-like multi-topic hits climb."""
+    details = match_topic_details(payload)
+    if not details:
         return 22
-    best = 0
-    for item in values:
-        best = max(best, _TOPIC_POINTS.get(_topic_key(str(item)), 18))
-    return best
+    scored = [int(row["points"]) for row in details]
+    total = scored[0]
+    for extra in scored[1:]:
+        total += max(5, round(extra * 0.28))
+    return min(85, total)
+
+
+def _screening_candidate_points(weight: int, match_score: int | float | None) -> int:
+    boost = _match_confidence_boost(match_score)
+    # Severe OpenSanctions topics stay high even while the hit is still a candidate.
+    if weight >= 45:
+        return max(48, min(82, round(weight * 0.92) + boost))
+    return max(12, min(40, round(weight * 0.55) + boost))
 
 
 def _looks_like_mrz_text(text: str) -> bool:
@@ -1676,7 +1730,7 @@ def assess_customer(db: Session, tenant: Tenant, customer: Customer, source: str
     if pending_rows:
         top = max(pending_rows, key=lambda row: (_match_topic_points(row.payload), int(row.score or 0)))
         weight = _match_topic_points(top.payload)
-        points = max(10, min(28, round(weight * 0.45) + _match_confidence_boost(top.score)))
+        points = _screening_candidate_points(weight, top.score)
         topics = sorted({label for row in pending_rows for label in match_topics(row.payload)})
         detail = f" Topics : {', '.join(topics)}." if topics else ""
         score += points
@@ -1684,7 +1738,7 @@ def assess_customer(db: Session, tenant: Tenant, customer: Customer, source: str
             {
                 "code": "screening_candidate",
                 "points": points,
-                "explanation": f"Correspondance AML candidate en attente (pondération selon topics).{detail}",
+                "explanation": f"Correspondance AML candidate (pondération cumulative des topics).{detail}",
             }
         )
     if confirmed_rows:
@@ -1697,7 +1751,7 @@ def assess_customer(db: Session, tenant: Tenant, customer: Customer, source: str
             {
                 "code": "screening_confirmed",
                 "points": weight,
-                "explanation": f"Correspondance AML confirmée — points selon la gravité des topics.{detail}",
+                "explanation": f"Correspondance AML confirmée — pondération cumulative des topics.{detail}",
             }
         )
     for factor in _face_risk_factors(db, customer):
@@ -2428,6 +2482,7 @@ def customer_view(db: Session, customer: Customer) -> dict:
                         "entity_id": match.entity_id,
                         "name": match_display_name(match.payload, match.entity_id),
                         "topics": match_topics(match.payload),
+                        "topic_details": match_topic_details(match.payload),
                         "datasets": list((match.payload or {}).get("datasets") or []),
                         "note": _match_note(match.payload),
                         "provider": (match.payload or {}).get("provider"),

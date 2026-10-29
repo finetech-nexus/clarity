@@ -324,6 +324,28 @@ button.active, button.active:hover {
 .screening-match:last-child { border-bottom: 0; padding-bottom: 0; }
 .screening-detail { margin: 0; }
 .screening-detail dd { color: var(--ink); }
+.screening-topics { display: grid; gap: 0.35rem; }
+.topic-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.topic-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.topic-chip em {
+  font-style: normal;
+  font-size: 0.7rem;
+  opacity: 0.75;
+}
+.topic-chip.topic-critical { background: #fde8ea; border-color: #f0b4bb; color: #9b1c2c; }
+.topic-chip.topic-elevated { background: #fff4d6; border-color: #ecd28a; color: #7a5a12; }
+.topic-chip.topic-info { background: #eef0f3; border-color: #cfd5dc; color: #2f3a45; }
 .case-bar h2, .info-pane h3, .card h3 { margin: 0.2rem 0 0.4rem; font-size: 1.15rem; }
 .kyc-body, .manager-grid { display: grid; grid-template-columns: 320px 1fr; gap: 1rem; align-items: start; }
 .document-data { display: grid; gap: 1rem; }

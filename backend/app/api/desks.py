@@ -457,11 +457,24 @@ def kyc_queue(q: str = "", kind: str = "", limit: int | None = None, offset: int
 
 @router.get("/kyc/{runtime_id}")
 def kyc_case(runtime_id: str, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    from app.models import RiskAssessment
+    from app.services import RISK_METHODOLOGY, assess_customer
+
     workflow = _workflow(db, principal, runtime_id)
     customer = db.get(Customer, workflow.customer_id) if workflow.customer_id else None
     documents = db.scalars(select(IdentityDocument).where(IdentityDocument.workflow_id == workflow.id).order_by(IdentityDocument.created_at.asc())).all()
     if customer and not documents:
         documents = db.scalars(select(IdentityDocument).where(IdentityDocument.customer_id == customer.id)).all()
+    if customer:
+        current = db.scalar(
+            select(RiskAssessment).where(
+                RiskAssessment.customer_id == customer.id,
+                RiskAssessment.current.is_(True),
+            )
+        )
+        if not current or current.methodology_version != RISK_METHODOLOGY:
+            assess_customer(db, _tenant(db, principal), customer, source="ruleset")
+            db.flush()
     task = db.scalar(select(WorkflowTask).where(WorkflowTask.workflow_id == workflow.id, WorkflowTask.status == "open"))
     declared = _declared_identity(workflow, customer)
     flags = _review_flags(db, workflow, customer, documents)
