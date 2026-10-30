@@ -2129,6 +2129,7 @@ def test_client_reference_links_kyc_entity_to_banking_external_id(tmp_path):
 
     with _client(tmp_path) as client:
         headers = {"Authorization": f"Bearer {BALLERINE_API_KEY}"}
+        analyst = {"Authorization": f"Bearer {_login(client, ANALYST_EMAIL)}"}
         opened = client.post(
             "/api/v1/external/workflows/run",
             headers=headers,
@@ -2138,13 +2139,32 @@ def test_client_reference_links_kyc_entity_to_banking_external_id(tmp_path):
                     "entity": {
                         "type": "individual",
                         "id": "user-session-ref",
-                        "data": {"firstName": "Sara", "lastName": "Ben", "email": "sara.ben@example.test", "country": "TN"},
+                        "data": {
+                            "firstName": "Sara",
+                            "lastName": "Ben",
+                            "email": "sara.ben@example.test",
+                            "country": "TN",
+                            # Global IAM id — must not become banking external-id before hook callback.
+                            "externalId": "global-iam-a5340792",
+                        },
                     }
                 },
             },
         )
         assert opened.status_code == 200, opened.text
         customer_id = opened.json()["ballerineEntityId"]
+        workflow_id = opened.json()["workflowRuntimeId"]
+        before = client.get(f"/api/clarity/v1/customers/{customer_id}", headers=analyst)
+        assert before.status_code == 200
+        assert before.json().get("client_reference") is None
+        desk = client.get(f"/api/clarity/v1/desks/kyc/{workflow_id}", headers=analyst)
+        assert desk.status_code == 200, desk.text
+        submitted = desk.json().get("submitted") or []
+        global_row = next((row for row in submitted if row.get("key") in {"externalId", "external_id", "globalExternalId"}), None)
+        assert global_row is not None, submitted
+        assert global_row["label"] == "global-external-id"
+        assert global_row["value"] == "global-iam-a5340792"
+        assert desk.json().get("customer", {}).get("client_reference") is None
         linked = client.post(
             "/api/v1/external/customers/user-session-ref/client-reference",
             headers=headers,
@@ -2156,7 +2176,7 @@ def test_client_reference_links_kyc_entity_to_banking_external_id(tmp_path):
         assert linked.json()["kyc_entity_id"] == "user-session-ref"
         profile = client.get(
             f"/api/clarity/v1/customers/{customer_id}",
-            headers={"Authorization": f"Bearer {_login(client, ANALYST_EMAIL)}"},
+            headers=analyst,
         )
         assert profile.status_code == 200
         assert profile.json()["client_reference"] == "kc-user-42"
@@ -2176,6 +2196,8 @@ def test_client_reference_links_kyc_entity_to_banking_external_id(tmp_path):
         assert matched is not None and matched.id == customer_id
         matched_fineract = _resolve_ingest_customer(db, tenant, {"client_id": "client:8"})
         assert matched_fineract is not None and matched_fineract.id == customer_id
+        # Global id never resolves as banking client_reference.
+        assert _resolve_ingest_customer(db, tenant, {"customer_id": "global-iam-a5340792"}) is None
         db.close()
 
 

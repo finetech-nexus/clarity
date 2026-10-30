@@ -1273,15 +1273,40 @@ def find_customer_by_contact(db: Session, tenant_id: str, kind: str, data: dict)
     return None
 
 
-def _banking_external_id_from_data(data: dict | None) -> str:
-    """Banking / Keycloak external id carried on the KYC entity payload."""
+def _global_external_id_from_data(data: dict | None) -> str:
+    """Global IAM ExternalId from the app profile — display only, never banking client_reference."""
     if not isinstance(data, dict):
         return ""
-    for key in ("externalId", "external_id", "clientReference", "client_reference"):
+    for key in ("globalExternalId", "global_external_id", "externalId", "external_id"):
         value = str(data.get(key) or "").strip()
         if value:
             return value
     return ""
+
+
+def _banking_external_id_from_data(data: dict | None) -> str:
+    """Banking client reference only — never the global ExternalId field."""
+    if not isinstance(data, dict):
+        return ""
+    for key in ("clientReference", "client_reference"):
+        value = str(data.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _remember_global_external_id(customer: Customer, data: dict | None) -> None:
+    global_external_id = _global_external_id_from_data(data)
+    if not global_external_id:
+        return
+    extension = dict(customer.extension or {})
+    if extension.get("global_external_id") == global_external_id:
+        return
+    extension["global_external_id"] = global_external_id
+    customer.extension = extension
+    from sqlalchemy.orm.attributes import flag_modified
+
+    flag_modified(customer, "extension")
 
 
 def ensure_user_entity_id(*candidates: object) -> str:
@@ -1337,9 +1362,8 @@ def _sync_customer(db: Session, customer: Customer, kind: str, data: dict) -> No
         value = next((data.get(key) for key in keys if data.get(key)), None)
         if value:
             setattr(customer, field, value)
-    banking_external_id = _banking_external_id_from_data(data)
-    if banking_external_id:
-        _bind_customer_client_reference(customer, banking_external_id)
+    _remember_global_external_id(customer, data)
+    # Banking external-id (client_reference) is set only after core-banking hook callback.
     if kind == "individual":
         fresh = _individual(customer.id, data)
         current = customer.individual
@@ -1521,11 +1545,11 @@ def start_customer_workflow(
             raise clarity_error(409, "kyc_valid", "La vérification de ce client est encore valable. Une mise à jour est possible après son expiration.")
     if customer is None:
         extension: dict = {"upstream_context_retained": True}
-        if banking_external_id:
-            extension["client_reference"] = banking_external_id
-            if external_ref and external_ref != banking_external_id:
-                extension["kyc_entity_id"] = external_ref
-        elif external_ref and str(external_ref).startswith("user-"):
+        global_external_id = _global_external_id_from_data(data)
+        if global_external_id:
+            extension["global_external_id"] = global_external_id
+        # Preserve KYC correlation id (user-{uuid}); banking external-id is attached after CB hook.
+        if external_ref and str(external_ref).startswith("user-"):
             extension["kyc_entity_id"] = external_ref
         customer = Customer(
             tenant_id=tenant.id,
@@ -2239,15 +2263,9 @@ def _account_hook_payload(db: Session, workflow: WorkflowInstance, customer: Cus
     owned = [document for document in rows if document.workflow_id == workflow.id] or list(rows)
     from_docs = _document_identity_fields(owned)
     extension = customer.extension if isinstance(customer.extension, dict) else {}
-    # Banking Keycloak id already known from app signup — must become Fineract externalId.
-    banking_external_id = _clean_identity_value(
-        extension.get("client_reference")
-        or stored.get("externalId")
-        or stored.get("external_id")
-        or stored.get("clientReference")
-        or stored.get("client_reference")
-    )
     # Prefer document-tab fields for legal identity; profile only fills gaps.
+    # Do NOT send global ExternalId — core banking creates the banking id, then Clarity
+    # receives it via POST .../client-reference using entity.id (user-{uuid}).
     data = {
         "email": _clean_identity_value(stored.get("email") or (individual.email if individual else "")),
         "phone": _clean_identity_value(
@@ -2268,10 +2286,6 @@ def _account_hook_payload(db: Session, workflow: WorkflowInstance, customer: Cus
         "sex": from_docs.get("sex") or _clean_identity_value(stored.get("sex") or stored.get("gender")),
         "identitySource": "document" if from_docs else "profile",
     }
-    if banking_external_id:
-        data["externalId"] = banking_external_id
-        data["clientReference"] = banking_external_id
-        data["client_reference"] = banking_external_id
     documents = []
     for document in owned:
         props = dict(document.properties or {})
