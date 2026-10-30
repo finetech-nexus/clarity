@@ -1337,7 +1337,9 @@ def _sync_customer(db: Session, customer: Customer, kind: str, data: dict) -> No
         value = next((data.get(key) for key in keys if data.get(key)), None)
         if value:
             setattr(customer, field, value)
-    # Banking external-id is set only after core-banking onboarding callback (user-{uuid} → client-reference).
+    banking_external_id = _banking_external_id_from_data(data)
+    if banking_external_id:
+        _bind_customer_client_reference(customer, banking_external_id)
     if kind == "individual":
         fresh = _individual(customer.id, data)
         current = customer.individual
@@ -1519,8 +1521,11 @@ def start_customer_workflow(
             raise clarity_error(409, "kyc_valid", "La vérification de ce client est encore valable. Une mise à jour est possible après son expiration.")
     if customer is None:
         extension: dict = {"upstream_context_retained": True}
-        # Preserve KYC correlation id (user-{uuid}); banking external-id is attached after CB hook.
-        if external_ref and str(external_ref).startswith("user-"):
+        if banking_external_id:
+            extension["client_reference"] = banking_external_id
+            if external_ref and external_ref != banking_external_id:
+                extension["kyc_entity_id"] = external_ref
+        elif external_ref and str(external_ref).startswith("user-"):
             extension["kyc_entity_id"] = external_ref
         customer = Customer(
             tenant_id=tenant.id,
@@ -2233,9 +2238,16 @@ def _account_hook_payload(db: Session, workflow: WorkflowInstance, customer: Cus
     rows = db.scalars(select(IdentityDocument).where(IdentityDocument.customer_id == customer.id)).all()
     owned = [document for document in rows if document.workflow_id == workflow.id] or list(rows)
     from_docs = _document_identity_fields(owned)
+    extension = customer.extension if isinstance(customer.extension, dict) else {}
+    # Banking Keycloak id already known from app signup — must become Fineract externalId.
+    banking_external_id = _clean_identity_value(
+        extension.get("client_reference")
+        or stored.get("externalId")
+        or stored.get("external_id")
+        or stored.get("clientReference")
+        or stored.get("client_reference")
+    )
     # Prefer document-tab fields for legal identity; profile only fills gaps.
-    # Do NOT put a banking externalId here — core banking generates it, then Clarity is updated
-    # via POST .../client-reference using entity.id (user-{uuid}).
     data = {
         "email": _clean_identity_value(stored.get("email") or (individual.email if individual else "")),
         "phone": _clean_identity_value(
@@ -2256,6 +2268,10 @@ def _account_hook_payload(db: Session, workflow: WorkflowInstance, customer: Cus
         "sex": from_docs.get("sex") or _clean_identity_value(stored.get("sex") or stored.get("gender")),
         "identitySource": "document" if from_docs else "profile",
     }
+    if banking_external_id:
+        data["externalId"] = banking_external_id
+        data["clientReference"] = banking_external_id
+        data["client_reference"] = banking_external_id
     documents = []
     for document in owned:
         props = dict(document.properties or {})
@@ -2285,7 +2301,6 @@ def _account_hook_payload(db: Session, workflow: WorkflowInstance, customer: Cus
             }
         )
     # Verification / KYC correlation id (user-{uuid}) — used by core banking to call Clarity back.
-    extension = customer.extension if isinstance(customer.extension, dict) else {}
     entity_id = ensure_user_entity_id(
         entity.get("id"),
         customer.external_ref,
