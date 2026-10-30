@@ -2388,8 +2388,13 @@ def advance_workflow(db: Session, engine, tenant: Tenant, principal: Principal, 
     context = dict(workflow.context or {})
     maker = context.get("maker_id")
     identity = principal.user_id or principal.credential_id
-    # Admins (e.g. bootstrap mifos) may dual-act in sandbox; other checkers stay separated.
-    if task.task_key == "checkerReview" and maker and maker == identity and not principal.allows("admin"):
+    # Controlled from Administration → Configuration globale (maker_checker_enforced).
+    if (
+        task.task_key == "checkerReview"
+        and maker
+        and maker == identity
+        and bool(getattr(tenant, "maker_checker_enforced", True))
+    ):
         raise clarity_error(403, "maker_checker", "La personne qui a instruit le dossier ne peut pas l'approuver.")
     if action in {"approve", "approvePartial"} and workflow.definition_key != "clarityFundingOrigin":
         _require_approval_ready(db, workflow)

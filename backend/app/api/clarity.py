@@ -1040,14 +1040,23 @@ def notifications(principal: Principal = Depends(clarity_principal), db: Session
 
 
 class KycPolicyBody(BaseModel):
-    kyc_validity_years: int = Field(ge=1, le=10)
+    kyc_validity_years: int | None = Field(default=None, ge=1, le=10)
+    maker_checker_enforced: bool | None = None
+
+
+def _kyc_policy_payload(tenant: Tenant | None) -> dict:
+    years = tenant.kyc_validity_years if tenant else 1
+    enforced = True if tenant is None else bool(getattr(tenant, "maker_checker_enforced", True))
+    return {
+        "kyc_validity_years": years or 1,
+        "maker_checker_enforced": enforced,
+    }
 
 
 @router.get("/administration/kyc")
 def kyc_policy(principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
     tenant = db.get(Tenant, principal.tenant_id)
-    years = tenant.kyc_validity_years if tenant else 1
-    return {"kyc_validity_years": years or 1}
+    return _kyc_policy_payload(tenant)
 
 
 @router.patch("/administration/kyc")
@@ -1057,9 +1066,23 @@ def update_kyc_policy(body: KycPolicyBody, principal: Principal = Depends(clarit
     tenant = db.get(Tenant, principal.tenant_id)
     if not tenant:
         raise clarity_error(404, "not_found", "Tenant introuvable.")
-    tenant.kyc_validity_years = body.kyc_validity_years
-    audit(db, principal.tenant_id, actor_label(principal), "kyc.policy", "tenant", tenant.id, {"kyc_validity_years": body.kyc_validity_years})
-    return {"kyc_validity_years": tenant.kyc_validity_years}
+    if body.kyc_validity_years is not None:
+        tenant.kyc_validity_years = body.kyc_validity_years
+    if body.maker_checker_enforced is not None:
+        tenant.maker_checker_enforced = body.maker_checker_enforced
+    audit(
+        db,
+        principal.tenant_id,
+        actor_label(principal),
+        "kyc.policy",
+        "tenant",
+        tenant.id,
+        {
+            "kyc_validity_years": tenant.kyc_validity_years,
+            "maker_checker_enforced": bool(tenant.maker_checker_enforced),
+        },
+    )
+    return _kyc_policy_payload(tenant)
 
 
 class FaceThresholdBody(BaseModel):

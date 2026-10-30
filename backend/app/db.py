@@ -22,14 +22,27 @@ class Database:
         self._ensure_field_columns()
 
     def _ensure_tenant_columns(self) -> None:
-        if self.engine.dialect.name != "sqlite":
-            return
+        dialect = self.engine.dialect.name
         with self.engine.begin() as connection:
-            rows = connection.exec_driver_sql("PRAGMA table_info(tenants)").fetchall()
-            names = {row[1] for row in rows}
-            if names and "kyc_validity_years" not in names:
+            if dialect == "sqlite":
+                rows = connection.exec_driver_sql("PRAGMA table_info(tenants)").fetchall()
+                names = {row[1] for row in rows}
+            elif dialect in {"postgresql", "postgres"}:
+                rows = connection.exec_driver_sql(
+                    "SELECT column_name FROM information_schema.columns WHERE table_name = 'tenants'"
+                ).fetchall()
+                names = {row[0] for row in rows}
+            else:
+                return
+            if not names:
+                return
+            if "kyc_validity_years" not in names:
                 connection.exec_driver_sql(
                     "ALTER TABLE tenants ADD COLUMN kyc_validity_years INTEGER NOT NULL DEFAULT 1"
+                )
+            if "maker_checker_enforced" not in names:
+                connection.exec_driver_sql(
+                    "ALTER TABLE tenants ADD COLUMN maker_checker_enforced BOOLEAN NOT NULL DEFAULT TRUE"
                 )
 
     def _ensure_field_columns(self) -> None:

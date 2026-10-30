@@ -1523,9 +1523,15 @@ def test_kyc_validity_defaults_to_one_year(tmp_path):
         current = client.get("/api/clarity/v1/administration/kyc", headers=admin)
         assert current.status_code == 200, current.text
         assert current.json()["kyc_validity_years"] == 1
+        assert current.json()["maker_checker_enforced"] is True
         saved = client.patch("/api/clarity/v1/administration/kyc", headers=admin, json={"kyc_validity_years": 2})
         assert saved.status_code == 200, saved.text
         assert saved.json()["kyc_validity_years"] == 2
+        assert saved.json()["maker_checker_enforced"] is True
+        dual = client.patch("/api/clarity/v1/administration/kyc", headers=admin, json={"maker_checker_enforced": False})
+        assert dual.status_code == 200, dual.text
+        assert dual.json()["maker_checker_enforced"] is False
+        assert dual.json()["kyc_validity_years"] == 2
         analyst = {"Authorization": f"Bearer {_login(client, ANALYST_EMAIL)}"}
         denied = client.patch("/api/clarity/v1/administration/kyc", headers=analyst, json={"kyc_validity_years": 3})
         assert denied.status_code == 403

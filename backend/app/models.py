@@ -21,6 +21,7 @@ class Tenant(Base):
     screening_threshold: Mapped[int] = mapped_column(Integer, default=86)
     retention_days: Mapped[int] = mapped_column(Integer, default=1825)
     kyc_validity_years: Mapped[int] = mapped_column(Integer, default=1)
+    maker_checker_enforced: Mapped[bool] = mapped_column(Boolean, default=True)
     synthetic: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
