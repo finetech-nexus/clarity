@@ -105,8 +105,13 @@ type KycCycle = {
   reminded_at: string | null;
   production: boolean;
   workflow_runtime_id?: string | null;
+  definition?: string | null;
+  definition_key?: string | null;
   documents?: CycleDocument[];
 };
+
+const LIST_PAGE = 20;
+const CYCLE_PAGE = 5;
 
 const CLIENT_STATUSES = [
   { value: "pending", label: "En attente" },
@@ -407,7 +412,10 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
   const [direction, setDirection] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
   useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
     const params = new URLSearchParams({
       kind,
       name,
@@ -415,21 +423,39 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
       risk: risks.join(","),
       sort,
       direction,
-      limit: "25",
-      offset: String(page * 25),
+      limit: String(LIST_PAGE),
+      offset: String(page * LIST_PAGE),
     });
-    void api<{ items: Customer[]; total: number }>(`/api/clarity/v1/customers?${params}`).then((body) => {
-      setRows(body.items);
-      setTotal(body.total);
-    });
+    void api<{ items: Customer[]; total: number }>(`/api/clarity/v1/customers?${params}`)
+      .then((body) => {
+        if (cancelled) return;
+        setTotal(body.total);
+        setRows((current) => {
+          if (page === 0) return body.items;
+          const seen = new Set(current.map((row) => row.id));
+          return [...current, ...body.items.filter((row) => !seen.has(row.id))];
+        });
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [kind, name, statuses, risks, sort, direction, page]);
-  function toggle(column: string) {
+  function resetList(next: () => void) {
     setPage(0);
-    if (sort === column) setDirection((current) => (current === "asc" ? "desc" : "asc"));
-    else {
-      setSort(column);
-      setDirection(column.endsWith("_at") ? "desc" : "asc");
-    }
+    setRows([]);
+    next();
+  }
+  function toggle(column: string) {
+    resetList(() => {
+      if (sort === column) setDirection((current) => (current === "asc" ? "desc" : "asc"));
+      else {
+        setSort(column);
+        setDirection(column.endsWith("_at") ? "desc" : "asc");
+      }
+    });
   }
   const mark = (column: string) => (sort === column ? (direction === "asc" ? " ↑" : " ↓") : "");
   return (
@@ -439,7 +465,7 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
       <div className="filters">
         <div className="filter-group">
           <span className="label">Nom</span>
-          <input aria-label="Filtrer par nom" placeholder="Rechercher" value={name} onChange={(event) => { setPage(0); setName(event.target.value); }} />
+          <input aria-label="Filtrer par nom" placeholder="Rechercher" value={name} onChange={(event) => { resetList(() => setName(event.target.value)); }} />
         </div>
         <div className="filter-group">
           <span className="label">Statut de la vérification</span>
@@ -450,8 +476,9 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
                   type="checkbox"
                   checked={statuses.includes(item.value)}
                   onChange={() => {
-                    setPage(0);
-                    setStatuses((current) => current.includes(item.value) ? current.filter((value) => value !== item.value) : [...current, item.value]);
+                    resetList(() => {
+                      setStatuses((current) => current.includes(item.value) ? current.filter((value) => value !== item.value) : [...current, item.value]);
+                    });
                   }}
                 />
                 {item.label}
@@ -468,8 +495,9 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
                   type="checkbox"
                   checked={risks.includes(item.value)}
                   onChange={() => {
-                    setPage(0);
-                    setRisks((current) => current.includes(item.value) ? current.filter((value) => value !== item.value) : [...current, item.value]);
+                    resetList(() => {
+                      setRisks((current) => current.includes(item.value) ? current.filter((value) => value !== item.value) : [...current, item.value]);
+                    });
                   }}
                 />
                 {item.label}
@@ -491,7 +519,7 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
           </tr>
         </thead>
         <tbody>
-          {!rows.length ? <tr><td colSpan={7}>Aucun client de ce type.</td></tr> : null}
+          {!rows.length ? <tr><td colSpan={7}>{loading ? "Chargement…" : "Aucun client de ce type."}</td></tr> : null}
           {rows.map((row) => (
             <tr key={row.id}>
               <td>
@@ -509,11 +537,14 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
           ))}
         </tbody>
       </table>
-      <p className="label">{total} client(s) · page {page + 1}</p>
-      <div className="tabs">
-        <button className="ghost" type="button" disabled={page === 0} onClick={() => setPage((current) => Math.max(0, current - 1))}>Précédent</button>
-        <button className="ghost" type="button" disabled={(page + 1) * 25 >= total} onClick={() => setPage((current) => current + 1)}>Suivant</button>
-      </div>
+      <p className="label">{rows.length}/{total} client(s)</p>
+      {rows.length < total ? (
+        <div className="load-more">
+          <button className="ghost" type="button" disabled={loading} onClick={() => setPage((current) => current + 1)}>
+            {loading ? "Chargement…" : "Charger plus"}
+          </button>
+        </div>
+      ) : null}
     </>
   );
 }
@@ -523,9 +554,14 @@ function CustomerView({ profile, onChange }: { profile: Record<string, unknown>;
   const risk = (profile.risk as { score?: number | null; tier?: string | null; formula_note?: string; factors?: Array<{ code: string; points: number; explanation: string }> } | null) || null;
   const latestCycle = cycles[0];
   const [openId, setOpenId] = useState(cycles[0]?.id || "");
+  const [cycleLimit, setCycleLimit] = useState(CYCLE_PAGE);
   useEffect(() => {
     if (!cycles.some((cycle) => cycle.id === openId)) setOpenId(cycles[0]?.id || "");
   }, [cycles, openId]);
+  useEffect(() => {
+    setCycleLimit(CYCLE_PAGE);
+  }, [profile.id]);
+  const visibleCycles = cycles.slice(0, cycleLimit);
   const openCycle = cycles.find((cycle) => cycle.id === openId) || cycles[0];
   async function refreshProfile() {
     onChange(await api(`/api/clarity/v1/customers/${profile.id}`));
@@ -556,13 +592,14 @@ function CustomerView({ profile, onChange }: { profile: Record<string, unknown>;
       <h2>Vérifications</h2>
       <table className="inbox sheet">
         <thead>
-          <tr><th>Statut</th><th>Date</th><th>Validation</th><th>Expiration</th><th>Relance</th></tr>
+          <tr><th>Statut</th><th>Workflow</th><th>Date</th><th>Validation</th><th>Expiration</th><th>Relance</th></tr>
         </thead>
         <tbody>
-          {!cycles.length ? <tr><td colSpan={5}>Aucune vérification.</td></tr> : null}
-          {cycles.map((cycle) => (
+          {!cycles.length ? <tr><td colSpan={6}>Aucune vérification.</td></tr> : null}
+          {visibleCycles.map((cycle) => (
             <tr key={cycle.id} className={cycle.id === openId ? "selected" : ""} onClick={() => setOpenId(cycle.id)}>
               <td><span className={`badge ${cycle.status}`}>{cycle.label}</span></td>
+              <td>{cycle.definition || cycle.definition_key || "—"}</td>
               <td>{day(cycle.created_at)}</td>
               <td>{day(cycle.validated_at)}</td>
               <td>{day(cycle.expires_at)}</td>
@@ -571,14 +608,24 @@ function CustomerView({ profile, onChange }: { profile: Record<string, unknown>;
           ))}
         </tbody>
       </table>
+      {visibleCycles.length < cycles.length ? (
+        <div className="load-more">
+          <button className="ghost" type="button" onClick={() => setCycleLimit((current) => current + CYCLE_PAGE)}>
+            Charger plus ({visibleCycles.length}/{cycles.length})
+          </button>
+        </div>
+      ) : null}
       {openCycle ? (
         <section className="customer-verification-detail" aria-label="Détail de la vérification">
           <h3>{openCycle.label} · {day(openCycle.created_at)}</h3>
           <p className="label" style={{ marginTop: 2, marginBottom: 0 }}>
             id-verification = {openCycle.workflow_runtime_id || openCycle.id}
           </p>
-          <p className="label" style={{ marginTop: 2, marginBottom: 8, fontSize: 12 }}>
+          <p className="label" style={{ marginTop: 2, marginBottom: 0, fontSize: 12 }}>
             external-id = {String(profile.client_reference || "—")}
+          </p>
+          <p className="label" style={{ marginTop: 2, marginBottom: 8 }}>
+            workflow = {openCycle.definition || openCycle.definition_key || "—"}
           </p>
           {openCycle.workflow_runtime_id ? (
             <VerificationPreview runtimeId={openCycle.workflow_runtime_id} onChanged={() => void refreshProfile()} />

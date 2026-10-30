@@ -88,15 +88,47 @@ export function TransactionBoard() {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const pageSize = 20;
   useEffect(() => {
-    void searchPage<Row>("/api/clarity/v1/transactions", query, page).then((body) => { setRows(body.items); setTotal(body.total); });
+    let cancelled = false;
+    setLoading(true);
+    void searchPage<Row>("/api/clarity/v1/transactions", query, page, pageSize)
+      .then((body) => {
+        if (cancelled) return;
+        setTotal(body.total);
+        setRows((current) => {
+          if (page === 0) return body.items;
+          const seen = new Set(current.map((row) => String(row.id)));
+          return [...current, ...body.items.filter((row) => !seen.has(String(row.id)))];
+        });
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [query, page]);
   return (
-    <Board title="Transactions" lede="Opérations ingérées. Une ligne ne constitue pas une alerte. La recherche filtre avant la page.">
-      <QueryStack query={query} onChange={(next) => { setPage(0); setQuery(next); }} fields={[{ key: "name", label: "Client" }, { key: "country", label: "Pays" }, { key: "direction", label: "Sens", options: ["inbound", "outbound"] }, { key: "counterparty", label: "Contrepartie" }]} total={total} page={page} pageSize={25} onPage={setPage} />
+    <Board title="Transactions" lede="Opérations ingérées. Une ligne ne constitue pas une alerte. Chargement progressif pour alléger la page.">
+      <QueryStack
+        query={query}
+        onChange={(next) => {
+          setPage(0);
+          setRows([]);
+          setQuery(next);
+        }}
+        fields={[{ key: "name", label: "Client" }, { key: "country", label: "Pays" }, { key: "direction", label: "Sens", options: ["inbound", "outbound"] }, { key: "counterparty", label: "Contrepartie" }]}
+        total={total}
+        page={0}
+        pageSize={Math.max(total, 1)}
+        onPage={() => undefined}
+      />
       <table className="inbox">
         <thead><tr><th>Client</th><th>Montant</th><th>Sens</th><th>Pays</th><th>Contrepartie</th><th>Date</th></tr></thead>
         <tbody>
+          {!rows.length ? <tr><td colSpan={6}>{loading ? "Chargement…" : "Aucune transaction."}</td></tr> : null}
           {rows.map((row) => (
             <tr key={String(row.id)}>
               <td>{String(row.customer_name || "—")}</td>
@@ -109,6 +141,14 @@ export function TransactionBoard() {
           ))}
         </tbody>
       </table>
+      <p className="label">{rows.length}/{total} transaction(s)</p>
+      {rows.length < total ? (
+        <div className="load-more">
+          <button className="ghost" type="button" disabled={loading} onClick={() => setPage((current) => current + 1)}>
+            {loading ? "Chargement…" : "Charger plus"}
+          </button>
+        </div>
+      ) : null}
     </Board>
   );
 }

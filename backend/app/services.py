@@ -124,12 +124,21 @@ def kyc_label(status: str) -> str:
     return labels.get(status, status)
 
 
-def kyc_cycle_view(row: KycCycle, runtime_id: str | None = None, documents: list | None = None) -> dict:
+def kyc_cycle_view(
+    row: KycCycle,
+    runtime_id: str | None = None,
+    documents: list | None = None,
+    *,
+    definition: str | None = None,
+    definition_key: str | None = None,
+) -> dict:
     return {
         "id": row.id,
         "customer_id": row.customer_id,
         "workflow_id": row.workflow_id,
         "workflow_runtime_id": runtime_id,
+        "definition": definition,
+        "definition_key": definition_key,
         "status": row.status,
         "label": kyc_label(row.status),
         "pending": row.status in {"pending", "overdue"},
@@ -2971,10 +2980,19 @@ def customer_view(db: Session, customer: Customer) -> dict:
         owned = list(grouped.get(row.workflow_id or "", []))
         if index == 0:
             owned.extend(unclaimed)
-        runtime = workflows[row.workflow_id].ballerine_runtime_id if row.workflow_id and row.workflow_id in workflows else None
+        linked = workflows.get(row.workflow_id) if row.workflow_id else None
+        runtime = linked.ballerine_runtime_id if linked else None
         if runtime is None and index == 0:
             runtime = fallback
-        cycle_views.append(kyc_cycle_view(row, runtime, owned))
+        cycle_views.append(
+            kyc_cycle_view(
+                row,
+                runtime,
+                owned,
+                definition=linked.definition_name if linked else None,
+                definition_key=linked.definition_key if linked else None,
+            )
+        )
     extension = customer.extension if isinstance(customer.extension, dict) else {}
     return {
         "id": customer.id,

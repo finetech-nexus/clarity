@@ -378,18 +378,41 @@ html[dir="rtl"] .verify-side-head .score-chip {
 .form label.mismatch input { border-color: var(--danger); background: #fdecee; }
 .queue button.alert { border: 1.5px solid var(--danger); background: #fdecee; }
 .case-tabs button.tab-alert,
-.tabs.case-tabs button.tab-alert {
+.tabs.case-tabs button.tab-alert,
+.case-tabs button.tab-danger,
+.tabs.case-tabs button.tab-danger {
   border-color: var(--danger);
   color: var(--danger);
   background: #fdecee;
   box-shadow: inset 3px 0 0 var(--danger);
 }
 .case-tabs button.tab-alert.active,
-.tabs.case-tabs button.tab-alert.active {
+.tabs.case-tabs button.tab-alert.active,
+.case-tabs button.tab-danger.active,
+.tabs.case-tabs button.tab-danger.active {
   border-color: var(--danger);
   color: var(--danger);
   background: #fdecee;
   box-shadow: inset 3px 0 0 var(--danger);
+}
+.case-tabs button.tab-warn,
+.tabs.case-tabs button.tab-warn {
+  border-color: #d4a017;
+  color: #8a6a00;
+  background: #fff6d6;
+  box-shadow: inset 3px 0 0 #e0b400;
+}
+.case-tabs button.tab-warn.active,
+.tabs.case-tabs button.tab-warn.active {
+  border-color: #d4a017;
+  color: #8a6a00;
+  background: #fff1b8;
+  box-shadow: inset 3px 0 0 #e0b400;
+}
+.load-more {
+  display: flex;
+  justify-content: center;
+  margin: 0.85rem 0 0.2rem;
 }
 .alert-line { color: var(--danger); margin: 0.2rem 0 0; font-weight: 700; }
 .formula-hint { position: relative; display: inline-flex; align-items: center; margin-left: 0.25rem; vertical-align: middle; }

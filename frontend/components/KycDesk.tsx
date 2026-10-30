@@ -146,8 +146,46 @@ function tabHasAlert(tab: string, reasons: string[] | undefined) {
   return keys.some((key) => reasons?.includes(key));
 }
 
-const TABS = ["Informations saisies", "Documents", "Données du document", "Reconnaissance faciale", "Criblage", "Notes", "Action"] as const;
-const PREVIEW_TABS = ["Informations saisies", "Documents", "Données du document", "Reconnaissance faciale", "Criblage", "Notes", "Action"] as const;
+const TABS = [
+  "Informations saisies",
+  "Documents",
+  "Données du document",
+  "Authenticité document",
+  "Reconnaissance faciale",
+  "Criblage",
+  "Notes",
+  "Action",
+] as const;
+const PREVIEW_TABS = TABS;
+const QUEUE_PAGE = 20;
+
+function tabToneClass(tab: string, detail: Detail | null | undefined): string {
+  if (!detail) return "";
+  if (tab === "Documents") {
+    const toApprove = (detail.documents || []).some(
+      (document) => document.status !== "requested" && document.decision !== "approved" && document.decision !== "reject" && document.decision !== "rejected",
+    );
+    return toApprove ? " tab-warn" : "";
+  }
+  if (tab === "Reconnaissance faciale") {
+    return detail.face_match == null ? " tab-warn" : "";
+  }
+  if (tab === "Criblage") {
+    const matches = (detail.customer?.screening || []).flatMap((item) => item.matches || []);
+    if (matches.some((match) => match.status === "confirmed_hit")) return " tab-danger";
+    if (matches.some((match) => match.status === "pending")) return " tab-warn";
+    return "";
+  }
+  return tabHasAlert(tab, detail.alert_reasons) ? " tab-alert" : "";
+}
+
+function AuthenticityPlaceholder() {
+  return (
+    <article className="card">
+      <p className="label">Ce contrôle d&apos;authenticité document n&apos;est pas encore mis en place.</p>
+    </article>
+  );
+}
 
 const STEP_LABEL: Record<string, string> = {
   collect: "Collecte",
@@ -621,15 +659,28 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
   const [partialNote, setPartialNote] = useState("");
   const [freeNote, setFreeNote] = useState("");
 
-  async function loadQueue(prefer?: string, nextQuery = query, nextPage = page) {
-    const body = await searchPage<QueueItem>(kind ? `/api/clarity/v1/desks/kyc?kind=${kind}` : "/api/clarity/v1/desks/kyc", nextQuery, nextPage);
-    setQueue(body.items);
+  async function loadQueue(prefer?: string, nextQuery = query, nextPage = page, append = false) {
+    const body = await searchPage<QueueItem>(
+      kind ? `/api/clarity/v1/desks/kyc?kind=${kind}` : "/api/clarity/v1/desks/kyc",
+      nextQuery,
+      nextPage,
+      QUEUE_PAGE,
+    );
     setTotal(body.total);
+    setQueue((current) => {
+      if (!append || nextPage === 0) return body.items;
+      const seen = new Set(current.map((row) => row.id));
+      return [...current, ...body.items.filter((row) => !seen.has(row.id))];
+    });
     const requested = new URLSearchParams(window.location.search).get("case") || "";
     setSelected((current) => {
       if (prefer) return prefer;
       if (requested && body.items.some((row) => row.id === requested)) return requested;
-      if (current && body.items.some((row) => row.id === current)) return current;
+      if (current && (append ? true : body.items.some((row) => row.id === current))) {
+        if (append) return current;
+        if (body.items.some((row) => row.id === current)) return current;
+      }
+      if (append && current) return current;
       return body.items[0]?.id || "";
     });
   }
@@ -660,8 +711,9 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
   }
 
   useEffect(() => {
-    void loadQueue(undefined, query, page).catch((err: Error) => setError(err.message));
-  }, [query, page]);
+    setPage(0);
+    void loadQueue(undefined, query, 0, false).catch((err: Error) => setError(err.message));
+  }, [query, kind]);
 
   useEffect(() => {
     if (!selected) {
@@ -827,7 +879,6 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
   const screeningFactors = (detail?.customer?.risk?.factors || []).filter((factor) =>
     factor.code === "screening_confirmed" || factor.code === "screening_candidate"
   );
-  const alertReasons = detail?.alert_reasons || [];
   const selectedIndex = queue.findIndex((item) => item.id === selected);
   const canPrevCase = selectedIndex > 0;
   const canNextCase = selectedIndex >= 0 && selectedIndex < queue.length - 1;
@@ -880,7 +931,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
           ))}
         </div>
       </div>
-      <p className="label">{total} {t("verify.cases")} · {t("verify.page")} {page + 1}</p>
+      <p className="label">{queue.length}/{total} {t("verify.cases")}</p>
       <div className="kyc-shell">
         <aside className="queue-panel" aria-label={t("verify.queue")}>
           <div className="panel-head">
@@ -895,17 +946,28 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
               </button>
             ))}
           </div>
+          {queue.length < total ? (
+            <div className="load-more">
+              <button
+                className="ghost"
+                type="button"
+                onClick={() => {
+                  const next = page + 1;
+                  setPage(next);
+                  void loadQueue(undefined, query, next, true);
+                }}
+              >
+                Charger plus
+              </button>
+            </div>
+          ) : null}
           <div className="queue-nav">
             <button
               className="ghost"
               type="button"
-              disabled={!canPrevCase && page === 0}
+              disabled={!canPrevCase}
               onClick={() => {
-                if (canPrevCase) {
-                  setSelected(queue[selectedIndex - 1].id);
-                  return;
-                }
-                if (page > 0) setPage((current) => current - 1);
+                if (canPrevCase) setSelected(queue[selectedIndex - 1].id);
               }}
             >
               {t("verify.prev")}
@@ -913,13 +975,9 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
             <button
               className="ghost"
               type="button"
-              disabled={!canNextCase && (page + 1) * 25 >= total}
+              disabled={!canNextCase}
               onClick={() => {
-                if (canNextCase) {
-                  setSelected(queue[selectedIndex + 1].id);
-                  return;
-                }
-                if ((page + 1) * 25 < total) setPage((current) => current + 1);
+                if (canNextCase) setSelected(queue[selectedIndex + 1].id);
               }}
             >
               {t("verify.next")}
@@ -954,7 +1012,10 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                 >
                   external-id = {detail.customer?.client_reference || "—"}
                 </p>
-                <p className="label">{detail.case.definition} · {statusLabel(detail.case.status, detail.case.state)} · {detail.task?.name || stepLabel(detail.case.state, "sans tâche ouverte")}</p>
+                <p className="label" style={{ marginTop: 2, marginBottom: 0 }}>
+                  workflow = {detail.case.definition || detail.case.definition_key || "—"}
+                </p>
+                <p className="label">{statusLabel(detail.case.status, detail.case.state)} · {detail.task?.name || stepLabel(detail.case.state, "sans tâche ouverte")}</p>
                 {detail.steps?.length ? (
                   <ol className="stepper">
                     {detail.steps.map((step) => (
@@ -968,7 +1029,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
             <div className="tabs case-tabs">
               {TABS.map((item) => (
                 <button
-                  className={`${tab === item ? "active" : ""}${tabHasAlert(item, alertReasons) ? " tab-alert" : ""}`}
+                  className={`${tab === item ? "active" : ""}${tabToneClass(item, detail)}`}
                   key={item}
                   type="button"
                   onClick={() => setTab(item)}
@@ -1035,6 +1096,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                 ) : <p className="label">Aucune carte d'identité ou passeport sur ce dossier.</p>}
               </article>
             ) : null}
+            {tab === "Authenticité document" ? <AuthenticityPlaceholder /> : null}
             {tab === "Reconnaissance faciale" ? (
               <article className="card">
                 <FaceScale score={detail.face_match?.score} threshold={detail.face_threshold ?? detail.face_match?.threshold ?? 40} />
@@ -1280,21 +1342,10 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
   const docsLocked = finished || !canDecide;
   const sentDocuments = (detail.documents || []).filter((document) => document.status !== "requested");
   const complements = (detail.tracker || []).filter((row) => !row.document_id);
-  const alertReasons = detail.alert_reasons || [];
   return (
     <div className="verify-preview">
       <aside className="verify-side">
         <div className="verify-side-head">
-          <h3>{detail.customer?.display_name || detail.case.name}</h3>
-          <p className="label" style={{ marginTop: 4, marginBottom: 0 }}>
-            id-verification = {detail.case.id}
-          </p>
-          <p
-            className="label"
-            style={{ marginTop: 2, marginBottom: 8, fontSize: 12, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}
-          >
-            external-id = {detail.customer?.client_reference || "—"}
-          </p>
           <RiskScoreChip
             score={detail.customer?.risk?.score}
             tier={detail.customer?.risk?.tier}
@@ -1305,7 +1356,7 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
         <div className="tabs case-tabs">
           {PREVIEW_TABS.map((item) => (
             <button
-              className={`${tab === item ? "active" : ""}${tabHasAlert(item, alertReasons) ? " tab-alert" : ""}`}
+              className={`${tab === item ? "active" : ""}${tabToneClass(item, detail)}`}
               key={item}
               type="button"
               onClick={() => setTab(item)}
@@ -1358,6 +1409,7 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
             ) : <p className="label">Aucune carte d'identité ou passeport sur ce dossier.</p>}
           </article>
         ) : null}
+        {tab === "Authenticité document" ? <AuthenticityPlaceholder /> : null}
         {tab === "Reconnaissance faciale" ? (
           <article className="card">
             <FaceScale score={detail.face_match?.score} threshold={detail.face_threshold ?? detail.face_match?.threshold ?? 40} />
