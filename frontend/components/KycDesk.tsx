@@ -895,7 +895,11 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                       : "Aucune pièce fournie."}
                   </p>
                 ) : null}
-                <DocumentViewer documents={detail.documents} onDecide={(id, decision) => void decideDocument(id, decision)} />
+                <DocumentViewer
+                  documents={detail.documents}
+                  locked={Boolean(finished)}
+                  onDecide={finished ? undefined : (id, decision) => void decideDocument(id, decision)}
+                />
               </div>
             ) : null}
             {tab === "Données du document" ? (
@@ -1104,6 +1108,35 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
     }
   }
 
+  async function decideDocument(id: string, decision: "approve" | "reject" | "revision") {
+    setError("");
+    try {
+      const updated = await api<ViewerDocument>(`/api/clarity/v1/desks/documents/${id}/decision`, {
+        method: "POST",
+        body: JSON.stringify({ decision }),
+      });
+      setDetail((current) => current && ({
+        ...current,
+        documents: current.documents.map((item) => (item.id === id ? { ...item, ...updated } : item)),
+      }));
+      onChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Décision document refusée");
+    }
+  }
+
+  async function disposition(id: string, status: "no_hit" | "confirmed_hit") {
+    setError("");
+    try {
+      await api(`/api/clarity/v1/screening/matches/${id}/disposition`, { method: "POST", body: JSON.stringify({ status }) });
+      setDetail(await api<Detail>(`/api/clarity/v1/desks/kyc/${runtimeId}`));
+      setMessage(status === "no_hit" ? "Correspondance écartée." : "Correspondance confirmée.");
+      onChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Vérification du criblage refusée");
+    }
+  }
+
   async function addCaseNote() {
     if (!freeNote.trim()) return;
     setError("");
@@ -1131,6 +1164,7 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
   const canDecide = reviewState === "analystReview" || reviewState === "checkerReview" || reviewState === "investigate";
   const canApprove = canDecide && (fundingReview || piecesApproved) && !screeningPending;
   const finished = detail.case.status === "failed" || detail.case.state === "approved" || detail.case.state === "approved-partially" || detail.case.state === "rejected" || detail.case.state === "closed";
+  const docsLocked = finished || !canDecide;
   const sentDocuments = (detail.documents || []).filter((document) => document.status !== "requested");
   const complements = (detail.tracker || []).filter((row) => !row.document_id);
   const alertReasons = detail.alert_reasons || [];
@@ -1174,7 +1208,11 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
           </article>
         ) : null}
         {tab === "Documents" ? (
-          <DocumentViewer documents={detail.documents} locked onDecide={() => undefined} />
+          <DocumentViewer
+            documents={detail.documents}
+            locked={docsLocked}
+            onDecide={docsLocked ? undefined : (id, decision) => void decideDocument(id, decision)}
+          />
         ) : null}
         {tab === "Données du document" ? (
           <article className="card">
@@ -1211,7 +1249,18 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
                 <p className="factor" key={factor.code}>{factor.points} pts — {factor.explanation}</p>
               ))}
             {matches.length ? matches.map((match) => (
-              <ScreeningMatchRow key={match.id} match={match} pendingActions={null} />
+              <ScreeningMatchRow
+                key={match.id}
+                match={match}
+                pendingActions={
+                  !finished && match.status === "pending"
+                    ? {
+                        onClear: () => void disposition(match.id, "no_hit"),
+                        onConfirm: () => void disposition(match.id, "confirmed_hit"),
+                      }
+                    : null
+                }
+              />
             )) : <p className="label">Aucune correspondance sur ce dossier.</p>}
           </article>
         ) : null}
