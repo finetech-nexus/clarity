@@ -923,11 +923,15 @@ def maybe_open_funding_review(db: Session, tenant: Tenant, tx: Transaction) -> W
     )
     db.add(workflow)
     db.flush()
-    cycle = latest_kyc_cycle(db, customer.id)
-    if cycle:
-        cycle.workflow_id = workflow.id
-    else:
-        open_kyc_cycle(db, customer, workflow.id)
+    # New independent verification line — never overwrite the first (partial) KYC cycle.
+    funding_cycle = KycCycle(
+        tenant_id=tenant.id,
+        customer_id=customer.id,
+        workflow_id=workflow.id,
+        status="pending",
+    )
+    db.add(funding_cycle)
+    db.flush()
     _sync_task(db, workflow, task)
     audit(db, tenant.id, "clarity", "workflow.start", "workflow", workflow.id, {"definition": "clarityFundingOrigin", "transaction_id": tx.id})
     return workflow

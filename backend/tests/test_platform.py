@@ -2094,6 +2094,10 @@ def test_partial_approval_opens_the_account_and_reviews_the_funding_transfer(tmp
         # Independent of the first KYC verification, same client.
         assert funding["workflow_id"] != workflow_id
         assert funding["name"] == "Lea Martin"
+        fiche = client.get(f"/api/clarity/v1/customers/{customer_id}", headers=analyst_headers)
+        assert fiche.status_code == 200, fiche.text
+        cycles = fiche.json().get("kyc_cycles") or []
+        assert len(cycles) >= 2, cycles
         funding_case = client.get(f"/api/clarity/v1/desks/kyc/{funding['id']}", headers=analyst_headers)
         assert funding_case.status_code == 200, funding_case.text
         transfer = funding_case.json().get("transfer") or {}

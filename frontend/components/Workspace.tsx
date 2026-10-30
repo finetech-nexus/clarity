@@ -496,7 +496,8 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
             <tr key={row.id}>
               <td>
                 <Link href={`/customers/${row.id}`}>{row.display_name}</Link>
-                <div className="label">{row.client_reference || row.external_ref || "—"}</div>
+                <div className="label">id = {row.external_ref || row.id}</div>
+                <div className="label">external-id = {row.client_reference || "—"}</div>
               </td>
               <td><span className={`badge ${row.kyc_status || ""}`}>{row.kyc_label || "—"}</span></td>
               <td>{row.risk_tier || "—"}</td>
@@ -535,7 +536,10 @@ function CustomerView({ profile, onChange }: { profile: Record<string, unknown>;
         <div>
           <h1>{String(profile.display_name)}</h1>
           <p className="label" style={{ marginTop: 4, marginBottom: 0 }}>
-            {String(profile.client_reference || profile.external_ref || "—")}
+            id = {String(profile.external_ref || profile.id || "—")}
+          </p>
+          <p className="label" style={{ marginTop: 2, marginBottom: 0 }}>
+            external-id = {String(profile.client_reference || "—")}
           </p>
           <p className="lede">
             Statut {String(profile.status)}
@@ -570,6 +574,12 @@ function CustomerView({ profile, onChange }: { profile: Record<string, unknown>;
       {openCycle ? (
         <section className="customer-verification-detail" aria-label="Détail de la vérification">
           <h3>{openCycle.label} · {day(openCycle.created_at)}</h3>
+          <p className="label" style={{ marginTop: 2, marginBottom: 0 }}>
+            id-verification = {openCycle.workflow_runtime_id || openCycle.id}
+          </p>
+          <p className="label" style={{ marginTop: 2, marginBottom: 8, fontSize: 12 }}>
+            external-id = {String(profile.client_reference || "—")}
+          </p>
           {openCycle.workflow_runtime_id ? (
             <VerificationPreview runtimeId={openCycle.workflow_runtime_id} onChanged={() => void refreshProfile()} />
           ) : (

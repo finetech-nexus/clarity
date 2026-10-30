@@ -7,6 +7,7 @@ import { useI18n } from "../lib/i18n";
 
 type QueueItem = {
   id: string;
+  workflow_id?: string;
   name: string;
   definition: string;
   definition_key?: string;
@@ -944,11 +945,15 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
               <div>
                 <p className="panel-kicker">{t("verify.detail")}</p>
                 <h2>{detail.customer?.display_name || detail.case.name}</h2>
-                {detail.customer?.client_reference ? (
-                  <p className="label" style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
-                    {detail.customer.client_reference}
-                  </p>
-                ) : null}
+                <p className="label" style={{ marginTop: 4, marginBottom: 0 }}>
+                  id-verification = {detail.case.id}
+                </p>
+                <p
+                  className="label"
+                  style={{ marginTop: 2, marginBottom: 0, fontSize: 12, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}
+                >
+                  external-id = {detail.customer?.client_reference || "—"}
+                </p>
                 <p className="label">{detail.case.definition} · {statusLabel(detail.case.status, detail.case.state)} · {detail.task?.name || stepLabel(detail.case.state, "sans tâche ouverte")}</p>
                 {detail.steps?.length ? (
                   <ol className="stepper">
@@ -1281,11 +1286,15 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
       <aside className="verify-side">
         <div className="verify-side-head">
           <h3>{detail.customer?.display_name || detail.case.name}</h3>
-          {detail.customer?.client_reference ? (
-            <p className="label" style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
-              {detail.customer.client_reference}
-            </p>
-          ) : null}
+          <p className="label" style={{ marginTop: 4, marginBottom: 0 }}>
+            id-verification = {detail.case.id}
+          </p>
+          <p
+            className="label"
+            style={{ marginTop: 2, marginBottom: 8, fontSize: 12, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}
+          >
+            external-id = {detail.customer?.client_reference || "—"}
+          </p>
           <RiskScoreChip
             score={detail.customer?.risk?.score}
             tier={detail.customer?.risk?.tier}
