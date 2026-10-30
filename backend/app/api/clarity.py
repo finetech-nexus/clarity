@@ -327,8 +327,8 @@ def list_customers(
                 "synthetic": row.synthetic,
                 "external_ref": row.external_ref,
                 "client_reference": extension.get("client_reference"),
-                "created_at": iso(row.created_at),
-                "updated_at": iso(row.updated_at or row.created_at),
+                "created_at": iso(row.created_at) if getattr(row, "created_at", None) else None,
+                "updated_at": iso(row.updated_at) if getattr(row, "updated_at", None) else None,
                 "kyc_created_at": view["created_at"] if view else None,
                 "kyc_validated_at": view["validated_at"] if view else None,
                 "kyc_expires_at": view["expires_at"] if view else None,
@@ -350,18 +350,21 @@ def list_customers(
     if risk:
         wanted = {item.strip() for item in risk.split(",") if item.strip()}
         listed = [row for row in listed if (row["risk_tier"] or "") in wanted]
-    allowed_sort = {
-        "display_name",
-        "kyc_label",
-        "risk_tier",
-        "kyc_created_at",
-        "kyc_validated_at",
-        "kyc_expires_at",
-        "created_at",
-        "updated_at",
-        "client_reference",
-    }
-    sort_key = sort if sort in allowed_sort else "updated_at"
+    sort_key = (
+        sort
+        if sort
+        in {
+            "display_name",
+            "kyc_label",
+            "risk_tier",
+            "kyc_created_at",
+            "kyc_validated_at",
+            "kyc_expires_at",
+            "created_at",
+            "updated_at",
+        }
+        else "updated_at"
+    )
     descending = direction.strip().lower() != "asc"
 
     def sort_value(row: dict):

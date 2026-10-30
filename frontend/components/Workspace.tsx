@@ -428,7 +428,7 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
     if (sort === column) setDirection((current) => (current === "asc" ? "desc" : "asc"));
     else {
       setSort(column);
-      setDirection("asc");
+      setDirection(column.endsWith("_at") ? "desc" : "asc");
     }
   }
   const mark = (column: string) => (sort === column ? (direction === "asc" ? " ↑" : " ↓") : "");
@@ -481,10 +481,9 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
       <table className="inbox sheet">
         <thead>
           <tr>
-            <th><button className="sort" type="button" onClick={() => toggle("display_name")}>Client{mark("display_name")}</button></th>
+            <th><button className="sort" type="button" onClick={() => toggle("updated_at")}>Client{mark("updated_at")}</button></th>
             <th><button className="sort" type="button" onClick={() => toggle("kyc_label")}>Vérification{mark("kyc_label")}</button></th>
             <th><button className="sort" type="button" onClick={() => toggle("risk_tier")}>Risque{mark("risk_tier")}</button></th>
-            <th><button className="sort" type="button" onClick={() => toggle("updated_at")}>Modifié{mark("updated_at")}</button></th>
             <th><button className="sort" type="button" onClick={() => toggle("kyc_created_at")}>Création{mark("kyc_created_at")}</button></th>
             <th><button className="sort" type="button" onClick={() => toggle("kyc_validated_at")}>Validation{mark("kyc_validated_at")}</button></th>
             <th><button className="sort" type="button" onClick={() => toggle("kyc_expires_at")}>Expiration{mark("kyc_expires_at")}</button></th>
@@ -492,7 +491,7 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
           </tr>
         </thead>
         <tbody>
-          {!rows.length ? <tr><td colSpan={8}>Aucun client de ce type.</td></tr> : null}
+          {!rows.length ? <tr><td colSpan={7}>Aucun client de ce type.</td></tr> : null}
           {rows.map((row) => (
             <tr key={row.id}>
               <td>
@@ -501,7 +500,6 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
               </td>
               <td><span className={`badge ${row.kyc_status || ""}`}>{row.kyc_label || "—"}</span></td>
               <td>{row.risk_tier || "—"}</td>
-              <td>{day(row.updated_at || row.created_at)}</td>
               <td>{day(row.kyc_created_at)}</td>
               <td>{day(row.kyc_validated_at)}</td>
               <td>{day(row.kyc_expires_at)}</td>
@@ -536,13 +534,12 @@ function CustomerView({ profile, onChange }: { profile: Record<string, unknown>;
       <header className="customer-fiche-head">
         <div>
           <h1>{String(profile.display_name)}</h1>
-          <p className="label" style={{ marginTop: 4, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
-            {String(profile.client_reference || "—")}
+          <p className="label" style={{ marginTop: 4, marginBottom: 0 }}>
+            {String(profile.client_reference || profile.external_ref || "—")}
           </p>
           <p className="lede">
             Statut {String(profile.status)}
             {latestCycle ? ` · dernière vérification ${latestCycle.label}` : ""}
-            {profile.external_ref ? ` · KYC ${String(profile.external_ref)}` : ""}
           </p>
         </div>
         <RiskScoreChip
