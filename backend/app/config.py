@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     ocr_url: str = ""
     public_app_url: str = "http://localhost:3010"
     core_banking_hook_url: str = ""
+    # Same client_credentials path Ballerine workflowsvc uses for /api/kyc/onboarding.
+    core_banking_token_url: str = ""
+    core_banking_client_id: str = ""
+    core_banking_client_secret: str = ""
+    core_banking_tenant: str = "tn"
     admin_username: str = "admin"
     admin_password: str = "password"
     auth_mode: str = "oidc"

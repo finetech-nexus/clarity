@@ -500,6 +500,7 @@ def kyc_case(runtime_id: str, principal: Principal = Depends(clarity_principal),
         "notes": list((workflow.context or {}).get("notes") or []),
         "face_match": stored_face_match(db, workflow),
         "face_threshold": face_threshold(db, principal.tenant_id),
+        "account_hook": dict((workflow.context or {}).get("account_hook") or {}),
     }
 
 
@@ -574,6 +575,30 @@ def decide_kyc(runtime_id: str, body: dict, request: Request, principal: Princip
         refuse_verification(db, request.app.state.engine, tenant, principal, workflow, rationale)
     else:
         advance_workflow(db, request.app.state.engine, tenant, principal, workflow, action, rationale)
+    return kyc_case(runtime_id, principal, db)
+
+
+@router.post("/kyc/{runtime_id}/account-hook")
+def retry_account_hook(runtime_id: str, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    """Re-send the core-banking onboarding webhook after a failed delivery."""
+    from app.services import deliver_account_hook
+
+    if not principal.allows("admin", "checker"):
+        raise clarity_error(403, "forbidden", "Relance réservée à l'administration ou au contrôleur.")
+    workflow = _workflow(db, principal, runtime_id)
+    if workflow.state not in {"approved", "approved-partially"}:
+        raise clarity_error(422, "not_approved", "Le dossier doit être approuvé avant de créer le compte.")
+    customer = db.get(Customer, workflow.customer_id) if workflow.customer_id else None
+    if not customer:
+        raise clarity_error(404, "not_found", "Client introuvable.")
+    deliver_account_hook(db, workflow, customer)
+    hook = dict((workflow.context or {}).get("account_hook") or {})
+    if not hook.get("delivered"):
+        raise clarity_error(
+            502,
+            "account_hook_failed",
+            f"Création de compte non confirmée ({hook.get('status') or hook.get('error') or hook.get('auth_error') or 'échec'}).",
+        )
     return kyc_case(runtime_id, principal, db)
 
 

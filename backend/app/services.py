@@ -2004,12 +2004,19 @@ def _account_hook_payload(db: Session, workflow: WorkflowInstance, customer: Cus
     entity = dict((workflow.context or {}).get("entity") or {})
     stored = dict(entity.get("data") or {})
     individual = customer.individual
+    legal = (individual.legal_name if individual else "") or customer.display_name or ""
+    legal_parts = [part for part in str(legal).split() if part]
+    inferred_first = " ".join(legal_parts[:-1]) if len(legal_parts) > 1 else (legal_parts[0] if legal_parts else "")
+    inferred_last = legal_parts[-1] if len(legal_parts) > 1 else ""
     data = {
         "email": stored.get("email") or (individual.email if individual else "") or "",
         "phone": stored.get("phone") or stored.get("phoneNumber") or (individual.phone if individual else "") or "",
-        "country": stored.get("country") or (individual.nationality if individual else "") or (individual.residence_country if individual else "") or "",
-        "lastName": stored.get("lastName") or (individual.family_name if individual else "") or "",
-        "firstName": stored.get("firstName") or (individual.given_name if individual else "") or "",
+        "country": stored.get("country")
+        or (individual.nationality if individual else "")
+        or (individual.residence_country if individual else "")
+        or "TN",
+        "lastName": stored.get("lastName") or (individual.family_name if individual else "") or inferred_last,
+        "firstName": stored.get("firstName") or (individual.given_name if individual else "") or inferred_first,
         "dateOfBirth": stored.get("dateOfBirth") or (individual.date_of_birth if individual else "") or "",
     }
     documents = []
@@ -2066,6 +2073,32 @@ def _account_hook_payload(db: Session, workflow: WorkflowInstance, customer: Cus
     }
 
 
+def _core_banking_service_token(settings) -> str | None:
+    """Client-credentials token required by core-banking /api/kyc/onboarding (keycloakProtect)."""
+    import httpx
+
+    token_url = (settings.core_banking_token_url or "").strip()
+    client_id = (settings.core_banking_client_id or "").strip()
+    client_secret = (settings.core_banking_client_secret or "").strip()
+    if not (token_url and client_id and client_secret):
+        return None
+    response = httpx.post(
+        token_url,
+        data={
+            "grant_type": "client_credentials",
+            "client_id": client_id,
+            "client_secret": client_secret,
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=8,
+    )
+    response.raise_for_status()
+    token = (response.json() or {}).get("access_token")
+    if not token:
+        raise RuntimeError("core_banking_token_missing")
+    return str(token)
+
+
 def deliver_account_hook(db: Session, workflow: WorkflowInstance, customer: Customer) -> None:
     """Tell core banking that an approved client can be created. A delivery failure does not undo the approval."""
     import httpx
@@ -2087,17 +2120,33 @@ def deliver_account_hook(db: Session, workflow: WorkflowInstance, customer: Cust
     record: dict = {"event": "workflow.completed", "payload": payload, "delivered": False}
     if targets:
         signature = sign_payload(settings.unified_api_shared_secret, payload)
+        headers = {
+            "Content-Type": "application/json",
+            "x-hmac-signature": signature,
+            "x-tenant-id": (settings.core_banking_tenant or "tn").strip() or "tn",
+        }
+        try:
+            token = _core_banking_service_token(settings)
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            else:
+                record["auth"] = "missing_client_credentials"
+        except Exception as exc:  # noqa: BLE001
+            record["auth_error"] = str(exc)
         for target in targets:
             try:
                 response = httpx.post(
                     target,
                     json=payload,
-                    headers={"Content-Type": "application/json", "x-hmac-signature": signature},
-                    timeout=8,
+                    headers=headers,
+                    timeout=30,
                 )
                 record["url"] = target
                 record["status"] = response.status_code
+                record["response"] = (response.text or "")[:500]
                 record["delivered"] = response.status_code < 400
+                if record["delivered"]:
+                    break
             except Exception as exc:  # noqa: BLE001
                 record["url"] = target
                 record["error"] = str(exc)
