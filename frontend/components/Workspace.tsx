@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { FormEvent, Fragment, useEffect, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import CaseDesk from "./CaseDesk";
 import KycDesk, { RiskScoreChip, VerificationPreview } from "./KycDesk";
 import ScreeningDesk from "./ScreeningDesk";
@@ -519,6 +519,7 @@ function CustomerView({ profile, onChange }: { profile: Record<string, unknown>;
   useEffect(() => {
     if (!cycles.some((cycle) => cycle.id === openId)) setOpenId(cycles[0]?.id || "");
   }, [cycles, openId]);
+  const openCycle = cycles.find((cycle) => cycle.id === openId) || cycles[0];
   async function refreshProfile() {
     onChange(await api(`/api/clarity/v1/customers/${profile.id}`));
   }
@@ -548,30 +549,27 @@ function CustomerView({ profile, onChange }: { profile: Record<string, unknown>;
         <tbody>
           {!cycles.length ? <tr><td colSpan={5}>Aucune vérification.</td></tr> : null}
           {cycles.map((cycle) => (
-            <Fragment key={cycle.id}>
-              <tr className={cycle.id === openId ? "selected" : ""} onClick={() => setOpenId(cycle.id)}>
-                <td><span className={`badge ${cycle.status}`}>{cycle.label}</span></td>
-                <td>{day(cycle.created_at)}</td>
-                <td>{day(cycle.validated_at)}</td>
-                <td>{day(cycle.expires_at)}</td>
-                <td>{cycle.reminder === "none" ? "—" : `${cycle.reminder} · ${day(cycle.reminded_at)}`}</td>
-              </tr>
-              {cycle.id === openId ? (
-                <tr className="detail-row">
-                  <td colSpan={5}>
-                    {cycle.workflow_runtime_id ? (
-                      <VerificationPreview runtimeId={cycle.workflow_runtime_id} onChanged={() => void refreshProfile()} />
-                    ) : (
-                      <p className="label">Aucun dossier ouvert pour cette vérification. Ouvrez le bureau Vérification pour instruire le dossier.</p>
-                    )}
-                  </td>
-                </tr>
-              ) : null}
-            </Fragment>
+            <tr key={cycle.id} className={cycle.id === openId ? "selected" : ""} onClick={() => setOpenId(cycle.id)}>
+              <td><span className={`badge ${cycle.status}`}>{cycle.label}</span></td>
+              <td>{day(cycle.created_at)}</td>
+              <td>{day(cycle.validated_at)}</td>
+              <td>{day(cycle.expires_at)}</td>
+              <td>{cycle.reminder === "none" ? "—" : `${cycle.reminder} · ${day(cycle.reminded_at)}`}</td>
+            </tr>
           ))}
         </tbody>
       </table>
-      <p className="label">Les notes sont dans l&apos;onglet Notes. Les pièces se demandent dans l&apos;onglet Action. Une nouvelle vérification pour le même téléphone ou e-mail reste rattachée à ce client.</p>
+      {openCycle ? (
+        <section className="customer-verification-detail" aria-label="Détail de la vérification">
+          <h3>{openCycle.label} · {day(openCycle.created_at)}</h3>
+          {openCycle.workflow_runtime_id ? (
+            <VerificationPreview runtimeId={openCycle.workflow_runtime_id} onChanged={() => void refreshProfile()} />
+          ) : (
+            <p className="label">Aucun dossier ouvert pour cette vérification. Ouvrez le bureau Vérification pour instruire le dossier.</p>
+          )}
+        </section>
+      ) : null}
+      <p className="label">Le score affiché correspond à la dernière vérification. Les notes sont dans l&apos;onglet Notes. Les pièces se demandent dans l&apos;onglet Action.</p>
     </>
   );
 }

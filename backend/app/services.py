@@ -1487,15 +1487,15 @@ def _customer_has_pending_screening(db: Session, customer_id: str) -> bool:
     return pending is not None
 
 
-RISK_METHODOLOGY = "clarity-risk-3"
+RISK_METHODOLOGY = "clarity-risk-3.1"
 RISK_FORMULA_NOTE = (
-    "Score = somme des points AML + visage + authenticité des pièces + historique d'opérations + pays/structure. "
-    "AML : chaque topic a une pondération distincte "
+    "Score de la dernière vérification uniquement = AML + visage + authenticité + historique d'opérations + pays/structure. "
+    "AML : pondération par topic "
     "(Sanctioned / Wanted / Export controlled élevés ; Debarred / Disqualified / PEP moyens ; "
     "Person of interest / Politician informatifs). "
-    "Plusieurs topics se cumulent (le plus grave en entier, les autres en fraction). "
-    "Un hit sanctions/wanted reste élevé même en candidat. "
-    "Visage : échec ou score faible. Pièces : MRZ/code-barres. "
+    "Visage : échec ou score faible. "
+    "Authenticité des pièces : toujours OK pour le moment (mécanisme à préciser). "
+    "Absence de MRZ/code-barres sur pièce d'identité française ou à puce : normale. "
     "Opérations : risque confirmé / alerte utile par un gestionnaire. "
     "Seuils : <30 faible, 30–59 moyen, ≥60 élevé."
 )
@@ -1672,44 +1672,29 @@ def _looks_like_mrz_text(text: str) -> bool:
     return any(line.startswith("P<") or (len(line) >= 30 and line.count("<") >= 2) for line in lines)
 
 
+def _document_is_chip_or_french_id(document: IdentityDocument) -> bool:
+    """French national ID / chip cards often have no classic MRZ/barcode — that is expected."""
+    country = str(document.issuing_country or "").upper()
+    props = document.properties if isinstance(document.properties, dict) else {}
+    text = " ".join(
+        str(props.get(key) or "")
+        for key in ("title", "fileName", "issuingVersion", "chip", "documentType")
+    ).lower()
+    if country in {"FR", "FRA"} and document.doc_type in {"id_card", "id-card", "residence_permit"}:
+        return True
+    if "puce" in text or "chip" in text or "cni" in text or "carte nationale" in text:
+        return True
+    return False
+
+
 def _document_authenticity_factors(documents: list[IdentityDocument]) -> list[dict]:
-    factors = []
-    for document in documents:
-        if document.doc_type not in {"passport", "id_card", "drivers_license"}:
-            continue
-        ocr = (document.properties or {}).get("ocr") if isinstance(document.properties, dict) else None
-        if not isinstance(ocr, dict):
-            continue
-        mrz = bool(ocr.get("mrz"))
-        text = str(ocr.get("extracted_text") or "")
-        title = (document.properties or {}).get("title") or document.doc_type
-        if mrz:
-            continue
-        if _looks_like_mrz_text(text):
-            factors.append(
-                {
-                    "code": "document_mrz_invalid",
-                    "points": 30,
-                    "explanation": f"MRZ/code-barres illisible ou checksum invalide sur « {title} » — authenticité douteuse.",
-                }
-            )
-        elif document.doc_type == "passport":
-            factors.append(
-                {
-                    "code": "document_mrz_missing",
-                    "points": 15,
-                    "explanation": f"Passeport « {title} » sans MRZ/code-barres lisible — authenticité non vérifiable.",
-                }
-            )
-        elif document.doc_type == "id_card":
-            factors.append(
-                {
-                    "code": "document_mrz_optional_missing",
-                    "points": 8,
-                    "explanation": f"Pièce « {title} » sans MRZ/code-barres — contrôle d'authenticité partiel.",
-                }
-            )
-    return factors
+    """Authenticity check is always OK for now; the real mechanism will come later.
+
+    Missing MRZ/barcode on French or chip identity cards is considered normal and must not
+    raise points when the check is re-enabled.
+    """
+    _ = documents
+    return []
 
 
 def _face_risk_factors(db: Session, customer: Customer) -> list[dict]:
@@ -1829,10 +1814,19 @@ def _operation_history_factors(db: Session, customer: Customer) -> list[dict]:
     return factors
 
 
+def _latest_verification_workflow(db: Session, customer: Customer) -> WorkflowInstance | None:
+    return db.scalar(
+        select(WorkflowInstance)
+        .where(WorkflowInstance.customer_id == customer.id, WorkflowInstance.definition_key.in_(_VERIFICATION_KEYS))
+        .order_by(WorkflowInstance.created_at.desc())
+    )
+
+
 def assess_customer(db: Session, tenant: Tenant, customer: Customer, source: str = "ruleset") -> RiskAssessment:
-    """clarity-risk-2: AML topics + face + document authenticity + manager-validated ops."""
+    """clarity-risk-3: score the latest verification only (not the full history)."""
     factors: list[dict] = []
     score = 0
+    workflow = _latest_verification_workflow(db, customer)
     country = None
     if customer.individual:
         country = customer.individual.residence_country or customer.individual.nationality
@@ -1847,26 +1841,16 @@ def assess_customer(db: Session, tenant: Tenant, customer: Customer, source: str
         if any((owner.ownership_pct or 0) >= 25 for owner in owners) and len(owners) > 2:
             score += 10
             factors.append({"code": "ownership", "points": 10, "explanation": "Structure d'actionnariat avec plusieurs bénéficiaires effectifs."})
-    screening_ids = list(db.scalars(select(ScreeningCheck.id).where(ScreeningCheck.customer_id == customer.id)).all())
+    screening_query = select(ScreeningCheck).where(ScreeningCheck.customer_id == customer.id)
+    if workflow is not None:
+        screening_query = screening_query.where(ScreeningCheck.created_at >= workflow.created_at)
+    latest_screening = db.scalar(screening_query.order_by(ScreeningCheck.created_at.desc()))
     matches = []
-    if screening_ids:
-        matches = list(db.scalars(select(ScreeningMatch).where(ScreeningMatch.screening_id.in_(screening_ids))).all())
+    if latest_screening is not None:
+        matches = list(db.scalars(select(ScreeningMatch).where(ScreeningMatch.screening_id == latest_screening.id)).all())
     pending_rows = [row for row in matches if row.status == "pending"]
     confirmed_rows = [row for row in matches if row.status == "confirmed_hit"]
-    if pending_rows:
-        top = max(pending_rows, key=lambda row: (_match_topic_points(row.payload), int(row.score or 0)))
-        weight = _match_topic_points(top.payload)
-        points = _screening_candidate_points(weight, top.score)
-        topics = sorted({label for row in pending_rows for label in match_topics(row.payload)})
-        detail = f" Topics : {', '.join(topics)}." if topics else ""
-        score += points
-        factors.append(
-            {
-                "code": "screening_candidate",
-                "points": points,
-                "explanation": f"Correspondance AML candidate (pondération cumulative des topics).{detail}",
-            }
-        )
+    # Prefer confirmed hits from the latest verification; otherwise keep candidates.
     if confirmed_rows:
         top = max(confirmed_rows, key=lambda row: (_match_topic_points(row.payload), int(row.score or 0)))
         weight = _match_topic_points(top.payload) + _match_confidence_boost(top.score)
@@ -1880,10 +1864,27 @@ def assess_customer(db: Session, tenant: Tenant, customer: Customer, source: str
                 "explanation": f"Correspondance AML confirmée — pondération cumulative des topics.{detail}",
             }
         )
+    elif pending_rows:
+        top = max(pending_rows, key=lambda row: (_match_topic_points(row.payload), int(row.score or 0)))
+        weight = _match_topic_points(top.payload)
+        points = _screening_candidate_points(weight, top.score)
+        topics = sorted({label for row in pending_rows for label in match_topics(row.payload)})
+        detail = f" Topics : {', '.join(topics)}." if topics else ""
+        score += points
+        factors.append(
+            {
+                "code": "screening_candidate",
+                "points": points,
+                "explanation": f"Correspondance AML candidate (pondération cumulative des topics).{detail}",
+            }
+        )
     for factor in _face_risk_factors(db, customer):
         score += int(factor["points"])
         factors.append(factor)
-    documents = list(db.scalars(select(IdentityDocument).where(IdentityDocument.customer_id == customer.id)).all())
+    if workflow is not None:
+        documents = list(db.scalars(select(IdentityDocument).where(IdentityDocument.workflow_id == workflow.id)).all())
+    else:
+        documents = list(db.scalars(select(IdentityDocument).where(IdentityDocument.customer_id == customer.id)).all())
     for factor in _document_authenticity_factors(documents):
         score += int(factor["points"])
         factors.append(factor)
@@ -1892,7 +1893,7 @@ def assess_customer(db: Session, tenant: Tenant, customer: Customer, source: str
         factors.append(factor)
     score = min(100, max(0, score))
     if not factors:
-        factors.append({"code": "baseline", "points": 0, "explanation": "Aucun facteur aggravant sur la méthodologie clarity-risk-2."})
+        factors.append({"code": "baseline", "points": 0, "explanation": "Aucun facteur aggravant sur la dernière vérification (méthodologie clarity-risk-3.1)."})
     tier = "low"
     level = 1
     if score >= 60:
@@ -2498,6 +2499,11 @@ def customer_view(db: Session, customer: Customer) -> dict:
             RiskAssessment.current.is_(True),
         )
     )
+    if risk is None or risk.methodology_version != RISK_METHODOLOGY:
+        tenant = db.get(Tenant, customer.tenant_id)
+        if tenant is not None:
+            # Refresh when the scoring rules change so the fiche shows the latest verification only.
+            risk = assess_customer(db, tenant, customer, source="ruleset")
     documents = db.scalars(select(IdentityDocument).where(IdentityDocument.customer_id == customer.id)).all()
     parties = db.scalars(select(Party).where(Party.business_customer_id == customer.id)).all()
     checks = db.scalars(select(VerificationCheck).where(VerificationCheck.customer_id == customer.id)).all()

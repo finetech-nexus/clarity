@@ -202,8 +202,8 @@ function mixChannel(from: number, to: number, t: number) {
 function riskScoreColor(score: number | null | undefined) {
   if (score == null || Number.isNaN(score)) return null;
   const value = Math.max(0, Math.min(100, Number(score)));
-  // 0 → green, 50 → yellow, 100 → red
-  const low: [number, number, number] = [46, 174, 134];
+  // 0 → green, 50 → yellow, 100 → red (no blue/teal).
+  const low: [number, number, number] = [52, 168, 72];
   const mid: [number, number, number] = [232, 176, 48];
   const high: [number, number, number] = [201, 76, 83];
   const [from, to, t] = value <= 50

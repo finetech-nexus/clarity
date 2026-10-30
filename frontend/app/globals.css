@@ -314,7 +314,7 @@ button.active, button.active:hover {
 .case-panel { padding: 1rem 1.05rem 1.15rem; border-color: #d9e2ea; }
 .case-panel-score {
   position: relative;
-  padding-right: 6.1rem;
+  padding-right: 7.6rem;
 }
 .case-panel-score > .score-chip {
   position: absolute;
@@ -325,7 +325,7 @@ button.active, button.active:hover {
 }
 html[dir="rtl"] .case-panel-score {
   padding-right: 1.05rem;
-  padding-left: 6.1rem;
+  padding-left: 7.6rem;
 }
 html[dir="rtl"] .case-panel-score > .score-chip {
   right: auto;
@@ -490,17 +490,32 @@ html[dir="rtl"] .verify-side-head .score-chip {
 .modal h2 { margin: 0; }
 .modal label { display: flex; align-items: center; gap: 0.45rem; }
 .modal label input { width: auto; margin: 0; }
+.customer-verification-detail {
+  margin-top: 1rem;
+  padding: 0.9rem 1rem 1.05rem;
+  border: 1.5px solid var(--line);
+  border-radius: 16px;
+  background: #f7fbfa;
+  display: grid;
+  gap: 0.75rem;
+}
+.customer-verification-detail h3 {
+  margin: 0;
+  font-size: 1rem;
+}
 .score-chip {
   position: relative;
   display: grid;
-  width: 4.75rem;
-  height: 4.75rem;
-  min-width: 4.75rem;
-  max-width: 4.75rem;
+  --score-h: 4.5rem;
+  width: calc(var(--score-h) * 1.5);
+  height: var(--score-h);
+  min-width: calc(var(--score-h) * 1.5);
+  max-width: calc(var(--score-h) * 1.5);
   padding: 0;
   border: 1.5px solid var(--line);
   border-radius: 12px;
   background: #fff;
+  color: #1f2a32;
   transition: color 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
   z-index: 2;
 }
