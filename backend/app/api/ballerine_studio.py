@@ -14,7 +14,17 @@ from app.timeutil import iso, parse_dt, utcnow
 from app.engine import PROCESS_CATALOG
 from app.models import Alert, AuditEvent, Customer, IdentityDocument, IndividualProfile, MonitoringRule, RiskAssessment, Transaction, new_id
 from app.security import Principal
-from app.services import advance_workflow, assess_customer, document_record, nest_error, start_customer_workflow, store_bytes
+from app.services import (
+    _progress_verification,
+    advance_workflow,
+    assess_customer,
+    bind_workflow_documents,
+    document_record,
+    nest_error,
+    promote_identity_fields,
+    start_customer_workflow,
+    store_bytes,
+)
 from app.timeutil import iso, parse_dt, utcnow
 
 
@@ -434,12 +444,14 @@ def collection_context(workflowRuntimeId: str | None = None, principal: Principa
 def collection_sync(body: dict, workflowRuntimeId: str | None = None, principal: Principal = Depends(journey_principal), db: Session = Depends(db_session)):
     from sqlalchemy.orm.attributes import flag_modified
 
+    from app.services import _merge_context
+
     workflow = _workflow(db, principal, _runtime(principal, workflowRuntimeId))
     if not isinstance(body.get("context"), dict):
         raise nest_error(400, "context is required")
-    workflow.context = {**(workflow.context or {}), **body["context"]}
+    workflow.context = _merge_context(workflow.context, body["context"])
     flag_modified(workflow, "context")
-    _bind_uploaded_files(db, workflow, workflow.context)
+    bind_workflow_documents(db, workflow, workflow.context)
     return {"context": workflow.context, "state": workflow.state, "id": workflow.ballerine_runtime_id}
 
 
@@ -460,9 +472,24 @@ def collection_event(body: dict, request: Request, workflowRuntimeId: str | None
 
 
 @router.post("/collection-flow/final-submission")
-def collection_finish(workflowRuntimeId: str | None = None, principal: Principal = Depends(journey_principal), db: Session = Depends(db_session)):
+def collection_finish(
+    request: Request,
+    workflowRuntimeId: str | None = None,
+    principal: Principal = Depends(journey_principal),
+    db: Session = Depends(db_session),
+):
     workflow = _workflow(db, principal, _runtime(principal, workflowRuntimeId))
-    return {"workflowRuntimeId": workflow.ballerine_runtime_id, "state": workflow.state, "status": workflow.status, "submitted": workflow.state in {"approved", "rejected", "closed"}}
+    bind_workflow_documents(db, workflow, workflow.context)
+    tenant = _tenant(db, principal)
+    customer = db.get(Customer, workflow.customer_id) if workflow.customer_id else None
+    if customer is not None and workflow.state == "collect":
+        _progress_verification(db, request.app.state.engine, tenant, customer, workflow)
+    return {
+        "workflowRuntimeId": workflow.ballerine_runtime_id,
+        "state": workflow.state,
+        "status": workflow.status,
+        "submitted": workflow.state in {"approved", "rejected", "closed", "analystReview", "checkerReview", "screen", "score"},
+    }
 
 
 @router.post("/internal/workflow-definition/create-demo", status_code=201)
@@ -478,97 +505,11 @@ def _collection_workflow(db: Session, principal: Principal, workflow_runtime_id:
 
 
 def _bind_uploaded_files(db: Session, workflow, context: dict) -> None:
-    from sqlalchemy.orm.attributes import flag_modified
-
-    documents = context.get("documents")
-    if not isinstance(documents, list):
-        return
-    for document in documents:
-        if not isinstance(document, dict):
-            continue
-        pages = document.get("pages") if isinstance(document.get("pages"), list) else []
-        for page in pages:
-            if not isinstance(page, dict):
-                continue
-            file_id = page.get("ballerineFileId") or page.get("id")
-            if not file_id:
-                continue
-            row = db.get(IdentityDocument, str(file_id))
-            if not row or row.tenant_id != workflow.tenant_id:
-                continue
-            row.workflow_id = workflow.id
-            row.customer_id = workflow.customer_id
-            row.category = str(document.get("category") or row.category)
-            row.doc_type = str(document.get("type") or row.doc_type)
-            properties = dict(row.properties or {})
-            if isinstance(document.get("properties"), dict):
-                properties.update(document["properties"])
-            side = page.get("metadata", {}).get("side") if isinstance(page.get("metadata"), dict) else None
-            if side:
-                properties["side"] = side
-                properties["title"] = f"{row.doc_type} {side}".strip()
-            for key in ("firstName", "lastName", "dateOfBirth", "nationality", "documentNumber", "expiry", "gender", "address"):
-                text = "" if properties.get(key) is None else str(properties.get(key)).strip()
-                if not text or set(text) <= {"-", ".", "/"}:
-                    properties.pop(key, None)
-            row.properties = properties
-            flag_modified(row, "properties")
-            _read_identity_photo(db, workflow, row)
-
-
-_IDENTITY_PHOTOS = {"passport", "id_card", "id-card", "drivers_license", "residence_permit"}
+    bind_workflow_documents(db, workflow, context)
 
 
 def _read_identity_photo(db: Session, workflow, document) -> None:
-    """Fill the extracted name from the same reader the desk uses. A blank sent with the photo is ignored."""
-    if document.doc_type not in _IDENTITY_PHOTOS or not document.storage_path:
-        return
-    from pathlib import Path
-
-    from sqlalchemy.orm.attributes import flag_modified
-
-    from app.models import Customer
-    from app.ocr import keep_reader_values, read_identity
-
-    path = Path(document.storage_path)
-    if not path.is_file():
-        return
-    result = read_identity(path.read_bytes())
-    keep_reader_values(document, result)
-    parsed = result.get("parsedData") or {}
-    first = str(parsed.get("firstName") or "").strip()
-    last = str(parsed.get("lastName") or "").strip()
-    born = str(parsed.get("dateOfBirth") or "").strip()
-    if not any((first, last, born)):
-        return
-    context = dict(workflow.context or {})
-    entity = dict(context.get("entity") or {})
-    data = dict(entity.get("data") or {})
-    changed = False
-    for key, value in (("firstName", first), ("lastName", last), ("dateOfBirth", born)):
-        current = str(data.get(key) or data.get({"firstName": "given_name", "lastName": "family_name", "dateOfBirth": "date_of_birth"}[key]) or "").strip()
-        if value and not current:
-            data[key] = value
-            changed = True
-    if changed:
-        entity["data"] = data
-        context["entity"] = entity
-        workflow.context = context
-        flag_modified(workflow, "context")
-    if not workflow.customer_id:
-        return
-    customer = db.get(Customer, workflow.customer_id)
-    if not customer or customer.individual is None:
-        return
-    person = customer.individual
-    if first and not (person.given_name or "").strip():
-        person.given_name = first
-    if last and not (person.family_name or "").strip():
-        person.family_name = last
-    if born and not (person.date_of_birth or "").strip():
-        person.date_of_birth = born
-    if (not customer.display_name or customer.display_name == "Personne physique") and (person.given_name or person.family_name):
-        customer.display_name = " ".join(part for part in (person.given_name, person.family_name) if part)
+    promote_identity_fields(db, workflow, document)
 
 
 def _stored_file(document: IdentityDocument) -> dict:

@@ -338,13 +338,21 @@ def create_collection_flow_url(body: dict, request: Request, principal: Principa
 
 @router.patch("/external/workflows/{runtime_id}")
 @router.post("/external/workflows/{runtime_id}")
-def update_workflow(runtime_id: str, body: dict, principal: Principal = Depends(ballerine_principal), db: Session = Depends(db_session)):
+def update_workflow(
+    runtime_id: str,
+    body: dict,
+    request: Request,
+    principal: Principal = Depends(ballerine_principal),
+    db: Session = Depends(db_session),
+):
     from sqlalchemy.orm.attributes import flag_modified
+
+    from app.services import _merge_context, _progress_verification, bind_workflow_documents
 
     workflow = _workflow(db, principal, runtime_id)
     context = dict(workflow.context or {})
     if isinstance(body.get("context"), dict):
-        context.update(body["context"])
+        context = _merge_context(context, body["context"])
     if isinstance(body.get("tags"), list):
         context["tags"] = body["tags"]
     if isinstance(body.get("state"), str) and body["state"]:
@@ -352,7 +360,11 @@ def update_workflow(runtime_id: str, body: dict, principal: Principal = Depends(
     workflow.context = context
     flag_modified(workflow, "context")
     workflow.updated_at = utcnow()
+    bind_workflow_documents(db, workflow, workflow.context)
     customer = db.get(Customer, workflow.customer_id) if workflow.customer_id else None
+    page = str(body.get("state") or context.get("collectionState") or "").replace("_", "-").lower()
+    if customer is not None and workflow.state == "collect" and page in {"check-selfie", "manual-review", "done", "completed", "loading"}:
+        _progress_verification(db, request.app.state.engine, _tenant(db, principal), customer, workflow)
     return workflow_list_item(workflow, customer)
 
 

@@ -972,11 +972,127 @@ def _open_verification(db: Session, customer: Customer) -> WorkflowInstance | No
 def _merge_context(current: dict | None, incoming: dict | None) -> dict:
     merged = dict(current or {})
     for key, value in (incoming or {}).items():
+        if key == "documents" and isinstance(value, list) and not value and merged.get("documents"):
+            # Never wipe already synced identity documents with an empty list.
+            continue
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
             merged[key] = _merge_context(merged[key], value)
         else:
             merged[key] = value
     return merged
+
+
+def bind_workflow_documents(db: Session, workflow: WorkflowInstance, context: dict | None = None) -> int:
+    """Attach uploaded collection files to the workflow from context.documents pages."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    payload = context if isinstance(context, dict) else (workflow.context or {})
+    documents = payload.get("documents")
+    bound = 0
+    if isinstance(documents, list):
+        for document in documents:
+            if not isinstance(document, dict):
+                continue
+            pages = document.get("pages") if isinstance(document.get("pages"), list) else []
+            for page in pages:
+                if not isinstance(page, dict):
+                    continue
+                file_id = page.get("ballerineFileId") or page.get("id")
+                if not file_id:
+                    continue
+                row = db.get(IdentityDocument, str(file_id))
+                if not row or row.tenant_id != workflow.tenant_id:
+                    continue
+                row.workflow_id = workflow.id
+                row.customer_id = workflow.customer_id
+                if document.get("category"):
+                    row.category = str(document.get("category"))
+                if document.get("type"):
+                    row.doc_type = str(document.get("type"))
+                if row.status in {None, "", "requested"}:
+                    row.status = "provided"
+                properties = dict(row.properties or {})
+                if isinstance(document.get("properties"), dict):
+                    properties.update(document["properties"])
+                side = page.get("metadata", {}).get("side") if isinstance(page.get("metadata"), dict) else None
+                if side:
+                    properties["side"] = side
+                    properties["title"] = f"{row.doc_type} {side}".strip()
+                for key in ("firstName", "lastName", "dateOfBirth", "nationality", "documentNumber", "expiry", "gender", "address"):
+                    text = "" if properties.get(key) is None else str(properties.get(key)).strip()
+                    if not text or set(text) <= {"-", ".", "/"}:
+                        properties.pop(key, None)
+                row.properties = properties
+                flag_modified(row, "properties")
+                bound += 1
+                promote_identity_fields(db, workflow, row)
+    # Promote raw collection uploads that were never listed in context.documents.
+    orphans = db.scalars(
+        select(IdentityDocument).where(
+            IdentityDocument.workflow_id == workflow.id,
+            IdentityDocument.doc_type.in_(["file", "collection_file"]),
+        )
+    ).all()
+    for row in orphans:
+        if row.doc_type in {"file", "collection_file"} and row.category in {"collection_file", "storage", "file"}:
+            # Keep them visible on the desk even without a typed identity mapping.
+            if row.status in {None, "", "requested"}:
+                row.status = "provided"
+            bound += 1
+    if isinstance(documents, list) and documents:
+        workflow.context = {**(workflow.context or {}), "documents": documents}
+        flag_modified(workflow, "context")
+    return bound
+
+
+def promote_identity_fields(db: Session, workflow: WorkflowInstance, document: IdentityDocument) -> None:
+    """Fill declared identity from the OCR reader when the photo is available."""
+    if document.doc_type not in {"passport", "id_card", "id-card", "drivers_license", "residence_permit"}:
+        return
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.ocr import keep_reader_values, read_identity
+    from app.storage import read_stored_bytes
+
+    content = read_stored_bytes(document.storage_path, document.tenant_id, db=db)
+    if not content:
+        return
+    result = read_identity(content)
+    keep_reader_values(document, result)
+    parsed = result.get("parsedData") or {}
+    first = str(parsed.get("firstName") or "").strip()
+    last = str(parsed.get("lastName") or "").strip()
+    born = str(parsed.get("dateOfBirth") or "").strip()
+    if not any((first, last, born)):
+        return
+    context = dict(workflow.context or {})
+    entity = dict(context.get("entity") or {})
+    data = dict(entity.get("data") or {})
+    changed = False
+    for key, value in (("firstName", first), ("lastName", last), ("dateOfBirth", born)):
+        current = str(data.get(key) or data.get({"firstName": "given_name", "lastName": "family_name", "dateOfBirth": "date_of_birth"}[key]) or "").strip()
+        if value and not current:
+            data[key] = value
+            changed = True
+    if changed:
+        entity["data"] = data
+        context["entity"] = entity
+        workflow.context = context
+        flag_modified(workflow, "context")
+    if not workflow.customer_id:
+        return
+    customer = db.get(Customer, workflow.customer_id)
+    if not customer or customer.individual is None:
+        return
+    person = customer.individual
+    if first and not (person.given_name or "").strip():
+        person.given_name = first
+    if last and not (person.family_name or "").strip():
+        person.family_name = last
+    if born and not (person.date_of_birth or "").strip():
+        person.date_of_birth = born
+    if (not customer.display_name or customer.display_name == "Personne physique") and (person.given_name or person.family_name):
+        customer.display_name = " ".join(part for part in (person.given_name, person.family_name) if part)
 
 
 def _kyc_is_current(db: Session, customer: Customer) -> bool:
@@ -1141,19 +1257,29 @@ def _continue_verification(
     workflow.config = {**(workflow.config or {}), **(config or {})}
     flag_modified(workflow, "config")
     workflow.updated_at = utcnow()
-    if workflow.definition_key == definition or hold_at_start:
+    bind_workflow_documents(db, workflow, workflow.context)
+    if hold_at_start:
         open_kyc_cycle(db, customer, workflow.id)
-        audit(db, tenant.id, actor_label(principal), "workflow.resume", "workflow", workflow.id, {"definition": definition})
+        audit(db, tenant.id, actor_label(principal), "workflow.resume", "workflow", workflow.id, {"definition": definition, "held": True})
         return customer, workflow
-    instance_id, task = engine.start(definition, customer.id, {})
-    workflow.definition_key = definition
-    workflow.definition_name = PROCESS_CATALOG[definition]["name"]
-    workflow.engine = engine.mode
-    workflow.engine_instance_id = instance_id
-    _sync_task(db, workflow, task)
+    if workflow.definition_key != definition:
+        instance_id, task = engine.start(definition, customer.id, {})
+        workflow.definition_key = definition
+        workflow.definition_name = PROCESS_CATALOG[definition]["name"]
+        workflow.engine = engine.mode
+        workflow.engine_instance_id = instance_id
+        _sync_task(db, workflow, task)
+        open_kyc_cycle(db, customer, workflow.id)
+        _progress_verification(db, engine, tenant, customer, workflow)
+        audit(db, tenant.id, actor_label(principal), "workflow.continue", "workflow", workflow.id, {"definition": definition})
+        return customer, workflow
+    if workflow.state == "collect":
+        open_kyc_cycle(db, customer, workflow.id)
+        _progress_verification(db, engine, tenant, customer, workflow)
+        audit(db, tenant.id, actor_label(principal), "workflow.continue", "workflow", workflow.id, {"definition": definition, "from": "collect"})
+        return customer, workflow
     open_kyc_cycle(db, customer, workflow.id)
-    _progress_verification(db, engine, tenant, customer, workflow)
-    audit(db, tenant.id, actor_label(principal), "workflow.continue", "workflow", workflow.id, {"definition": definition})
+    audit(db, tenant.id, actor_label(principal), "workflow.resume", "workflow", workflow.id, {"definition": definition})
     return customer, workflow
 
 
