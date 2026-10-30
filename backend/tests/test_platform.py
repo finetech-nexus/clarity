@@ -2066,7 +2066,8 @@ def test_partial_approval_opens_the_account_and_reviews_the_funding_transfer(tmp
         )
         assert partial.status_code == 200, partial.text
         assert partial.json()["state"] == "approved-partially"
-        assert partial.json()["status"] == "approved-partially"
+        # First verification is finalized; client stays limited until funding review.
+        assert partial.json()["status"] == "completed"
         assert partial.json()["customer"]["status"] == "approved-partially"
         listed = client.get("/api/clarity/v1/customers", headers=analyst_headers, params={"status": "approved-partially"})
         assert any(row["display_name"] == "Lea Martin" for row in listed.json())
@@ -2090,6 +2091,9 @@ def test_partial_approval_opens_the_account_and_reviews_the_funding_transfer(tmp
         funding = next(row for row in funding_queue.json() if row.get("definition_key") == "clarityFundingOrigin" and row["name"] == "Lea Martin")
         assert funding["state"] == "analystReview"
         assert funding["definition"] == "Activate account"
+        # Independent of the first KYC verification, same client.
+        assert funding["workflow_id"] != workflow_id
+        assert funding["name"] == "Lea Martin"
         funding_case = client.get(f"/api/clarity/v1/desks/kyc/{funding['id']}", headers=analyst_headers)
         assert funding_case.status_code == 200, funding_case.text
         transfer = funding_case.json().get("transfer") or {}

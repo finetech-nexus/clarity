@@ -296,8 +296,8 @@ def list_customers(
     status: str = "",
     name: str = "",
     risk: str = "",
-    sort: str = "display_name",
-    direction: str = "asc",
+    sort: str = "updated_at",
+    direction: str = "desc",
     limit: int | None = None,
     offset: int | None = None,
     principal: Principal = Depends(clarity_principal),
@@ -314,6 +314,7 @@ def list_customers(
     for row in rows:
         cycle = latest_kyc_cycle(db, row.id)
         view = kyc_cycle_view(cycle) if cycle else None
+        extension = row.extension if isinstance(row.extension, dict) else {}
         listed.append(
             {
                 "id": row.id,
@@ -325,6 +326,9 @@ def list_customers(
                 "risk_tier": row.risk_tier,
                 "synthetic": row.synthetic,
                 "external_ref": row.external_ref,
+                "client_reference": extension.get("client_reference"),
+                "created_at": iso(row.created_at),
+                "updated_at": iso(row.updated_at or row.created_at),
                 "kyc_created_at": view["created_at"] if view else None,
                 "kyc_validated_at": view["validated_at"] if view else None,
                 "kyc_expires_at": view["expires_at"] if view else None,
@@ -346,8 +350,19 @@ def list_customers(
     if risk:
         wanted = {item.strip() for item in risk.split(",") if item.strip()}
         listed = [row for row in listed if (row["risk_tier"] or "") in wanted]
-    sort_key = sort if sort in {"display_name", "kyc_label", "risk_tier", "kyc_created_at", "kyc_validated_at", "kyc_expires_at"} else "display_name"
-    descending = direction.strip().lower() == "desc"
+    allowed_sort = {
+        "display_name",
+        "kyc_label",
+        "risk_tier",
+        "kyc_created_at",
+        "kyc_validated_at",
+        "kyc_expires_at",
+        "created_at",
+        "updated_at",
+        "client_reference",
+    }
+    sort_key = sort if sort in allowed_sort else "updated_at"
+    descending = direction.strip().lower() != "asc"
 
     def sort_value(row: dict):
         value = row.get(sort_key)

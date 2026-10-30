@@ -50,6 +50,8 @@ type Detail = {
     status: string;
     risk_tier: string | null;
     synthetic: boolean;
+    client_reference?: string | null;
+    external_ref?: string | null;
     individual: Record<string, string | null> | null;
     business: Record<string, string | null> | null;
     screening: Array<{ id: string; status: string; production: boolean; matches: ScreeningMatch[] }>;
@@ -942,6 +944,11 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
               <div>
                 <p className="panel-kicker">{t("verify.detail")}</p>
                 <h2>{detail.customer?.display_name || detail.case.name}</h2>
+                {detail.customer?.client_reference ? (
+                  <p className="label" style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
+                    {detail.customer.client_reference}
+                  </p>
+                ) : null}
                 <p className="label">{detail.case.definition} · {statusLabel(detail.case.status, detail.case.state)} · {detail.task?.name || stepLabel(detail.case.state, "sans tâche ouverte")}</p>
                 {detail.steps?.length ? (
                   <ol className="stepper">
@@ -1274,6 +1281,11 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
       <aside className="verify-side">
         <div className="verify-side-head">
           <h3>{detail.customer?.display_name || detail.case.name}</h3>
+          {detail.customer?.client_reference ? (
+            <p className="label" style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
+              {detail.customer.client_reference}
+            </p>
+          ) : null}
           <RiskScoreChip
             score={detail.customer?.risk?.score}
             tier={detail.customer?.risk?.tier}

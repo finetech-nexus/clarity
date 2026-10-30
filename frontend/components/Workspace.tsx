@@ -81,6 +81,9 @@ type Customer = {
   risk_tier: string | null;
   synthetic: boolean;
   external_ref?: string | null;
+  client_reference?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
   kyc_created_at?: string | null;
   kyc_validated_at?: string | null;
   kyc_expires_at?: string | null;
@@ -400,8 +403,8 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
   const [name, setName] = useState("");
   const [statuses, setStatuses] = useState<string[]>([]);
   const [risks, setRisks] = useState<string[]>([]);
-  const [sort, setSort] = useState("display_name");
-  const [direction, setDirection] = useState<"asc" | "desc">("asc");
+  const [sort, setSort] = useState("updated_at");
+  const [direction, setDirection] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   useEffect(() => {
@@ -481,6 +484,7 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
             <th><button className="sort" type="button" onClick={() => toggle("display_name")}>Client{mark("display_name")}</button></th>
             <th><button className="sort" type="button" onClick={() => toggle("kyc_label")}>Vérification{mark("kyc_label")}</button></th>
             <th><button className="sort" type="button" onClick={() => toggle("risk_tier")}>Risque{mark("risk_tier")}</button></th>
+            <th><button className="sort" type="button" onClick={() => toggle("updated_at")}>Modifié{mark("updated_at")}</button></th>
             <th><button className="sort" type="button" onClick={() => toggle("kyc_created_at")}>Création{mark("kyc_created_at")}</button></th>
             <th><button className="sort" type="button" onClick={() => toggle("kyc_validated_at")}>Validation{mark("kyc_validated_at")}</button></th>
             <th><button className="sort" type="button" onClick={() => toggle("kyc_expires_at")}>Expiration{mark("kyc_expires_at")}</button></th>
@@ -488,12 +492,16 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
           </tr>
         </thead>
         <tbody>
-          {!rows.length ? <tr><td colSpan={7}>Aucun client de ce type.</td></tr> : null}
+          {!rows.length ? <tr><td colSpan={8}>Aucun client de ce type.</td></tr> : null}
           {rows.map((row) => (
             <tr key={row.id}>
-              <td><Link href={`/customers/${row.id}`}>{row.display_name}</Link><div className="label">{row.kind === "business" ? "Personne morale" : "Personne physique"}</div></td>
+              <td>
+                <Link href={`/customers/${row.id}`}>{row.display_name}</Link>
+                <div className="label">{row.client_reference || row.external_ref || "—"}</div>
+              </td>
               <td><span className={`badge ${row.kyc_status || ""}`}>{row.kyc_label || "—"}</span></td>
               <td>{row.risk_tier || "—"}</td>
+              <td>{day(row.updated_at || row.created_at)}</td>
               <td>{day(row.kyc_created_at)}</td>
               <td>{day(row.kyc_validated_at)}</td>
               <td>{day(row.kyc_expires_at)}</td>
@@ -528,10 +536,13 @@ function CustomerView({ profile, onChange }: { profile: Record<string, unknown>;
       <header className="customer-fiche-head">
         <div>
           <h1>{String(profile.display_name)}</h1>
+          <p className="label" style={{ marginTop: 4, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
+            {String(profile.client_reference || "—")}
+          </p>
           <p className="lede">
             Statut {String(profile.status)}
             {latestCycle ? ` · dernière vérification ${latestCycle.label}` : ""}
-            {" · "}référence {String(profile.external_ref || "—")}
+            {profile.external_ref ? ` · KYC ${String(profile.external_ref)}` : ""}
           </p>
         </div>
         <RiskScoreChip

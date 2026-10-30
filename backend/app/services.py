@@ -865,7 +865,7 @@ def evaluate_transaction(db: Session, tenant: Tenant, tx: Transaction) -> list[A
 
 
 def maybe_open_funding_review(db: Session, tenant: Tenant, tx: Transaction) -> WorkflowInstance | None:
-    """Inbound transfer on a partially approved account opens Activate account for KYC approval."""
+    """Inbound transfer → new Activate-account verification, independent of the first KYC, same client."""
     if not tx.customer_id or not _incoming_transfer(tx.direction):
         return None
     customer = db.get(Customer, tx.customer_id)
@@ -1071,9 +1071,9 @@ def _complete_active(db: Session, engine, workflow: WorkflowInstance, variables:
             terminal = "completed"
         if action == "reject":
             workflow.status = "failed"
-        elif action == "approvePartial":
-            workflow.status = "approved-partially"
         else:
+            # approve / approvePartial both finalize the verification (status=completed).
+            # Partial keeps state=approved-partially so the client stays limited until funding.
             workflow.status = "completed"
         workflow.state = terminal if terminal in TERMINAL or terminal == "completed" else terminal
         workflow.resolved_at = utcnow()
@@ -1269,6 +1269,59 @@ def find_customer_by_contact(db: Session, tenant_id: str, kind: str, data: dict)
     return None
 
 
+def _banking_external_id_from_data(data: dict | None) -> str:
+    """Banking / Keycloak external id carried on the KYC entity payload."""
+    if not isinstance(data, dict):
+        return ""
+    for key in ("externalId", "external_id", "clientReference", "client_reference"):
+        value = str(data.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def ensure_user_entity_id(*candidates: object) -> str:
+    """Normalize KYC correlation id to user-{uuid} for the account hook and fiche lookup."""
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        if not text:
+            continue
+        if text.startswith("user-"):
+            return text
+        return f"user-{text}"
+    return ""
+
+
+def _bind_customer_client_reference(customer: Customer, client_reference: str) -> None:
+    """Attach verification to the banking client that shares this external reference."""
+    client_reference = str(client_reference or "").strip()
+    if not client_reference:
+        return
+    extension = dict(customer.extension or {})
+    if customer.external_ref and customer.external_ref != client_reference:
+        extension["kyc_entity_id"] = customer.external_ref
+    extension["client_reference"] = client_reference
+    customer.extension = extension
+    customer.updated_at = utcnow()
+    from sqlalchemy.orm.attributes import flag_modified
+
+    flag_modified(customer, "extension")
+
+
+def _customer_has_external_reference(customer: Customer, external_id: str) -> bool:
+    external_id = str(external_id or "").strip()
+    if not external_id:
+        return True
+    extension = customer.extension if isinstance(customer.extension, dict) else {}
+    candidates = {
+        str(customer.external_ref or "").strip(),
+        str(extension.get("client_reference") or "").strip(),
+        str(extension.get("fineract_client_id") or "").strip(),
+        str(extension.get("kyc_entity_id") or "").strip(),
+    }
+    return external_id in candidates or f"user-{external_id}" in candidates
+
+
 def _sync_customer(db: Session, customer: Customer, kind: str, data: dict) -> None:
     customer.display_name = _display_name(kind, data)
     customer.updated_at = utcnow()
@@ -1280,6 +1333,9 @@ def _sync_customer(db: Session, customer: Customer, kind: str, data: dict) -> No
         value = next((data.get(key) for key in keys if data.get(key)), None)
         if value:
             setattr(customer, field, value)
+    banking_external_id = _banking_external_id_from_data(data)
+    if banking_external_id:
+        _bind_customer_client_reference(customer, banking_external_id)
     if kind == "individual":
         fresh = _individual(customer.id, data)
         current = customer.individual
@@ -1430,10 +1486,17 @@ def start_customer_workflow(
     hold_at_start: bool = False,
 ) -> tuple[Customer, WorkflowInstance]:
     customer = None
-    if external_ref:
+    banking_external_id = _banking_external_id_from_data(data)
+    # Prefer the banking client that already shares this external reference.
+    if banking_external_id:
+        customer = resolve_customer_by_reference(db, tenant, banking_external_id)
+    if customer is None and external_ref:
         customer = db.scalar(select(Customer).where(Customer.tenant_id == tenant.id, Customer.external_ref == external_ref))
     if customer is None:
-        customer = find_customer_by_contact(db, tenant.id, kind, data)
+        by_contact = find_customer_by_contact(db, tenant.id, kind, data)
+        # Never attach a new verification to a different client's fiche when an external id is known.
+        if by_contact and _customer_has_external_reference(by_contact, banking_external_id):
+            customer = by_contact
     definition = definition_key or ("clarityKycIndividual" if kind == "individual" else "clarityKybBusiness")
     if definition not in PROCESS_CATALOG:
         raise clarity_error(400, "unknown_workflow", "Cette définition de workflow n'a pas de processus exécutable.")
@@ -1443,9 +1506,21 @@ def start_customer_workflow(
             return _continue_verification(
                 db, engine, tenant, principal, customer, active, kind, data, context, config, definition, hold_at_start
             )
+        # Limited client: first KYC is finalized; next verification is Activate account after transfer.
+        if customer.canonical_status == "approved-partially" and definition != "clarityFundingOrigin":
+            raise clarity_error(
+                409,
+                "awaiting_funding",
+                "Le client est approuvé partiellement. Une nouvelle vérification s'ouvre après le virement d'activation.",
+            )
         if _kyc_is_current(db, customer):
             raise clarity_error(409, "kyc_valid", "La vérification de ce client est encore valable. Une mise à jour est possible après son expiration.")
     if customer is None:
+        extension: dict = {"upstream_context_retained": True}
+        if banking_external_id:
+            extension["client_reference"] = banking_external_id
+            if external_ref and external_ref != banking_external_id:
+                extension["kyc_entity_id"] = external_ref
         customer = Customer(
             tenant_id=tenant.id,
             kind=kind,
@@ -1456,7 +1531,7 @@ def start_customer_workflow(
             expected_activity=data.get("expected_activity") or data.get("expectedActivity"),
             source_of_funds=data.get("source_of_funds") or data.get("sourceOfFunds"),
             synthetic=synthetic,
-            extension={"upstream_context_retained": True},
+            extension=extension,
         )
         db.add(customer)
         db.flush()
@@ -2157,6 +2232,15 @@ def _account_hook_payload(db: Session, workflow: WorkflowInstance, customer: Cus
     rows = db.scalars(select(IdentityDocument).where(IdentityDocument.customer_id == customer.id)).all()
     owned = [document for document in rows if document.workflow_id == workflow.id] or list(rows)
     from_docs = _document_identity_fields(owned)
+    extension = customer.extension if isinstance(customer.extension, dict) else {}
+    # Banking Keycloak id already known from app signup — must become Fineract externalId.
+    banking_external_id = _clean_identity_value(
+        extension.get("client_reference")
+        or stored.get("externalId")
+        or stored.get("external_id")
+        or stored.get("clientReference")
+        or stored.get("client_reference")
+    )
     # Prefer document OCR/extracted fields for legal identity; form values only fill gaps.
     data = {
         "email": _clean_identity_value(stored.get("email") or (individual.email if individual else "")),
@@ -2178,6 +2262,10 @@ def _account_hook_payload(db: Session, workflow: WorkflowInstance, customer: Cus
         "sex": from_docs.get("sex") or _clean_identity_value(stored.get("sex") or stored.get("gender")),
         "identitySource": "document" if from_docs else "profile",
     }
+    if banking_external_id:
+        data["externalId"] = banking_external_id
+        data["clientReference"] = banking_external_id
+        data["client_reference"] = banking_external_id
     documents = []
     for document in owned:
         props = dict(document.properties or {})
@@ -2206,7 +2294,23 @@ def _account_hook_payload(db: Session, workflow: WorkflowInstance, customer: Cus
                 "issuingVersion": document.issuing_version or 1,
             }
         )
-    entity_id = entity.get("id") or customer.external_ref or customer.id
+    # Hook consumers look up the Clarity fiche with this id, then write back Fineract externalId.
+    entity_id = ensure_user_entity_id(
+        entity.get("id"),
+        customer.external_ref,
+        extension.get("kyc_entity_id"),
+    )
+    if entity_id and customer.external_ref != entity_id:
+        # Keep fiche findable by the same user-{uuid} the webhook received.
+        if not customer.external_ref:
+            customer.external_ref = entity_id
+        elif not str(customer.external_ref).startswith("user-"):
+            extension = dict(customer.extension or {})
+            extension["kyc_entity_id"] = entity_id
+            customer.extension = extension
+            from sqlalchemy.orm.attributes import flag_modified
+
+            flag_modified(customer, "extension")
     return {
         "id": str(uuid.uuid4()),
         "eventName": "workflow.completed",
@@ -2246,26 +2350,28 @@ def attach_customer_client_reference(
     client_reference: str,
     fineract_client_id: str | None = None,
 ) -> Customer:
-    """Link the KYC entity (user-{sessionId}) to the banking client external id."""
-    entity_id = str(entity_id or "").strip()
+    """Link the KYC entity (user-{uuid}) to the banking client external id (Fineract/Keycloak)."""
+    entity_id = ensure_user_entity_id(entity_id)
     client_reference = str(client_reference or "").strip()
     if not entity_id or not client_reference:
         raise clarity_error(400, "invalid", "entity_id et client_reference sont requis.")
-    customer = db.scalar(select(Customer).where(Customer.tenant_id == tenant.id, Customer.external_ref == entity_id))
+    bare = entity_id[5:] if entity_id.startswith("user-") else entity_id
+    refs = [entity_id, bare, f"user-{bare}"]
+    customer = db.scalar(
+        select(Customer).where(Customer.tenant_id == tenant.id, Customer.external_ref.in_(refs))
+    )
     if not customer:
-        customer = db.get(Customer, entity_id)
+        customer = db.get(Customer, entity_id) or db.get(Customer, bare)
         if not customer or customer.tenant_id != tenant.id:
             raise clarity_error(404, "not_found", "Client KYC introuvable.")
-    extension = dict(customer.extension or {})
-    if customer.external_ref and customer.external_ref != client_reference:
-        extension["kyc_entity_id"] = customer.external_ref
-    extension["client_reference"] = client_reference
+    _bind_customer_client_reference(customer, client_reference)
     if fineract_client_id:
+        extension = dict(customer.extension or {})
         extension["fineract_client_id"] = str(fineract_client_id).strip()
-    customer.extension = extension
-    from sqlalchemy.orm.attributes import flag_modified
+        customer.extension = extension
+        from sqlalchemy.orm.attributes import flag_modified
 
-    flag_modified(customer, "extension")
+        flag_modified(customer, "extension")
     audit(
         db,
         tenant.id,
@@ -2338,16 +2444,25 @@ def deliver_account_hook(db: Session, workflow: WorkflowInstance, customer: Cust
 
 
 def _mark_partially_approved(db: Session, tenant: Tenant, customer: Customer, workflow: WorkflowInstance) -> None:
-    """The client exists, but the account stays limited to its IBAN until the funding transfer is checked."""
+    """Finalize the first verification, create the banking client (account hook), keep KYC limited.
+
+    The verification stays attached to this Clarity customer. A later inbound transfer opens a
+    separate Activate-account verification on the same client; full approve then marks KYC verified.
+    """
     customer.canonical_status = "approved-partially"
+    workflow.state = "approved-partially"
+    if workflow.status == "active":
+        workflow.status = "completed"
+    workflow.resolved_at = workflow.resolved_at or utcnow()
     cycle = latest_kyc_cycle(db, customer.id)
     if cycle and cycle.status == "pending" and cycle.workflow_id in {None, workflow.id}:
         cycle.status = "approved-partially"
+    # Creates the banking client (Keycloak / Fineract) and links client_reference on this fiche.
     deliver_account_hook(db, workflow, customer)
 
 
 def _activate_funded_customer(db: Session, tenant: Tenant, customer: Customer, workflow: WorkflowInstance) -> None:
-    """The incoming transfer was accepted, so the limited account becomes operational."""
+    """Funding verification approved → client KYC becomes fully verified (canonical approved)."""
     customer.canonical_status = "approved"
     years = tenant.kyc_validity_years or 1
     customer.next_review_at = utcnow() + timedelta(days=365 * years)
@@ -2363,6 +2478,9 @@ def _activate_funded_customer(db: Session, tenant: Tenant, customer: Customer, w
         partial.state = "approved"
         partial.status = "completed"
         partial.resolved_at = partial.resolved_at or utcnow()
+    workflow.state = "approved"
+    workflow.status = "completed"
+    workflow.resolved_at = workflow.resolved_at or utcnow()
     validate_kyc_cycle(db, customer, partials[0].id if partials else workflow.id, customer.next_review_at)
 
 
