@@ -2115,6 +2115,53 @@ def test_partial_approval_opens_the_account_and_reviews_the_funding_transfer(tmp
         assert not any(row["display_name"] == "Lea Martin" for row in again.json())
 
 
+def test_client_reference_links_kyc_entity_to_banking_external_id(tmp_path):
+    from app.models import Customer, Tenant
+    from app.services import _resolve_ingest_customer
+
+    with _client(tmp_path) as client:
+        headers = {"Authorization": f"Bearer {BALLERINE_API_KEY}"}
+        opened = client.post(
+            "/api/v1/external/workflows/run",
+            headers=headers,
+            json={
+                "workflowId": "kyc_collection_flow",
+                "context": {
+                    "entity": {
+                        "type": "individual",
+                        "id": "user-session-ref",
+                        "data": {"firstName": "Sara", "lastName": "Ben", "email": "sara.ben@example.test", "country": "TN"},
+                    }
+                },
+            },
+        )
+        assert opened.status_code == 200, opened.text
+        customer_id = opened.json()["ballerineEntityId"]
+        linked = client.post(
+            "/api/v1/external/customers/user-session-ref/client-reference",
+            headers=headers,
+            json={"clientReference": "kc-user-42", "fineractClientId": "8"},
+        )
+        assert linked.status_code == 200, linked.text
+        assert linked.json()["client_reference"] == "kc-user-42"
+        assert linked.json()["fineract_client_id"] == "8"
+        assert linked.json()["kyc_entity_id"] == "user-session-ref"
+        profile = client.get(
+            f"/api/clarity/v1/customers/{customer_id}",
+            headers={"Authorization": f"Bearer {_login(client, ANALYST_EMAIL)}"},
+        )
+        assert profile.status_code == 200
+        assert profile.json()["client_reference"] == "kc-user-42"
+        assert profile.json()["external_ref"] == "user-session-ref"
+        db = client.app.state.database.session_factory()
+        tenant = db.get(Tenant, db.get(Customer, customer_id).tenant_id)
+        matched = _resolve_ingest_customer(db, tenant, {"customer_id": "kc-user-42"})
+        assert matched is not None and matched.id == customer_id
+        matched_fineract = _resolve_ingest_customer(db, tenant, {"client_id": "client:8"})
+        assert matched_fineract is not None and matched_fineract.id == customer_id
+        db.close()
+
+
 def test_verifications_reuse_the_same_client_by_email_or_phone(tmp_path):
     from sqlalchemy import select
 

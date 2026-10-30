@@ -696,7 +696,7 @@ def _strip_client_ref(value: object) -> str:
 
 
 def _resolve_ingest_customer(db: Session, tenant: Tenant, payload: dict) -> Customer | None:
-    """Match Marble/kyc-api ids (client_id, beneficiary_customer_id, …) to a Clarity client."""
+    """Match Marble/kyc-api ids to a Clarity client (KYC entity id or banking client_reference)."""
     refs: list[str] = []
     for key in ("customer_id", "client_id", "beneficiary_customer_id"):
         raw = _strip_client_ref(payload.get(key))
@@ -708,6 +708,15 @@ def _resolve_ingest_customer(db: Session, tenant: Tenant, payload: dict) -> Cust
             return customer
         customer = db.get(Customer, ref)
         if customer and customer.tenant_id == tenant.id:
+            return customer
+    if not refs:
+        return None
+    for customer in db.scalars(select(Customer).where(Customer.tenant_id == tenant.id)).all():
+        extension = customer.extension if isinstance(customer.extension, dict) else {}
+        client_reference = str(extension.get("client_reference") or "").strip()
+        fineract_id = str(extension.get("fineract_client_id") or "").strip()
+        kyc_entity = str(extension.get("kyc_entity_id") or "").strip()
+        if client_reference in refs or fineract_id in refs or kyc_entity in refs:
             return customer
     return None
 
@@ -2042,24 +2051,75 @@ def assess_customer(db: Session, tenant: Tenant, customer: Customer, source: str
     return assessment
 
 
+def _clean_identity_value(value: object) -> str:
+    text = "" if value is None else str(value).strip()
+    return "" if not text or set(text) <= {"-", ".", "/", " "} else text
+
+
+def _document_identity_fields(documents: list[IdentityDocument]) -> dict[str, str]:
+    """Identity used for account creation comes from approved ID documents, not the form."""
+    identity_types = {"passport", "id_card", "id-card", "drivers_license", "residence_permit"}
+    for document in documents:
+        if document.doc_type not in identity_types:
+            continue
+        if (document.decision or "").lower() not in {"approved", "approve"}:
+            continue
+        props = dict(document.properties or {})
+        extracted = props.get("extracted") if isinstance(props.get("extracted"), dict) else {}
+        merged = {**extracted, **props}
+        fields = {
+            "firstName": _clean_identity_value(merged.get("firstName") or merged.get("given_name")),
+            "lastName": _clean_identity_value(merged.get("lastName") or merged.get("family_name")),
+            "dateOfBirth": _clean_identity_value(merged.get("dateOfBirth") or merged.get("date_of_birth")),
+            "sex": _clean_identity_value(merged.get("sex") or merged.get("gender")),
+            "country": _clean_identity_value(
+                merged.get("nationality") or merged.get("issuingCountry") or document.issuing_country
+            ),
+            "expires": _clean_identity_value(document.expiry or merged.get("expiry") or merged.get("expires")),
+        }
+        if any(fields[key] for key in ("firstName", "lastName", "dateOfBirth")):
+            return fields
+    return {}
+
+
 def _account_hook_payload(db: Session, workflow: WorkflowInstance, customer: Customer) -> dict:
-    """Ballerine-shaped workflow.completed payload for the onboarding webhook."""
+    """Ballerine-shaped workflow.completed payload for the onboarding webhook.
+
+    entity.id stays the KYC correlation id (user-{sessionId}). Identity names/DOB come from
+    approved documents; email/phone stay contact fields from the collected profile.
+    """
     entity = dict((workflow.context or {}).get("entity") or {})
     stored = dict(entity.get("data") or {})
     individual = customer.individual
-    data = {
-        "email": stored.get("email") or (individual.email if individual else "") or "",
-        "phone": stored.get("phone") or stored.get("phoneNumber") or (individual.phone if individual else "") or "",
-        "country": stored.get("country") or (individual.nationality if individual else "") or (individual.residence_country if individual else "") or "",
-        "lastName": stored.get("lastName") or (individual.family_name if individual else "") or "",
-        "firstName": stored.get("firstName") or (individual.given_name if individual else "") or "",
-        "dateOfBirth": stored.get("dateOfBirth") or (individual.date_of_birth if individual else "") or "",
-    }
-    documents = []
     rows = db.scalars(select(IdentityDocument).where(IdentityDocument.customer_id == customer.id)).all()
     owned = [document for document in rows if document.workflow_id == workflow.id] or list(rows)
+    from_docs = _document_identity_fields(owned)
+    # Prefer document OCR/extracted fields for legal identity; form values only fill gaps.
+    data = {
+        "email": _clean_identity_value(stored.get("email") or (individual.email if individual else "")),
+        "phone": _clean_identity_value(
+            stored.get("phone") or stored.get("phoneNumber") or (individual.phone if individual else "")
+        ),
+        "country": from_docs.get("country")
+        or _clean_identity_value(
+            stored.get("country")
+            or (individual.nationality if individual else "")
+            or (individual.residence_country if individual else "")
+        ),
+        "lastName": from_docs.get("lastName")
+        or _clean_identity_value(stored.get("lastName") or (individual.family_name if individual else "")),
+        "firstName": from_docs.get("firstName")
+        or _clean_identity_value(stored.get("firstName") or (individual.given_name if individual else "")),
+        "dateOfBirth": from_docs.get("dateOfBirth")
+        or _clean_identity_value(stored.get("dateOfBirth") or (individual.date_of_birth if individual else "")),
+        "sex": from_docs.get("sex") or _clean_identity_value(stored.get("sex") or stored.get("gender")),
+        "identitySource": "document" if from_docs else "profile",
+    }
+    documents = []
     for document in owned:
         props = dict(document.properties or {})
+        extracted = props.get("extracted") if isinstance(props.get("extracted"), dict) else {}
+        merged = {**extracted, **props}
         category = "proof_of_identity" if document.doc_type in {"passport", "id_card", "drivers_license"} else document.category
         decision = document.decision or "pending"
         if decision == "revisions":
@@ -2073,16 +2133,17 @@ def _account_hook_payload(db: Session, workflow: WorkflowInstance, customer: Cus
                 "decision": {"status": decision, "revisionReason": document.decision_reason, "rejectionReason": None},
                 "metadata": {},
                 "properties": {
-                    "sex": props.get("sex") or props.get("gender") or "",
-                    "expires": document.expiry or props.get("expiry") or "",
-                    "lastName": props.get("lastName") or data["lastName"],
-                    "firstName": props.get("firstName") or data["firstName"],
-                    "dateOfBirth": props.get("dateOfBirth") or data["dateOfBirth"],
+                    "sex": _clean_identity_value(merged.get("sex") or merged.get("gender") or data.get("sex")),
+                    "expires": _clean_identity_value(document.expiry or merged.get("expiry") or merged.get("expires")),
+                    "lastName": _clean_identity_value(merged.get("lastName") or data["lastName"]),
+                    "firstName": _clean_identity_value(merged.get("firstName") or data["firstName"]),
+                    "dateOfBirth": _clean_identity_value(merged.get("dateOfBirth") or data["dateOfBirth"]),
                 },
                 "issuer": {"country": document.issuing_country or "ZZ"},
                 "issuingVersion": document.issuing_version or 1,
             }
         )
+    entity_id = entity.get("id") or customer.external_ref or customer.id
     return {
         "id": str(uuid.uuid4()),
         "eventName": "workflow.completed",
@@ -2095,11 +2156,11 @@ def _account_hook_payload(db: Session, workflow: WorkflowInstance, customer: Cus
         "workflowStatus": "completed" if workflow.state in {"approved", "approved-partially"} else workflow.status,
         "workflowFinalState": workflow.state,
         "ballerineEntityId": customer.id,
-        "correlationId": customer.external_ref or customer.id,
+        "correlationId": entity_id,
         "environment": "production",
         "data": {
             "entity": {
-                "id": entity.get("id") or customer.external_ref or customer.id,
+                "id": entity_id,
                 "type": entity.get("type") or customer.kind,
                 "ballerineEntityId": customer.id,
                 "data": data,
@@ -2112,6 +2173,46 @@ def _account_hook_payload(db: Session, workflow: WorkflowInstance, customer: Cus
             },
         },
     }
+
+
+def attach_customer_client_reference(
+    db: Session,
+    tenant: Tenant,
+    *,
+    entity_id: str,
+    client_reference: str,
+    fineract_client_id: str | None = None,
+) -> Customer:
+    """Link the KYC entity (user-{sessionId}) to the banking client external id."""
+    entity_id = str(entity_id or "").strip()
+    client_reference = str(client_reference or "").strip()
+    if not entity_id or not client_reference:
+        raise clarity_error(400, "invalid", "entity_id et client_reference sont requis.")
+    customer = db.scalar(select(Customer).where(Customer.tenant_id == tenant.id, Customer.external_ref == entity_id))
+    if not customer:
+        customer = db.get(Customer, entity_id)
+        if not customer or customer.tenant_id != tenant.id:
+            raise clarity_error(404, "not_found", "Client KYC introuvable.")
+    extension = dict(customer.extension or {})
+    if customer.external_ref and customer.external_ref != client_reference:
+        extension["kyc_entity_id"] = customer.external_ref
+    extension["client_reference"] = client_reference
+    if fineract_client_id:
+        extension["fineract_client_id"] = str(fineract_client_id).strip()
+    customer.extension = extension
+    from sqlalchemy.orm.attributes import flag_modified
+
+    flag_modified(customer, "extension")
+    audit(
+        db,
+        tenant.id,
+        "clarity",
+        "customer.client_reference",
+        "customer",
+        customer.id,
+        {"entity_id": entity_id, "client_reference": client_reference, "fineract_client_id": fineract_client_id},
+    )
+    return customer
 
 
 def deliver_account_hook(db: Session, workflow: WorkflowInstance, customer: Customer) -> None:
@@ -2678,11 +2779,17 @@ def customer_view(db: Session, customer: Customer) -> dict:
         if runtime is None and index == 0:
             runtime = fallback
         cycle_views.append(kyc_cycle_view(row, runtime, owned))
+    extension = customer.extension if isinstance(customer.extension, dict) else {}
     return {
         "id": customer.id,
         "kind": customer.kind,
         "display_name": customer.display_name,
         "external_ref": customer.external_ref,
+        "client_reference": extension.get("client_reference"),
+        "fineract_client_id": extension.get("fineract_client_id"),
+        "kyc_entity_id": extension.get("kyc_entity_id") or (
+            customer.external_ref if str(customer.external_ref or "").startswith("user-") else None
+        ),
         "status": customer.canonical_status,
         "risk_tier": customer.risk_tier,
         "purpose": customer.purpose,

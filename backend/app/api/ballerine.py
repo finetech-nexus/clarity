@@ -12,6 +12,7 @@ from app.security import Principal, verify_payload_signature
 from app.services import (
     ApiFailure,
     advance_workflow,
+    attach_customer_client_reference,
     customer_view,
     document_record,
     evaluate_transaction,
@@ -648,6 +649,32 @@ def delete_documents(body: dict, principal: Principal = Depends(ballerine_princi
             removed.append(document_record(document))
             db.delete(document)
     return removed
+
+
+@router.post("/external/customers/{entity_id}/client-reference")
+def set_client_reference(entity_id: str, body: dict, principal: Principal = Depends(ballerine_principal), db: Session = Depends(db_session)):
+    """After Keycloak/Fineract client creation, attach the banking client external id to the KYC fiche."""
+    client_reference = str(body.get("clientReference") or body.get("client_reference") or body.get("externalId") or "").strip()
+    fineract_client_id = str(body.get("fineractClientId") or body.get("fineract_client_id") or body.get("clientId") or "").strip() or None
+    try:
+        customer = attach_customer_client_reference(
+            db,
+            _tenant(db, principal),
+            entity_id=entity_id,
+            client_reference=client_reference,
+            fineract_client_id=fineract_client_id,
+        )
+    except ApiFailure as exc:
+        raise nest_error(exc.status, (exc.body or {}).get("message") or "client reference update failed") from exc
+    extension = customer.extension if isinstance(customer.extension, dict) else {}
+    return {
+        "id": customer.id,
+        "entityId": entity_id,
+        "external_ref": customer.external_ref,
+        "client_reference": extension.get("client_reference"),
+        "fineract_client_id": extension.get("fineract_client_id"),
+        "kyc_entity_id": extension.get("kyc_entity_id"),
+    }
 
 
 @router.get("/_health/live", status_code=204)
