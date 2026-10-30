@@ -53,11 +53,11 @@ PROCESS_CATALOG = {
         },
     },
     "clarityFundingOrigin": {
-        "name": "Provenance du virement",
+        "name": "Activate account",
         "start": "analystReview",
         "tasks": {
-            "analystReview": "Revue de la provenance",
-            "checkerReview": "Contrôle de la provenance",
+            "analystReview": "Revue du virement d'activation",
+            "checkerReview": "Approbation KYC / activation",
         },
     },
 }

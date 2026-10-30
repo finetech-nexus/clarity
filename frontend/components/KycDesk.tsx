@@ -63,6 +63,22 @@ type Detail = {
     } | null;
   } | null;
   submitted: Field[];
+  transfer?: {
+    id?: string | null;
+    amount?: number | string | null;
+    currency?: string | null;
+    counterparty_name?: string | null;
+    direction?: string | null;
+    description?: string | null;
+    payment_reference?: string | null;
+    transaction_reference?: string | null;
+    account_id?: string | null;
+    channel?: string | null;
+    transaction_type?: string | null;
+    country?: string | null;
+    occurred_at?: string | null;
+    fields?: Field[];
+  } | null;
   identity?: Field[];
   alert?: boolean;
   alert_reasons?: string[];
@@ -361,6 +377,44 @@ const TASK_ACTION: Record<string, string> = {
   investigate: "Clôturer l'instruction",
 };
 
+const ACTIVATE_TASK_ACTION: Record<string, string> = {
+  analystReview: "Transmettre pour activation",
+  checkerReview: "Approuver le KYC",
+};
+
+function TransferDetail({ transfer, submitted }: { transfer?: Detail["transfer"]; submitted: Field[] }) {
+  const fields = transfer?.fields?.length ? transfer.fields : submitted.filter((field) =>
+    ["amount", "currency", "counterpartyName", "direction", "description", "paymentReference", "transactionReference", "accountId", "channel", "transactionType", "occurredAt", "country"].includes(field.key)
+  );
+  const profile = submitted.filter((field) => !fields.some((row) => row.key === field.key));
+  return (
+    <div className="stack">
+      <article className="card">
+        <h3>Détail du virement</h3>
+        {fields.length ? (
+          <dl className="kv">
+            {fields.map((field) => (
+              <span key={field.key}><dt>{field.label}</dt><dd>{field.value}</dd></span>
+            ))}
+          </dl>
+        ) : (
+          <p className="label">Aucun détail de virement sur ce dossier.</p>
+        )}
+      </article>
+      {profile.length ? (
+        <article className="card">
+          <h3>Client</h3>
+          <dl className="kv">
+            {profile.map((field) => (
+              <span key={field.key}><dt>{field.label}</dt><dd>{field.value}</dd></span>
+            ))}
+          </dl>
+        </article>
+      ) : null}
+    </div>
+  );
+}
+
 const NOTE_ACTION_LABEL: Record<string, string> = {
   approve: "Transmission / approbation",
   reject: "Rejet",
@@ -458,7 +512,8 @@ function ActionTiles({
   const isAnalyst = reviewState === "analystReview";
   const isChecker = reviewState === "checkerReview";
   const canPartial = Boolean(canDecide && isChecker && !fundingReview);
-  const primaryLabel = TASK_ACTION[reviewState] || (isAnalyst ? "Transmettre au contrôle" : "Approuver");
+  const primaryLabel = (fundingReview ? ACTIVATE_TASK_ACTION[reviewState] : TASK_ACTION[reviewState])
+    || (isAnalyst ? "Transmettre au contrôle" : "Approuver");
   return (
     <div className="stack">
       {finished ? <p className="label">Aucune action ouverte sur ce dossier.</p> : (
@@ -474,12 +529,12 @@ function ActionTiles({
           ) : null}
           {canDecide && (isAnalyst || isChecker || reviewState === "investigate") ? (
             <article className="card action-tile">
-              <h3>{isAnalyst ? "Transmettre" : isChecker ? "Approuver" : "Décision"}</h3>
+              <h3>{fundingReview && isChecker ? "Approuver le KYC" : isAnalyst ? "Transmettre" : isChecker ? "Approuver" : "Décision"}</h3>
               <div className="form">
                 <textarea
                   value={approveNote}
                   onChange={(event) => onApproveNote(event.target.value)}
-                  placeholder={isAnalyst ? "Note de transmission" : "Note d'approbation"}
+                  placeholder={fundingReview && isChecker ? "Note d'activation KYC" : isAnalyst ? "Note de transmission" : "Note d'approbation"}
                 />
                 <button type="button" disabled={!canApprove} onClick={() => onDecide("approve", approveNote)}>{primaryLabel}</button>
               </div>
@@ -494,7 +549,7 @@ function ActionTiles({
               </div>
             </article>
           ) : null}
-          {canDecide ? (
+          {canDecide && !fundingReview ? (
             <>
               <article className="card action-tile">
                 <h3>Demande de renvoi</h3>
@@ -912,30 +967,36 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
             </div>
             <div className="case-pane">
             {tab === "Informations saisies" ? (
-              <article className="card">
-                {detail.submitted?.length ? (
-                  <dl className="kv">
-                    {detail.submitted.map((field) => (
-                      <span key={field.key}><dt>{field.label}</dt><dd>{field.value}</dd></span>
-                    ))}
-                  </dl>
-                ) : <p className="label">Aucune information saisie sur ce dossier.</p>}
-              </article>
+              fundingReview ? (
+                <TransferDetail transfer={detail.transfer} submitted={detail.submitted || []} />
+              ) : (
+                <article className="card">
+                  {detail.submitted?.length ? (
+                    <dl className="kv">
+                      {detail.submitted.map((field) => (
+                        <span key={field.key}><dt>{field.label}</dt><dd>{field.value}</dd></span>
+                      ))}
+                    </dl>
+                  ) : <p className="label">Aucune information saisie sur ce dossier.</p>}
+                </article>
+              )
             ) : null}
             {tab === "Documents" ? (
               <div className="document-data">
                 <h3>Liste des pièces</h3>
                 {!detail.documents.length ? (
                   <p className="label">
-                    {detail.case.state === "collect"
+                    {fundingReview
+                      ? "Pièces KYC du client (référence). L'activation se décide sur le virement."
+                      : detail.case.state === "collect"
                       ? "Aucune pièce pour l'instant. Le dossier est encore en collecte — les documents apparaissent après l'envoi du parcours client."
                       : "Aucune pièce fournie."}
                   </p>
                 ) : null}
                 <DocumentViewer
                   documents={detail.documents}
-                  locked={Boolean(finished)}
-                  onDecide={finished ? undefined : (id, decision) => void decideDocument(id, decision)}
+                  locked={Boolean(finished) || fundingReview}
+                  onDecide={finished || fundingReview ? undefined : (id, decision) => void decideDocument(id, decision)}
                 />
               </div>
             ) : null}
@@ -1012,7 +1073,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                       : `Aucune action ouverte à l'étape « ${stepLabel(detail.case.state, detail.task?.name || "en cours")} ».`}
                   </p>
                 ) : null}
-                {fundingReview && !finished ? <p className="label">Virement reçu sur un compte limité. Vérifiez la provenance avant d'activer le compte.</p> : null}
+                {fundingReview && !finished ? <p className="label">Virement reçu sur un compte limité. Vérifiez le détail du transfert puis approuvez le KYC pour activer le compte.</p> : null}
                 {canDecide && !piecesApproved && !fundingReview && !finished ? <p className="error">Approuvez chaque pièce pour activer la validation.</p> : null}
                 {canDecide && screeningPending && !finished ? <p className="label">Vérifiez chaque correspondance de criblage avant de valider.</p> : null}
                 <ActionTiles
@@ -1237,21 +1298,25 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
         {error ? <p className="error">{error}</p> : null}
         {message ? <p className="label">{message}</p> : null}
         {tab === "Informations saisies" ? (
-          <article className="card">
-            {detail.submitted?.length ? (
-              <dl className="kv">
-                {detail.submitted.map((field) => (
-                  <span key={field.key}><dt>{field.label}</dt><dd>{field.value}</dd></span>
-                ))}
-              </dl>
-            ) : <p className="label">Aucune information saisie sur ce dossier.</p>}
-          </article>
+          fundingReview ? (
+            <TransferDetail transfer={detail.transfer} submitted={detail.submitted || []} />
+          ) : (
+            <article className="card">
+              {detail.submitted?.length ? (
+                <dl className="kv">
+                  {detail.submitted.map((field) => (
+                    <span key={field.key}><dt>{field.label}</dt><dd>{field.value}</dd></span>
+                  ))}
+                </dl>
+              ) : <p className="label">Aucune information saisie sur ce dossier.</p>}
+            </article>
+          )
         ) : null}
         {tab === "Documents" ? (
           <DocumentViewer
             documents={detail.documents}
-            locked={docsLocked}
-            onDecide={docsLocked ? undefined : (id, decision) => void decideDocument(id, decision)}
+            locked={docsLocked || fundingReview}
+            onDecide={docsLocked || fundingReview ? undefined : (id, decision) => void decideDocument(id, decision)}
           />
         ) : null}
         {tab === "Données du document" ? (
@@ -1315,7 +1380,7 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
         ) : null}
         {tab === "Action" ? (
           <div className="stack">
-            {fundingReview && !finished ? <p className="label">Virement reçu sur un compte limité. Vérifiez la provenance avant d'activer le compte.</p> : null}
+            {fundingReview && !finished ? <p className="label">Virement reçu sur un compte limité. Vérifiez le détail du transfert puis approuvez le KYC pour activer le compte.</p> : null}
             {canDecide && !piecesApproved && !fundingReview && !finished ? <p className="error">Approuvez chaque pièce pour activer la validation.</p> : null}
             <ActionTiles
               reviewState={reviewState}

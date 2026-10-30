@@ -686,25 +686,53 @@ def ingest_object(db: Session, tenant: Tenant, object_type: str, payload: dict, 
     return 201
 
 
+def _strip_client_ref(value: object) -> str:
+    text = str(value or "").strip()
+    for prefix in ("client:", "customer:", "account:"):
+        if text.startswith(prefix):
+            text = text[len(prefix) :]
+            break
+    return text.strip()
+
+
+def _resolve_ingest_customer(db: Session, tenant: Tenant, payload: dict) -> Customer | None:
+    """Match Marble/kyc-api ids (client_id, beneficiary_customer_id, …) to a Clarity client."""
+    refs: list[str] = []
+    for key in ("customer_id", "client_id", "beneficiary_customer_id"):
+        raw = _strip_client_ref(payload.get(key))
+        if raw and raw not in refs:
+            refs.append(raw)
+    for ref in refs:
+        customer = db.scalar(select(Customer).where(Customer.tenant_id == tenant.id, Customer.external_ref == ref))
+        if customer:
+            return customer
+        customer = db.get(Customer, ref)
+        if customer and customer.tenant_id == tenant.id:
+            return customer
+    return None
+
+
 def _transaction_from_ingestion(db: Session, tenant: Tenant, payload: dict, updated) -> Transaction:
-    customer = None
-    if payload.get("customer_id"):
-        customer = db.scalar(
-            select(Customer).where(Customer.tenant_id == tenant.id, Customer.external_ref == str(payload["customer_id"]))
-        )
+    customer = _resolve_ingest_customer(db, tenant, payload)
+    description = payload.get("description") or payload.get("payment_reference") or payload.get("transaction_reference")
+    direction = payload.get("direction")
+    if direction in {"in", "credit"}:
+        direction = "inbound"
+    elif direction in {"out", "debit"}:
+        direction = "outbound"
     tx = Transaction(
         tenant_id=tenant.id,
         customer_id=customer.id if customer else None,
         correlation_id=str(payload["object_id"]),
         amount=float(payload.get("amount") or 0),
         currency=str(payload.get("currency") or "EUR"),
-        base_amount=float(payload.get("amount") or 0),
-        base_currency="EUR",
-        direction=payload.get("direction"),
-        country=payload.get("country"),
+        base_amount=float(payload.get("amount") or payload.get("amount_base_currency") or 0),
+        base_currency=str(payload.get("base_currency") or payload.get("currency") or "EUR"),
+        direction=direction,
+        country=payload.get("country") or payload.get("country_origin"),
         counterparty_name=payload.get("counterparty_name"),
-        description=payload.get("description"),
-        occurred_at=updated,
+        description=str(description) if description else None,
+        occurred_at=parse_dt(str(payload["occurred_at"])) if payload.get("occurred_at") else updated,
         payload=payload,
         synthetic=bool(tenant.synthetic),
     )
@@ -765,7 +793,7 @@ def evaluate_transaction(db: Session, tenant: Tenant, tx: Transaction) -> list[A
 
 
 def maybe_open_funding_review(db: Session, tenant: Tenant, tx: Transaction) -> WorkflowInstance | None:
-    """A transfer on a limited account opens a provenance review for the manager."""
+    """Inbound transfer on a partially approved account opens Activate account for KYC approval."""
     if not tx.customer_id or not _incoming_transfer(tx.direction):
         return None
     customer = db.get(Customer, tx.customer_id)
@@ -782,6 +810,10 @@ def maybe_open_funding_review(db: Session, tenant: Tenant, tx: Transaction) -> W
         return existing
     from app.engine import InProcessEngine
 
+    payload = tx.payload if isinstance(tx.payload, dict) else {}
+    account_id = payload.get("credit_account_id") or payload.get("debit_account_id") or payload.get("account_id")
+    if isinstance(account_id, str) and account_id.startswith("account:"):
+        account_id = account_id[len("account:") :]
     engine = InProcessEngine()
     instance_id, task = engine.start("clarityFundingOrigin", customer.id, {})
     workflow = WorkflowInstance(
@@ -800,12 +832,18 @@ def maybe_open_funding_review(db: Session, tenant: Tenant, tx: Transaction) -> W
                     "amount": tx.amount,
                     "currency": tx.currency,
                     "counterpartyName": tx.counterparty_name or "",
-                    "direction": tx.direction or "",
+                    "direction": tx.direction or "inbound",
                     "description": tx.description or "",
                     "country": tx.country or "",
+                    "paymentReference": payload.get("payment_reference") or "",
+                    "transactionReference": payload.get("transaction_reference") or tx.correlation_id or "",
+                    "accountId": account_id or "",
+                    "channel": payload.get("channel") or "",
+                    "transactionType": payload.get("transaction_type") or "",
+                    "occurredAt": iso(tx.occurred_at) if tx.occurred_at else "",
                 },
             },
-            "source": "funding-transfer",
+            "source": "activate-account",
             "transaction_id": tx.id,
         },
         config={},
@@ -813,6 +851,11 @@ def maybe_open_funding_review(db: Session, tenant: Tenant, tx: Transaction) -> W
     )
     db.add(workflow)
     db.flush()
+    cycle = latest_kyc_cycle(db, customer.id)
+    if cycle:
+        cycle.workflow_id = workflow.id
+    else:
+        open_kyc_cycle(db, customer, workflow.id)
     _sync_task(db, workflow, task)
     audit(db, tenant.id, "clarity", "workflow.start", "workflow", workflow.id, {"definition": "clarityFundingOrigin", "transaction_id": tx.id})
     return workflow

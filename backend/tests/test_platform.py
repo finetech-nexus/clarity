@@ -2089,6 +2089,13 @@ def test_partial_approval_opens_the_account_and_reviews_the_funding_transfer(tmp
         funding_queue = client.get("/api/clarity/v1/desks/kyc", headers=analyst_headers, params={"q": "status:active"})
         funding = next(row for row in funding_queue.json() if row.get("definition_key") == "clarityFundingOrigin" and row["name"] == "Lea Martin")
         assert funding["state"] == "analystReview"
+        assert funding["definition"] == "Activate account"
+        funding_case = client.get(f"/api/clarity/v1/desks/kyc/{funding['id']}", headers=analyst_headers)
+        assert funding_case.status_code == 200, funding_case.text
+        transfer = funding_case.json().get("transfer") or {}
+        assert float(transfer.get("amount") or 0) == 150
+        assert transfer.get("counterparty_name") == "Banque source"
+        assert any(row["key"] == "amount" for row in funding_case.json().get("submitted") or [])
         moved = client.post(
             f"/api/clarity/v1/workflows/{funding['workflow_id']}/actions",
             headers=analyst_headers,

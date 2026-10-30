@@ -561,6 +561,7 @@ def _ensure_workflows(db: Session) -> None:
         (WF_ALERT_ID, "alert-investigation", "Investigation d'alerte", "clarityAlertInvestigation", "any"),
         (str(uuid.uuid5(uuid.UUID(TENANT_ID), "workflow:kyc_collection_flow")), "kyc_collection_flow", "Collecte KYC", "clarityKycIndividual", "individual"),
         (str(uuid.uuid5(uuid.UUID(TENANT_ID), "workflow:risk-score-improvement")), "risk-score-improvement", "Revue du score de risque", "risk-score-improvement", "individual"),
+        (str(uuid.uuid5(uuid.UUID(TENANT_ID), "workflow:activate-account")), "activate-account", "Activate account", "clarityFundingOrigin", "individual"),
     ]
     for doc_id, name, display, process, entity in specs:
         named = db.scalar(
@@ -573,7 +574,7 @@ def _ensure_workflows(db: Session) -> None:
         if named:
             payload = dict(named.payload)
             changed = False
-            if payload.get("processKey") != process and name in {"kyc_collection_flow", "risk-score-improvement"}:
+            if payload.get("processKey") != process and name in {"kyc_collection_flow", "risk-score-improvement", "activate-account"}:
                 payload = {**payload, "processKey": process, "entityType": entity}
                 changed = True
             if chart_needs_repair(payload.get("definition"), process):
@@ -581,6 +582,12 @@ def _ensure_workflows(db: Session) -> None:
                 changed = True
             if name == "risk-score-improvement" and payload.get("displayName") in {None, "", "risk-score-improvement"}:
                 payload = {**payload, "displayName": display}
+                changed = True
+            if name == "activate-account" and payload.get("displayName") in {None, "", "activate-account", "Provenance du virement"}:
+                payload = {**payload, "displayName": display}
+                changed = True
+            if payload.get("processKey") == "clarityFundingOrigin" and payload.get("displayName") == "Provenance du virement":
+                payload = {**payload, "displayName": "Activate account"}
                 changed = True
             if changed:
                 from sqlalchemy.orm.attributes import flag_modified

@@ -131,6 +131,12 @@ _FIELD_LABELS = {
     "counterpartyName": "Donneur d'ordre",
     "direction": "Sens",
     "description": "Libellé",
+    "paymentReference": "Référence de paiement",
+    "transactionReference": "Référence de transaction",
+    "accountId": "Compte crédité",
+    "channel": "Canal",
+    "transactionType": "Type d'opération",
+    "occurredAt": "Date du virement",
     "amlOutcome": "Résultat AML",
     "screeningTags": "Étiquettes de criblage",
 }
@@ -204,11 +210,67 @@ def _aml_fields(db: Session, workflow: WorkflowInstance) -> list[dict]:
     return rows
 
 
+_TRANSFER_FIELD_ORDER = (
+    "amount",
+    "currency",
+    "counterpartyName",
+    "direction",
+    "description",
+    "paymentReference",
+    "transactionReference",
+    "accountId",
+    "channel",
+    "transactionType",
+    "occurredAt",
+    "country",
+)
+
+
+def _funding_transfer(db: Session, workflow: WorkflowInstance) -> dict | None:
+    if workflow.definition_key != "clarityFundingOrigin":
+        return None
+    context = workflow.context or {}
+    entity = context.get("entity") if isinstance(context.get("entity"), dict) else {}
+    data = entity.get("data") if isinstance(entity.get("data"), dict) else {}
+    tx = db.get(Transaction, str(context.get("transaction_id") or "")) if context.get("transaction_id") else None
+    payload = tx.payload if tx and isinstance(tx.payload, dict) else {}
+    amount = data.get("amount") if data.get("amount") not in (None, "") else (tx.amount if tx else None)
+    currency = data.get("currency") or (tx.currency if tx else None) or "EUR"
+    return {
+        "id": tx.id if tx else context.get("transaction_id"),
+        "amount": amount,
+        "currency": currency,
+        "counterparty_name": data.get("counterpartyName") or (tx.counterparty_name if tx else None),
+        "direction": data.get("direction") or (tx.direction if tx else None) or "inbound",
+        "description": data.get("description") or (tx.description if tx else None),
+        "payment_reference": data.get("paymentReference") or payload.get("payment_reference"),
+        "transaction_reference": data.get("transactionReference") or payload.get("transaction_reference") or (tx.correlation_id if tx else None),
+        "account_id": data.get("accountId") or payload.get("credit_account_id") or payload.get("account_id"),
+        "channel": data.get("channel") or payload.get("channel"),
+        "transaction_type": data.get("transactionType") or payload.get("transaction_type"),
+        "country": data.get("country") or (tx.country if tx else None),
+        "occurred_at": data.get("occurredAt") or (iso(tx.occurred_at) if tx and tx.occurred_at else None),
+        "fields": [
+            row
+            for key in _TRANSFER_FIELD_ORDER
+            for row in _scalar_fields({key: data.get(key)})
+            if data.get(key) not in (None, "")
+        ],
+    }
+
+
 def _submitted_fields(db: Session, workflow: WorkflowInstance, customer: Customer | None) -> list[dict]:
     context = workflow.context or {}
     entity = context.get("entity") if isinstance(context.get("entity"), dict) else {}
     data = entity.get("data") if isinstance(entity.get("data"), dict) else {}
-    rows = _scalar_fields(data)
+    if workflow.definition_key == "clarityFundingOrigin":
+        ordered = {key: data[key] for key in _TRANSFER_FIELD_ORDER if key in data and data[key] not in (None, "")}
+        for key, value in data.items():
+            if key not in ordered and value not in (None, ""):
+                ordered[key] = value
+        rows = _scalar_fields(ordered)
+    else:
+        rows = _scalar_fields(data)
     seen = {row["key"] for row in rows}
     profile = {}
     if customer and customer.individual:
@@ -490,6 +552,7 @@ def kyc_case(runtime_id: str, principal: Principal = Depends(clarity_principal),
         "task": None if not task else {"key": task.task_key, "name": task.name},
         "customer": None if not customer else customer_view(db, customer),
         "submitted": _submitted_fields(db, workflow, customer),
+        "transfer": _funding_transfer(db, workflow),
         "identity": _merged_identity(documents, declared),
         "documents": [_document_view(document, declared) for document in documents],
         "tracker": _document_tracker(db, principal, workflow, documents),
@@ -500,7 +563,6 @@ def kyc_case(runtime_id: str, principal: Principal = Depends(clarity_principal),
         "notes": list((workflow.context or {}).get("notes") or []),
         "face_match": stored_face_match(db, workflow),
         "face_threshold": face_threshold(db, principal.tenant_id),
-        "account_hook": dict((workflow.context or {}).get("account_hook") or {}),
     }
 
 
@@ -575,30 +637,6 @@ def decide_kyc(runtime_id: str, body: dict, request: Request, principal: Princip
         refuse_verification(db, request.app.state.engine, tenant, principal, workflow, rationale)
     else:
         advance_workflow(db, request.app.state.engine, tenant, principal, workflow, action, rationale)
-    return kyc_case(runtime_id, principal, db)
-
-
-@router.post("/kyc/{runtime_id}/account-hook")
-def retry_account_hook(runtime_id: str, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
-    """Re-send the core-banking onboarding webhook after a failed delivery."""
-    from app.services import deliver_account_hook
-
-    if not principal.allows("admin", "checker"):
-        raise clarity_error(403, "forbidden", "Relance réservée à l'administration ou au contrôleur.")
-    workflow = _workflow(db, principal, runtime_id)
-    if workflow.state not in {"approved", "approved-partially"}:
-        raise clarity_error(422, "not_approved", "Le dossier doit être approuvé avant de créer le compte.")
-    customer = db.get(Customer, workflow.customer_id) if workflow.customer_id else None
-    if not customer:
-        raise clarity_error(404, "not_found", "Client introuvable.")
-    deliver_account_hook(db, workflow, customer)
-    hook = dict((workflow.context or {}).get("account_hook") or {})
-    if not hook.get("delivered"):
-        raise clarity_error(
-            502,
-            "account_hook_failed",
-            f"Création de compte non confirmée ({hook.get('status') or hook.get('error') or hook.get('auth_error') or 'échec'}).",
-        )
     return kyc_case(runtime_id, principal, db)
 
 
