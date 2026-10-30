@@ -172,6 +172,8 @@ def seed_demo(db: Session, engine=None, seed_clients: bool = True) -> None:
         ensure_studio(db)
         ensure_demo_logins(db)
         ensure_env_admin(db)
+        # Keep synthetic fixtures (syn-putin multi-topic, etc.) current on every boot.
+        ensure_watchlist_entries(db)
         if seed_clients and _demo_seed_version(db) != DEMO_SEED_VERSION:
             purge_clients(db, TENANT_ID)
             tenant = db.get(Tenant, TENANT_ID)

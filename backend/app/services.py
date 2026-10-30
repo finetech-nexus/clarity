@@ -1555,7 +1555,7 @@ def _customer_has_pending_screening(db: Session, customer_id: str) -> bool:
     return pending is not None
 
 
-RISK_METHODOLOGY = "clarity-risk-3.2"
+RISK_METHODOLOGY = "clarity-risk-3.3"
 RISK_FORMULA_NOTE = (
     "Score de la dernière vérification uniquement = AML + visage + authenticité + historique d'opérations + pays/structure. "
     "AML : pondération par topic "
@@ -1963,7 +1963,7 @@ def assess_customer(db: Session, tenant: Tenant, customer: Customer, source: str
         factors.append(factor)
     score = min(100, max(0, score))
     if not factors:
-        factors.append({"code": "baseline", "points": 0, "explanation": "Aucun facteur aggravant sur la dernière vérification (méthodologie clarity-risk-3.2)."})
+        factors.append({"code": "baseline", "points": 0, "explanation": "Aucun facteur aggravant sur la dernière vérification (méthodologie clarity-risk-3.3)."})
     tier = "low"
     level = 1
     if score >= 60:

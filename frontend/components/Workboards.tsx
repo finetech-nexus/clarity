@@ -669,6 +669,20 @@ export function AdminBoard() {
       ) : null}
       {tab === "config" ? (
         <div className="action-grid">
+          <form className="form card" onSubmit={(event) => void saveMakerChecker(event)}>
+            <h3>Contrôle « La personne qui a instruit le dossier ne peut pas l&apos;approuver »</h3>
+            {makerSaved ? <p className="label">{makerSaved}</p> : null}
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={makerChecker}
+                onChange={(event) => setMakerChecker(event.target.checked)}
+              />
+              Activer la séparation maker / checker
+            </label>
+            <p className="label">Coché : l&apos;analyste qui transmet ne peut pas valider en contrôle. Décoché : la même personne peut instruire puis approuver.</p>
+            <button type="submit">Enregistrer</button>
+          </form>
           <form className="form card" onSubmit={(event) => void savePolicy(event)}>
             <h3>Validité du KYC</h3>
             {saved ? <p className="label">{saved}</p> : null}
@@ -677,20 +691,6 @@ export function AdminBoard() {
               <input min={1} max={10} type="number" value={years} onChange={(event) => setYears(event.target.value)} />
             </label>
             <p className="label">Après approbation, la vérification expire à cette échéance. Une nouvelle vérification est alors créée pour mettre à jour le client.</p>
-            <button type="submit">Enregistrer</button>
-          </form>
-          <form className="form card" onSubmit={(event) => void saveMakerChecker(event)}>
-            <h3>Séparation maker / checker</h3>
-            {makerSaved ? <p className="label">{makerSaved}</p> : null}
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={makerChecker}
-                onChange={(event) => setMakerChecker(event.target.checked)}
-              />
-              Empêcher la personne qui a instruit le dossier de l&apos;approuver
-            </label>
-            <p className="label">Activé : l&apos;analyste qui transmet ne peut pas valider en contrôle. Désactivé : la même personne peut instruire puis approuver (utile en démo).</p>
             <button type="submit">Enregistrer</button>
           </form>
           <form className="form card" onSubmit={(event) => void saveThreshold(event)}>
