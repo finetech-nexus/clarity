@@ -30,12 +30,11 @@ class Settings(BaseSettings):
     ai_model: str = "gpt-4o-mini"
     ocr_url: str = ""
     public_app_url: str = "http://localhost:3010"
+    # Ballerine-compatible onboarding webhook (workflowservice /hooks/onboarding).
+    # Prefer this over calling core-banking directly — the webhook obtains the token and forwards.
+    account_hook_url: str = ""
+    # Deprecated alias kept for older manifests; used only when account_hook_url is empty.
     core_banking_hook_url: str = ""
-    # Same client_credentials path Ballerine workflowsvc uses for /api/kyc/onboarding.
-    core_banking_token_url: str = ""
-    core_banking_client_id: str = ""
-    core_banking_client_secret: str = ""
-    core_banking_tenant: str = "tn"
     admin_username: str = "admin"
     admin_password: str = "password"
     auth_mode: str = "oidc"
@@ -56,6 +55,10 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [item.strip() for item in self.cors_origins.split(",") if item.strip()]
+
+    @property
+    def resolved_account_hook_url(self) -> str:
+        return (self.account_hook_url or self.core_banking_hook_url or "").strip()
 
 
 _runtime_overlay: dict[str, str] = {}

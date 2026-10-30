@@ -305,7 +305,7 @@ def test_maker_checker_and_tenant_isolation(tmp_path):
 
             return Response()
 
-        current_settings().core_banking_hook_url = "http://core-banking.test/api/kyc/onboarding"
+        current_settings().account_hook_url = "http://workflowservice.test/api/v1/hooks/onboarding"
         original = httpx.post
         httpx.post = fake_post
         try:
@@ -329,8 +329,8 @@ def test_maker_checker_and_tenant_isolation(tmp_path):
         assert hook["payload"]["workflowFinalState"] == "approved"
         assert hook["payload"]["data"]["entity"]["data"]["firstName"] == "Luc"
         assert hook["payload"]["data"]["documents"][0]["category"] == "proof_of_identity"
-        assert sent["url"] == "http://core-banking.test/api/kyc/onboarding"
-        assert sent.get("signature")
+        assert sent["url"] == "http://workflowservice.test/api/v1/hooks/onboarding"
+        assert sent["signature"]
 
         session = client.app.state.database.session_factory()
         other = Customer(tenant_id="99999999-9999-4999-8999-999999999999", kind="individual", display_name="Autre banque", canonical_status="approved")

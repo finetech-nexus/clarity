@@ -1168,6 +1168,44 @@ def reseed_client_data(request: Request, principal: Principal = Depends(clarity_
     return result
 
 
+@router.post("/administration/workflows/{workflow_id}/account-hook/redeliver")
+def redeliver_account_hook(workflow_id: str, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    """Re-send the Ballerine-style onboarding webhook for an approved verification."""
+    if not principal.allows("admin", "checker"):
+        raise clarity_error(403, "forbidden", "Réservé à l'administration ou au contrôleur.")
+    from app.services import deliver_account_hook
+
+    workflow = db.get(WorkflowInstance, workflow_id)
+    if not workflow or workflow.tenant_id != principal.tenant_id:
+        raise clarity_error(404, "not_found", "Dossier introuvable.")
+    if workflow.state not in {"approved", "approved-partially"}:
+        raise clarity_error(422, "invalid_state", "Le dossier doit être approuvé pour relancer le hook compte.")
+    if not workflow.customer_id:
+        raise clarity_error(422, "invalid_state", "Aucun client lié à ce dossier.")
+    customer = db.get(Customer, workflow.customer_id)
+    if not customer:
+        raise clarity_error(404, "not_found", "Client introuvable.")
+    deliver_account_hook(db, workflow, customer)
+    hook = (workflow.context or {}).get("account_hook") or {}
+    audit(
+        db,
+        principal.tenant_id,
+        actor_label(principal),
+        "workflow.account_hook.redeliver",
+        "workflow",
+        workflow.id,
+        {"delivered": hook.get("delivered"), "status": hook.get("status"), "url": hook.get("url")},
+    )
+    return {
+        "workflow_id": workflow.id,
+        "delivered": hook.get("delivered"),
+        "status": hook.get("status"),
+        "url": hook.get("url"),
+        "error": hook.get("error"),
+        "response": hook.get("response"),
+    }
+
+
 @router.get("/administration/users")
 def users(principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
     if not principal.allows("admin"):

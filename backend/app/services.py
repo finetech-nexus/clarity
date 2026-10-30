@@ -2000,23 +2000,16 @@ def assess_customer(db: Session, tenant: Tenant, customer: Customer, source: str
 
 
 def _account_hook_payload(db: Session, workflow: WorkflowInstance, customer: Customer) -> dict:
-    """Payload the core-banking onboarding hook already accepts."""
+    """Ballerine-shaped workflow.completed payload for the onboarding webhook."""
     entity = dict((workflow.context or {}).get("entity") or {})
     stored = dict(entity.get("data") or {})
     individual = customer.individual
-    legal = (individual.legal_name if individual else "") or customer.display_name or ""
-    legal_parts = [part for part in str(legal).split() if part]
-    inferred_first = " ".join(legal_parts[:-1]) if len(legal_parts) > 1 else (legal_parts[0] if legal_parts else "")
-    inferred_last = legal_parts[-1] if len(legal_parts) > 1 else ""
     data = {
         "email": stored.get("email") or (individual.email if individual else "") or "",
         "phone": stored.get("phone") or stored.get("phoneNumber") or (individual.phone if individual else "") or "",
-        "country": stored.get("country")
-        or (individual.nationality if individual else "")
-        or (individual.residence_country if individual else "")
-        or "TN",
-        "lastName": stored.get("lastName") or (individual.family_name if individual else "") or inferred_last,
-        "firstName": stored.get("firstName") or (individual.given_name if individual else "") or inferred_first,
+        "country": stored.get("country") or (individual.nationality if individual else "") or (individual.residence_country if individual else "") or "",
+        "lastName": stored.get("lastName") or (individual.family_name if individual else "") or "",
+        "firstName": stored.get("firstName") or (individual.given_name if individual else "") or "",
         "dateOfBirth": stored.get("dateOfBirth") or (individual.date_of_birth if individual else "") or "",
     }
     documents = []
@@ -2056,10 +2049,11 @@ def _account_hook_payload(db: Session, workflow: WorkflowInstance, customer: Cus
         "workflowResolvedAt": iso(workflow.resolved_at),
         "workflowDefinitionId": workflow.definition_key,
         "workflowRuntimeId": workflow.ballerine_runtime_id,
-        "workflowStatus": workflow.status,
+        "workflowStatus": "completed" if workflow.state in {"approved", "approved-partially"} else workflow.status,
         "workflowFinalState": workflow.state,
         "ballerineEntityId": customer.id,
         "correlationId": customer.external_ref or customer.id,
+        "environment": "production",
         "data": {
             "entity": {
                 "id": entity.get("id") or customer.external_ref or customer.id,
@@ -2068,39 +2062,21 @@ def _account_hook_payload(db: Session, workflow: WorkflowInstance, customer: Cus
                 "data": data,
             },
             "documents": documents,
-            "metadata": {"customerId": customer.id, "customerName": customer.display_name},
+            "metadata": {
+                "customerId": customer.id,
+                "customerName": customer.display_name,
+                "customerNormalizedName": customer.display_name,
+            },
         },
     }
 
 
-def _core_banking_service_token(settings) -> str | None:
-    """Client-credentials token required by core-banking /api/kyc/onboarding (keycloakProtect)."""
-    import httpx
-
-    token_url = (settings.core_banking_token_url or "").strip()
-    client_id = (settings.core_banking_client_id or "").strip()
-    client_secret = (settings.core_banking_client_secret or "").strip()
-    if not (token_url and client_id and client_secret):
-        return None
-    response = httpx.post(
-        token_url,
-        data={
-            "grant_type": "client_credentials",
-            "client_id": client_id,
-            "client_secret": client_secret,
-        },
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        timeout=8,
-    )
-    response.raise_for_status()
-    token = (response.json() or {}).get("access_token")
-    if not token:
-        raise RuntimeError("core_banking_token_missing")
-    return str(token)
-
-
 def deliver_account_hook(db: Session, workflow: WorkflowInstance, customer: Customer) -> None:
-    """Tell core banking that an approved client can be created. A delivery failure does not undo the approval."""
+    """Post workflow.completed to the Ballerine onboarding webhook (not core-banking directly).
+
+    Same path as Ballerine: Clarity → workflowservice /hooks/onboarding → Keycloak token → core banking.
+    A delivery failure does not undo the approval.
+    """
     import httpx
     from sqlalchemy.orm.attributes import flag_modified
 
@@ -2109,44 +2085,30 @@ def deliver_account_hook(db: Session, workflow: WorkflowInstance, customer: Cust
 
     payload = _account_hook_payload(db, workflow, customer)
     settings = current_settings()
-    targets = [settings.core_banking_hook_url.strip()] if settings.core_banking_hook_url.strip() else []
+    primary = settings.resolved_account_hook_url
+    targets = [primary] if primary else []
     for subscription in (workflow.config or {}).get("subscriptions") or []:
         if not isinstance(subscription, dict):
             continue
         url = str(subscription.get("url") or "").strip()
         events = subscription.get("events") or ["workflow.completed"]
-        if url and "workflow.completed" in events:
+        if url and "workflow.completed" in events and url not in targets:
             targets.append(url)
     record: dict = {"event": "workflow.completed", "payload": payload, "delivered": False}
     if targets:
         signature = sign_payload(settings.unified_api_shared_secret, payload)
-        headers = {
-            "Content-Type": "application/json",
-            "x-hmac-signature": signature,
-            "x-tenant-id": (settings.core_banking_tenant or "tn").strip() or "tn",
-        }
-        try:
-            token = _core_banking_service_token(settings)
-            if token:
-                headers["Authorization"] = f"Bearer {token}"
-            else:
-                record["auth"] = "missing_client_credentials"
-        except Exception as exc:  # noqa: BLE001
-            record["auth_error"] = str(exc)
         for target in targets:
             try:
                 response = httpx.post(
                     target,
                     json=payload,
-                    headers=headers,
-                    timeout=30,
+                    headers={"Content-Type": "application/json", "x-hmac-signature": signature},
+                    timeout=20,
                 )
                 record["url"] = target
                 record["status"] = response.status_code
                 record["response"] = (response.text or "")[:500]
                 record["delivered"] = response.status_code < 400
-                if record["delivered"]:
-                    break
             except Exception as exc:  # noqa: BLE001
                 record["url"] = target
                 record["error"] = str(exc)
@@ -2157,7 +2119,15 @@ def deliver_account_hook(db: Session, workflow: WorkflowInstance, customer: Cust
     context["account_hook"] = record
     workflow.context = context
     flag_modified(workflow, "context")
-    audit(db, customer.tenant_id, "clarity", "workflow.account_hook", "workflow", workflow.id, {"delivered": record["delivered"], "event": "workflow.completed"})
+    audit(
+        db,
+        customer.tenant_id,
+        "clarity",
+        "workflow.account_hook",
+        "workflow",
+        workflow.id,
+        {"delivered": record["delivered"], "event": "workflow.completed", "url": record.get("url"), "status": record.get("status")},
+    )
 
 
 def _mark_partially_approved(db: Session, tenant: Tenant, customer: Customer, workflow: WorkflowInstance) -> None:
