@@ -2153,6 +2153,15 @@ def test_client_reference_links_kyc_entity_to_banking_external_id(tmp_path):
         assert profile.status_code == 200
         assert profile.json()["client_reference"] == "kc-user-42"
         assert profile.json()["external_ref"] == "user-session-ref"
+        status = client.get(
+            "/api/v1/external/customers/kyc-status",
+            headers=headers,
+            params={"clientReference": "kc-user-42"},
+        )
+        assert status.status_code == 200, status.text
+        assert status.json()["client_reference"] == "kc-user-42"
+        assert status.json()["external_ref"] == "user-session-ref"
+        assert status.json()["verificationId"] == "session-ref"
         db = client.app.state.database.session_factory()
         tenant = db.get(Tenant, db.get(Customer, customer_id).tenant_id)
         matched = _resolve_ingest_customer(db, tenant, {"customer_id": "kc-user-42"})

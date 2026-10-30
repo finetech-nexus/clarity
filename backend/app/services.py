@@ -695,6 +695,85 @@ def _strip_client_ref(value: object) -> str:
     return text.strip()
 
 
+def resolve_customer_by_reference(db: Session, tenant: Tenant, *refs: str) -> Customer | None:
+    """Resolve a Clarity customer by external_ref, user-{id}, client_reference, or fineract id."""
+    cleaned: list[str] = []
+    for raw in refs:
+        text = _strip_client_ref(raw)
+        if text and text not in cleaned:
+            cleaned.append(text)
+        if text and not text.startswith("user-"):
+            prefixed = f"user-{text}"
+            if prefixed not in cleaned:
+                cleaned.append(prefixed)
+    if not cleaned:
+        return None
+    for ref in cleaned:
+        customer = db.scalar(select(Customer).where(Customer.tenant_id == tenant.id, Customer.external_ref == ref))
+        if customer:
+            return customer
+        customer = db.get(Customer, ref)
+        if customer and customer.tenant_id == tenant.id:
+            return customer
+    cleaned_lower = {value.lower() for value in cleaned}
+    for customer in db.scalars(select(Customer).where(Customer.tenant_id == tenant.id)).all():
+        extension = customer.extension if isinstance(customer.extension, dict) else {}
+        client_reference = str(extension.get("client_reference") or "").strip()
+        fineract_id = str(extension.get("fineract_client_id") or "").strip()
+        kyc_entity = str(extension.get("kyc_entity_id") or "").strip()
+        candidates = {
+            client_reference,
+            fineract_id,
+            kyc_entity,
+            str(customer.external_ref or "").strip(),
+        }
+        if any(value and value in cleaned for value in candidates):
+            return customer
+        if any(value and value.lower() in cleaned_lower for value in candidates):
+            return customer
+    return None
+
+
+def customer_kyc_status_payload(db: Session, customer: Customer) -> dict:
+    """Compact KYC status for mobile / kyc-api (canonical_status is source of truth)."""
+    extension = customer.extension if isinstance(customer.extension, dict) else {}
+    kyc_entity_id = str(
+        extension.get("kyc_entity_id")
+        or (customer.external_ref if str(customer.external_ref or "").startswith("user-") else "")
+        or ""
+    ).strip()
+    verification_id = kyc_entity_id[5:] if kyc_entity_id.startswith("user-") else ""
+    if not verification_id and str(customer.external_ref or "").startswith("user-"):
+        verification_id = str(customer.external_ref)[5:]
+    workflows = db.scalars(
+        select(WorkflowInstance)
+        .where(WorkflowInstance.customer_id == customer.id)
+        .order_by(WorkflowInstance.created_at.desc())
+    ).all()
+    review = next(
+        (
+            row
+            for row in workflows
+            if row.definition_key
+            in {"risk-score-improvement", "clarityFundingOrigin", "kyc"}
+            or str(row.state or "") in {"approved", "approved-partially", "rejected"}
+        ),
+        workflows[0] if workflows else None,
+    )
+    return {
+        "id": customer.id,
+        "status": customer.canonical_status,
+        "external_ref": customer.external_ref,
+        "client_reference": extension.get("client_reference"),
+        "fineract_client_id": extension.get("fineract_client_id"),
+        "kyc_entity_id": kyc_entity_id or None,
+        "verificationId": verification_id or None,
+        "workflowRuntimeId": review.ballerine_runtime_id if review else None,
+        "workflowState": review.state if review else None,
+        "definition_key": review.definition_key if review else None,
+    }
+
+
 def _resolve_ingest_customer(db: Session, tenant: Tenant, payload: dict) -> Customer | None:
     """Match Marble/kyc-api ids to a Clarity client (KYC entity id or banking client_reference)."""
     refs: list[str] = []
@@ -702,23 +781,7 @@ def _resolve_ingest_customer(db: Session, tenant: Tenant, payload: dict) -> Cust
         raw = _strip_client_ref(payload.get(key))
         if raw and raw not in refs:
             refs.append(raw)
-    for ref in refs:
-        customer = db.scalar(select(Customer).where(Customer.tenant_id == tenant.id, Customer.external_ref == ref))
-        if customer:
-            return customer
-        customer = db.get(Customer, ref)
-        if customer and customer.tenant_id == tenant.id:
-            return customer
-    if not refs:
-        return None
-    for customer in db.scalars(select(Customer).where(Customer.tenant_id == tenant.id)).all():
-        extension = customer.extension if isinstance(customer.extension, dict) else {}
-        client_reference = str(extension.get("client_reference") or "").strip()
-        fineract_id = str(extension.get("fineract_client_id") or "").strip()
-        kyc_entity = str(extension.get("kyc_entity_id") or "").strip()
-        if client_reference in refs or fineract_id in refs or kyc_entity in refs:
-            return customer
-    return None
+    return resolve_customer_by_reference(db, tenant, *refs)
 
 
 def _transaction_from_ingestion(db: Session, tenant: Tenant, payload: dict, updated) -> Transaction:

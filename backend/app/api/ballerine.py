@@ -13,12 +13,14 @@ from app.services import (
     ApiFailure,
     advance_workflow,
     attach_customer_client_reference,
+    customer_kyc_status_payload,
     customer_view,
     document_record,
     evaluate_transaction,
     finish_document_request_if_ready,
     store_liveness_video,
     nest_error,
+    resolve_customer_by_reference,
     start_customer_workflow,
     store_bytes,
     workflow_list_item,
@@ -649,6 +651,35 @@ def delete_documents(body: dict, principal: Principal = Depends(ballerine_princi
             removed.append(document_record(document))
             db.delete(document)
     return removed
+
+
+@router.get("/external/customers/kyc-status")
+def get_customer_kyc_status(
+    clientReference: str | None = None,
+    client_reference: str | None = None,
+    externalId: str | None = None,
+    externalRef: str | None = None,
+    external_ref: str | None = None,
+    entityId: str | None = None,
+    verificationId: str | None = None,
+    principal: Principal = Depends(ballerine_principal),
+    db: Session = Depends(db_session),
+):
+    """Mobile/kyc-api: resolve canonical KYC status from Clarity by banking or KYC entity id."""
+    refs = [
+        clientReference,
+        client_reference,
+        externalId,
+        externalRef,
+        external_ref,
+        entityId,
+        verificationId,
+        f"user-{verificationId}" if verificationId else None,
+    ]
+    customer = resolve_customer_by_reference(db, _tenant(db, principal), *[str(r) for r in refs if r])
+    if not customer:
+        raise nest_error(404, "Customer not found")
+    return customer_kyc_status_payload(db, customer)
 
 
 @router.post("/external/customers/{entity_id}/client-reference")
