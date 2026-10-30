@@ -317,10 +317,16 @@ def _extracted_fields(document: IdentityDocument, declared: dict[str, str] | Non
     return rows
 
 
-def _screening_alert(db: Session, customer: Customer | None) -> bool:
+def _screening_alert(db: Session, customer: Customer | None, workflow: WorkflowInstance | None = None) -> bool:
     if not customer:
         return False
-    checks = db.scalars(select(ScreeningCheck).where(ScreeningCheck.customer_id == customer.id)).all()
+    query = select(ScreeningCheck).where(ScreeningCheck.customer_id == customer.id)
+    if workflow is not None:
+        query = query.where(ScreeningCheck.created_at >= workflow.created_at)
+    checks = list(db.scalars(query).all())
+    if not checks:
+        return False
+    # Pending matches still need a decision; confirmed hits stay flagged for this verification.
     return any(check.status not in _QUIET_SCREENING for check in checks)
 
 
@@ -339,7 +345,7 @@ def _review_flags(db: Session, workflow: WorkflowInstance, customer: Customer | 
     reasons = []
     if mismatched:
         reasons.append("correspondence")
-    if _screening_alert(db, customer):
+    if _screening_alert(db, customer, workflow):
         reasons.append("screening")
     face = stored_face_match(db, workflow)
     if face and face.get("match") is False:

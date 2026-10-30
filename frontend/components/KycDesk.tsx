@@ -576,6 +576,31 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
     });
   }
 
+  function applyCaseColors(runtimeId: string, updated: Detail) {
+    setQueue((current) =>
+      current.map((item) =>
+        item.id !== runtimeId
+          ? item
+          : {
+              ...item,
+              alert: Boolean(updated.alert),
+              documents: updated.documents?.length ?? item.documents,
+              revisions: updated.documents?.filter((doc) => doc.decision === "revisions").length ?? item.revisions,
+              status: updated.case.status,
+              state: updated.case.state,
+            }
+      )
+    );
+  }
+
+  async function refreshSelectedCase(runtimeId = selected) {
+    if (!runtimeId) return null;
+    const updated = await api<Detail>(`/api/clarity/v1/desks/kyc/${runtimeId}`);
+    setDetail(updated);
+    applyCaseColors(runtimeId, updated);
+    return updated;
+  }
+
   useEffect(() => {
     void loadQueue(undefined, query, page).catch((err: Error) => setError(err.message));
   }, [query, page]);
@@ -585,7 +610,12 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
       setDetail(null);
       return;
     }
-    void api<Detail>(`/api/clarity/v1/desks/kyc/${selected}`).then(setDetail).catch((err: Error) => setError(err.message));
+    void api<Detail>(`/api/clarity/v1/desks/kyc/${selected}`)
+      .then((updated) => {
+        setDetail(updated);
+        applyCaseColors(selected, updated);
+      })
+      .catch((err: Error) => setError(err.message));
   }, [selected]);
 
   async function decideCase(action: "approve" | "reject" | "revision" | "approve-partial", note = "") {
@@ -596,6 +626,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
         body: JSON.stringify({ action, rationale: note }),
       });
       setDetail(updated);
+      if (selected) applyCaseColors(selected, updated);
       setRejectNote("");
       setApproveNote("");
       setPartialNote("");
@@ -636,9 +667,9 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
     try {
       const refreshed = await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}/identity/ocr`, { method: "POST" });
       setDetail(refreshed);
+      if (selected) applyCaseColors(selected, refreshed);
       const found = (refreshed.identity || []).some((field) => ["firstName", "lastName", "dateOfBirth"].includes(field.key) && field.value);
       setMessage(found ? "Lecture enregistrée." : "Aucune identité lue sur la carte ou le passeport.");
-      await loadQueue(selected);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Lecture refusée");
     } finally {
@@ -650,12 +681,13 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
     event.preventDefault();
     setError("");
     try {
-      setDetail(await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}/identity`, {
+      const refreshed = await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}/identity`, {
         method: "PATCH",
         body: JSON.stringify({ fields: draft }),
-      }));
+      });
+      setDetail(refreshed);
+      if (selected) applyCaseColors(selected, refreshed);
       setMessage("Données d'identité enregistrées.");
-      await loadQueue(selected);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Enregistrement refusé");
     }
@@ -665,7 +697,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
     setError("");
     try {
       await api(`/api/clarity/v1/screening/matches/${id}/disposition`, { method: "POST", body: JSON.stringify({ status }) });
-      setDetail(await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}`));
+      await refreshSelectedCase();
       setMessage(status === "no_hit" ? "Correspondance écartée." : "Correspondance confirmée.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Vérification du criblage refusée");
@@ -680,15 +712,16 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
       ? { document_id: target }
       : { type: target.split("|")[0], category: target.split("|")[1], country: target.split("|")[2] || "ZZ" };
     try {
-      setDetail(await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}/document-requests`, {
+      const refreshed = await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}/document-requests`, {
         method: "POST",
         body: JSON.stringify({ reason: askReason, items: [item] }),
-      }));
+      });
+      setDetail(refreshed);
+      if (selected) applyCaseColors(selected, refreshed);
       setAskReason("");
       setResubmitId("");
       setComplementTarget("");
       setMessage(mode === "resubmit" ? "Renvoi demandé au client." : "Pièce complémentaire demandée au client.");
-      await loadQueue(selected);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Demande refusée");
     }
@@ -699,7 +732,9 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
     setError("");
     setComparing(true);
     try {
-      setDetail(await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}/face-match`, { method: "POST" }));
+      const refreshed = await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}/face-match`, { method: "POST" });
+      setDetail(refreshed);
+      applyCaseColors(selected, refreshed);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Comparaison des visages refusée");
     } finally {
@@ -708,14 +743,16 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
   }
 
   async function decideDocument(id: string, decision: "approve" | "reject" | "revision") {
-    const updated = await api<ViewerDocument>(`/api/clarity/v1/desks/documents/${id}/decision`, {
-      method: "POST",
-      body: JSON.stringify({ decision }),
-    });
-    setDetail((current) => current && ({
-      ...current,
-      documents: current.documents.map((item) => (item.id === id ? { ...item, ...updated } : item)),
-    }));
+    setError("");
+    try {
+      await api<ViewerDocument>(`/api/clarity/v1/desks/documents/${id}/decision`, {
+        method: "POST",
+        body: JSON.stringify({ decision }),
+      });
+      await refreshSelectedCase();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Décision document refusée");
+    }
   }
 
   const taskKey = detail?.task?.key || "";
@@ -1051,11 +1088,19 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
     void api<Detail>(`/api/clarity/v1/desks/kyc/${runtimeId}`).then(setDetail).catch((err: Error) => setError(err.message));
   }, [runtimeId]);
 
+  async function refreshPreview() {
+    const updated = await api<Detail>(`/api/clarity/v1/desks/kyc/${runtimeId}`);
+    setDetail(updated);
+    onChanged?.();
+    return updated;
+  }
+
   async function compareFaces() {
     setError("");
     setComparing(true);
     try {
       setDetail(await api<Detail>(`/api/clarity/v1/desks/kyc/${runtimeId}/face-match`, { method: "POST" }));
+      onChanged?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Comparaison des visages refusée");
     } finally {
@@ -1111,15 +1156,11 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
   async function decideDocument(id: string, decision: "approve" | "reject" | "revision") {
     setError("");
     try {
-      const updated = await api<ViewerDocument>(`/api/clarity/v1/desks/documents/${id}/decision`, {
+      await api<ViewerDocument>(`/api/clarity/v1/desks/documents/${id}/decision`, {
         method: "POST",
         body: JSON.stringify({ decision }),
       });
-      setDetail((current) => current && ({
-        ...current,
-        documents: current.documents.map((item) => (item.id === id ? { ...item, ...updated } : item)),
-      }));
-      onChanged?.();
+      await refreshPreview();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Décision document refusée");
     }
@@ -1129,9 +1170,8 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
     setError("");
     try {
       await api(`/api/clarity/v1/screening/matches/${id}/disposition`, { method: "POST", body: JSON.stringify({ status }) });
-      setDetail(await api<Detail>(`/api/clarity/v1/desks/kyc/${runtimeId}`));
+      await refreshPreview();
       setMessage(status === "no_hit" ? "Correspondance écartée." : "Correspondance confirmée.");
-      onChanged?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Vérification du criblage refusée");
     }
