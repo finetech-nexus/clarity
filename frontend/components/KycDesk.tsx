@@ -407,12 +407,27 @@ function statusLabel(t: (key: string) => string, status: string, state?: string 
   return stepLabel(t, state, status);
 }
 
-function filtersQuery(name: string, statuses: string[]) {
+function filtersQuery(name: string, statuses: string[], workflows: string[]) {
   const parts: string[] = [];
   const trimmed = name.trim().replaceAll('"', "");
   if (trimmed) parts.push(trimmed.includes(" ") || trimmed.includes(":") ? `name:"${trimmed}"` : `name:${trimmed}`);
   statuses.forEach((status) => parts.push(`status:${status}`));
+  workflows.forEach((workflow) => parts.push(`workflow:${workflow}`));
   return parts.join(" ");
+}
+
+type WorkflowOption = { key: string; label: string };
+
+function uniqueWorkflowOptions(rows: Array<{ processKey?: string | null; displayName?: string; name?: string; entityType?: string | null }>, kind?: string): WorkflowOption[] {
+  const wanted = kind === "business" ? "business" : kind ? "individual" : "";
+  const seen = new Map<string, string>();
+  for (const row of rows) {
+    const key = String(row.processKey || "").trim();
+    if (!key) continue;
+    if (wanted && row.entityType && row.entityType !== wanted) continue;
+    if (!seen.has(key)) seen.set(key, String(row.displayName || row.name || key));
+  }
+  return [...seen.entries()].map(([key, label]) => ({ key, label })).sort((a, b) => a.label.localeCompare(b.label));
 }
 
 function taskActionLabel(t: (key: string) => string, fundingReview: boolean, reviewState: string) {
@@ -653,6 +668,8 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
   const [query, setQuery] = useState("status:active");
   const [nameQuery, setNameQuery] = useState("");
   const [statuses, setStatuses] = useState<string[]>(["active"]);
+  const [workflows, setWorkflows] = useState<string[]>([]);
+  const [workflowOptions, setWorkflowOptions] = useState<WorkflowOption[]>([]);
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const [tab, setTab] = useState<TabKey>("submitted");
@@ -720,6 +737,12 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
     applyCaseColors(runtimeId, updated);
     return updated;
   }
+
+  useEffect(() => {
+    void api<Array<{ processKey?: string | null; displayName?: string; name?: string; entityType?: string | null }>>("/api/v1/workflow-definition")
+      .then((rows) => setWorkflowOptions(uniqueWorkflowOptions(rows, kind)))
+      .catch(() => setWorkflowOptions([]));
+  }, [kind]);
 
   useEffect(() => {
     setPage(0);
@@ -911,7 +934,8 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
       {error ? <p className="error">{error}</p> : null}
       {message ? <p className="label">{message}</p> : null}
       <div className="filters">
-        <label className="field">{t("verify.filterName")}
+        <div className="filter-group">
+          <span className="label">{t("verify.filterName")}</span>
           <input
             aria-label={t("verify.filterName")}
             placeholder={t("verify.searchPlaceholder")}
@@ -920,26 +944,50 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
               const next = event.target.value;
               setNameQuery(next);
               setPage(0);
-              setQuery(filtersQuery(next, statuses));
+              setQuery(filtersQuery(next, statuses, workflows));
             }}
           />
-        </label>
-        <div className="checks" role="group" aria-label={t("verify.filterStatus")}>
-          {STATUS_FILTER_VALUES.map((value) => (
-            <label key={value}>
-              <input
-                type="checkbox"
-                checked={statuses.includes(value)}
-                onChange={() => {
-                  const next = statuses.includes(value) ? statuses.filter((item) => item !== value) : [...statuses, value];
-                  setStatuses(next);
-                  setPage(0);
-                  setQuery(filtersQuery(nameQuery, next));
-                }}
-              />
-              {t(`verify.status.${value}`)}
-            </label>
-          ))}
+        </div>
+        <div className="filter-group">
+          <span className="label">{t("verify.filterStatus")}</span>
+          <div className="checks" role="group" aria-label={t("verify.filterStatus")}>
+            {STATUS_FILTER_VALUES.map((value) => (
+              <label key={value}>
+                <input
+                  type="checkbox"
+                  checked={statuses.includes(value)}
+                  onChange={() => {
+                    const next = statuses.includes(value) ? statuses.filter((item) => item !== value) : [...statuses, value];
+                    setStatuses(next);
+                    setPage(0);
+                    setQuery(filtersQuery(nameQuery, next, workflows));
+                  }}
+                />
+                {t(`verify.status.${value}`)}
+              </label>
+            ))}
+          </div>
+        </div>
+        <div className="filter-group">
+          <span className="label">{t("verify.filterWorkflow")}</span>
+          <div className="checks" role="group" aria-label={t("verify.filterWorkflow")}>
+            {!workflowOptions.length ? <span className="label">—</span> : null}
+            {workflowOptions.map((option) => (
+              <label key={option.key}>
+                <input
+                  type="checkbox"
+                  checked={workflows.includes(option.key)}
+                  onChange={() => {
+                    const next = workflows.includes(option.key) ? workflows.filter((item) => item !== option.key) : [...workflows, option.key];
+                    setWorkflows(next);
+                    setPage(0);
+                    setQuery(filtersQuery(nameQuery, statuses, next));
+                  }}
+                />
+                {option.label}
+              </label>
+            ))}
+          </div>
         </div>
       </div>
       <p className="label">{queue.length}/{total} {t("verify.cases")}</p>

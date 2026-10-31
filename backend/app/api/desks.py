@@ -570,7 +570,20 @@ def kyc_queue(q: str = "", kind: str = "", limit: int | None = None, offset: int
             if not customer or customer.kind != "business":
                 continue
         listed.append(_kyc_card(db, row))
-    return present(listed, q, lambda row: {"name": row["name"], "status": row["status"], "state": row["state"] or ""}, limit, offset)
+    return present(
+        listed,
+        q,
+        lambda row: {
+            "name": row["name"],
+            "status": row["status"],
+            "state": row["state"] or "",
+            "workflow": row.get("definition_key") or "",
+            "definition": row.get("definition") or "",
+            "definition_key": row.get("definition_key") or "",
+        },
+        limit,
+        offset,
+    )
 
 
 @router.get("/kyc/{runtime_id}")
