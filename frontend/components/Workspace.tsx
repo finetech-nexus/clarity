@@ -582,12 +582,6 @@ function CustomerView({ profile, onChange }: { profile: Record<string, unknown>;
             {latestCycle ? ` · dernière vérification ${latestCycle.label}` : ""}
           </p>
         </div>
-        <RiskScoreChip
-          score={risk?.score}
-          tier={risk?.tier || (typeof profile.risk_tier === "string" ? profile.risk_tier : null)}
-          note={risk?.formula_note}
-          factors={risk?.factors || []}
-        />
       </header>
       <h2>Vérifications</h2>
       <table className="inbox sheet">
@@ -617,16 +611,23 @@ function CustomerView({ profile, onChange }: { profile: Record<string, unknown>;
       ) : null}
       {openCycle ? (
         <section className="customer-verification-detail" aria-label="Détail de la vérification">
-          <h3>{openCycle.label} · {day(openCycle.created_at)}</h3>
-          <p className="label" style={{ marginTop: 2, marginBottom: 0 }}>
-            id-verification = {openCycle.workflow_runtime_id || openCycle.id}
-          </p>
-          <p className="label" style={{ marginTop: 2, marginBottom: 0, fontSize: 12 }}>
-            external-id = {String(profile.client_reference || "—")}
-          </p>
-          <p className="label" style={{ marginTop: 2, marginBottom: 8 }}>
-            workflow = {openCycle.definition || openCycle.definition_key || "—"}
-          </p>
+          <div className="customer-verification-head">
+            <div>
+              <h3>{openCycle.label} · {day(openCycle.created_at)}</h3>
+              <p className="label" style={{ marginTop: 2, marginBottom: 0 }}>
+                id-verification = {openCycle.workflow_runtime_id || openCycle.id}
+              </p>
+              <p className="label" style={{ marginTop: 2, marginBottom: 0 }}>
+                workflow = {openCycle.definition || openCycle.definition_key || "—"}
+              </p>
+            </div>
+            <RiskScoreChip
+              score={risk?.score}
+              tier={risk?.tier || (typeof profile.risk_tier === "string" ? profile.risk_tier : null)}
+              note={risk?.formula_note}
+              factors={risk?.factors || []}
+            />
+          </div>
           {openCycle.workflow_runtime_id ? (
             <VerificationPreview runtimeId={openCycle.workflow_runtime_id} onChanged={() => void refreshProfile()} />
           ) : (

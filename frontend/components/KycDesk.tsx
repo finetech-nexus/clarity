@@ -16,6 +16,7 @@ type QueueItem = {
   documents: number;
   revisions: number;
   alert?: boolean;
+  tone?: "warn" | "danger" | null;
 };
 
 type Field = { key: string; label: string; value: string; match?: boolean | null };
@@ -161,13 +162,18 @@ const QUEUE_PAGE = 20;
 
 function tabToneClass(tab: string, detail: Detail | null | undefined): string {
   if (!detail) return "";
-  if (tab === "Documents") {
+  const funding = detail.case.definition_key === "clarityFundingOrigin";
+  if (tab === "Documents" && !funding) {
     const toApprove = (detail.documents || []).some(
       (document) => document.status !== "requested" && document.decision !== "approved" && document.decision !== "reject" && document.decision !== "rejected",
     );
     return toApprove ? " tab-warn" : "";
   }
-  if (tab === "Reconnaissance faciale") {
+  if (tab === "Données du document") {
+    const mismatch = (detail.identity || []).some((field) => field.match === false) || tabHasAlert(tab, detail.alert_reasons);
+    return mismatch ? " tab-warn" : "";
+  }
+  if (tab === "Reconnaissance faciale" && !funding) {
     return detail.face_match == null ? " tab-warn" : "";
   }
   if (tab === "Criblage") {
@@ -176,7 +182,15 @@ function tabToneClass(tab: string, detail: Detail | null | undefined): string {
     if (matches.some((match) => match.status === "pending")) return " tab-warn";
     return "";
   }
-  return tabHasAlert(tab, detail.alert_reasons) ? " tab-alert" : "";
+  return "";
+}
+
+function caseToneFromDetail(detail: Detail | null | undefined): "warn" | "danger" | null {
+  if (!detail) return null;
+  const tones = TABS.map((tab) => tabToneClass(tab, detail));
+  if (tones.some((tone) => tone.includes("danger") || tone.includes("alert"))) return "danger";
+  if (tones.some((tone) => tone.includes("warn"))) return "warn";
+  return null;
 }
 
 function AuthenticityPlaceholder() {
@@ -686,13 +700,15 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
   }
 
   function applyCaseColors(runtimeId: string, updated: Detail) {
+    const tone = caseToneFromDetail(updated) || updated.case.tone || null;
     setQueue((current) =>
       current.map((item) =>
         item.id !== runtimeId
           ? item
           : {
               ...item,
-              alert: Boolean(updated.alert),
+              alert: tone === "danger" || Boolean(updated.alert),
+              tone,
               documents: updated.documents?.length ?? item.documents,
               revisions: updated.documents?.filter((doc) => doc.decision === "revisions").length ?? item.revisions,
               status: updated.case.status,
@@ -940,7 +956,12 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
           </div>
           <div className="queue">
             {queue.map((item) => (
-              <button className={`${item.id === selected ? "active" : "ghost"}${item.alert ? " alert" : ""}`} key={item.id} type="button" onClick={() => setSelected(item.id)}>
+              <button
+                className={`${item.id === selected ? "active" : "ghost"}${item.tone === "danger" || item.alert ? " tone-danger" : item.tone === "warn" ? " tone-warn" : ""}`}
+                key={item.id}
+                type="button"
+                onClick={() => setSelected(item.id)}
+              >
                 <span>{item.name}</span>
                 <span className="label">{item.status === "active" ? stepLabel(item.state, item.status) : statusLabel(item.status, item.state)} · {item.documents} pièce(s){item.revisions ? ` · ${item.revisions} à renvoyer` : ""}</span>
               </button>
@@ -1345,14 +1366,6 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
   return (
     <div className="verify-preview">
       <aside className="verify-side">
-        <div className="verify-side-head">
-          <RiskScoreChip
-            score={detail.customer?.risk?.score}
-            tier={detail.customer?.risk?.tier}
-            note={detail.customer?.risk?.formula_note}
-            factors={detail.customer?.risk?.factors || []}
-          />
-        </div>
         <div className="tabs case-tabs">
           {PREVIEW_TABS.map((item) => (
             <button

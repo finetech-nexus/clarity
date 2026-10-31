@@ -124,6 +124,69 @@ def kyc_label(status: str) -> str:
     return labels.get(status, status)
 
 
+def _seconds_apart(left, right) -> float:
+    if not left or not right:
+        return 10**12
+    return abs((left - right).total_seconds())
+
+
+def _repair_cycle_workflow_links(db: Session, cycles: list[KycCycle], workflows: dict[str, WorkflowInstance]) -> None:
+    """Each verification cycle must point to a distinct workflow (no shared runtime id).
+
+    Older partial-approve/funding bugs could overwrite cycle.workflow_id so Activate account
+    and the first KYC both resolved to the same ballerine_runtime_id on the fiche.
+    """
+    if not cycles:
+        return
+    claims: dict[str, list[KycCycle]] = {}
+    for row in cycles:
+        if row.workflow_id:
+            claims.setdefault(row.workflow_id, []).append(row)
+    changed = False
+    for workflow_id, rows in claims.items():
+        if len(rows) <= 1:
+            continue
+        workflow = workflows.get(workflow_id)
+        if workflow is None:
+            for row in rows:
+                row.workflow_id = None
+                changed = True
+            continue
+        keeper = min(rows, key=lambda row: _seconds_apart(row.created_at, workflow.created_at))
+        for row in rows:
+            if row is keeper:
+                continue
+            row.workflow_id = None
+            changed = True
+    assigned = {row.workflow_id for row in cycles if row.workflow_id}
+    free = sorted(
+        [item for item_id, item in workflows.items() if item_id not in assigned],
+        key=lambda item: item.created_at or item.id,
+        reverse=True,
+    )
+    for row in cycles:
+        if row.workflow_id and row.workflow_id in workflows:
+            continue
+        if not free:
+            if row.workflow_id:
+                row.workflow_id = None
+                changed = True
+            continue
+        pick = None
+        if row.status == "pending":
+            pick = next((item for item in free if item.definition_key == "clarityFundingOrigin"), None)
+        if pick is None and row.status in {"approved-partially", "valid"}:
+            pick = next((item for item in free if item.definition_key != "clarityFundingOrigin"), None)
+        if pick is None:
+            pick = min(free, key=lambda item: _seconds_apart(item.created_at, row.created_at))
+        free.remove(pick)
+        if row.workflow_id != pick.id:
+            row.workflow_id = pick.id
+            changed = True
+    if changed:
+        db.flush()
+
+
 def kyc_cycle_view(
     row: KycCycle,
     runtime_id: str | None = None,
@@ -2957,6 +3020,7 @@ def customer_view(db: Session, customer: Customer) -> dict:
         item.id: item
         for item in db.scalars(select(WorkflowInstance).where(WorkflowInstance.customer_id == customer.id)).all()
     }
+    _repair_cycle_workflow_links(db, list(cycles), workflows)
     grouped: dict[str, list] = {}
     claimed = {row.workflow_id for row in cycles if row.workflow_id}
     unclaimed: list = []
@@ -2972,18 +3036,18 @@ def customer_view(db: Session, customer: Customer) -> dict:
             grouped.setdefault(document.workflow_id, []).append(piece)
         else:
             unclaimed.append(piece)
-    fallback = None
-    if workflows:
-        fallback = max(workflows.values(), key=lambda item: item.created_at or item.id).ballerine_runtime_id
     cycle_views = []
+    seen_runtimes: set[str] = set()
     for index, row in enumerate(cycles):
         owned = list(grouped.get(row.workflow_id or "", []))
         if index == 0:
             owned.extend(unclaimed)
         linked = workflows.get(row.workflow_id) if row.workflow_id else None
         runtime = linked.ballerine_runtime_id if linked else None
-        if runtime is None and index == 0:
-            runtime = fallback
+        if runtime and runtime in seen_runtimes:
+            runtime = None
+        if runtime:
+            seen_runtimes.add(runtime)
         cycle_views.append(
             kyc_cycle_view(
                 row,

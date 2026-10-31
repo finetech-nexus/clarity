@@ -493,10 +493,54 @@ def _definition_title(db: Session, workflow: WorkflowInstance) -> str:
     return workflow.definition_name
 
 
+def _case_tone(db: Session, workflow: WorkflowInstance, customer: Customer | None, documents: list[IdentityDocument], flags: dict | None = None) -> str | None:
+    """Queue color: danger if any red tab, else warn if any yellow tab."""
+    from app.face import stored_face_match
+
+    flags = flags if flags is not None else _review_flags(db, workflow, customer, documents)
+    reasons = set(flags.get("alert_reasons") or [])
+    has_warn = False
+    has_danger = False
+    funding = workflow.definition_key == "clarityFundingOrigin"
+    if "correspondence" in reasons:
+        has_warn = True
+    if not funding:
+        to_approve = any(
+            getattr(document, "status", None) != "requested"
+            and document.decision not in {"approved", "reject", "rejected"}
+            for document in documents
+        )
+        if to_approve or "document" in reasons:
+            has_warn = True
+        face = stored_face_match(db, workflow)
+        if face is None:
+            has_warn = True
+        elif face.get("match") is False:
+            has_warn = True
+    if customer:
+        checks = db.scalars(select(ScreeningCheck).where(ScreeningCheck.customer_id == customer.id)).all()
+        matches = []
+        for check in checks:
+            matches.extend(db.scalars(select(ScreeningMatch).where(ScreeningMatch.screening_id == check.id)).all())
+        if any(str(match.status or "") == "confirmed_hit" for match in matches):
+            has_danger = True
+        elif any(str(match.status or "") == "pending" for match in matches) or "screening" in reasons:
+            has_warn = True
+    elif "screening" in reasons:
+        has_warn = True
+    if has_danger:
+        return "danger"
+    if has_warn:
+        return "warn"
+    return None
+
+
 def _kyc_card(db: Session, workflow: WorkflowInstance) -> dict:
     customer = db.get(Customer, workflow.customer_id) if workflow.customer_id else None
     documents = db.scalars(select(IdentityDocument).where(IdentityDocument.workflow_id == workflow.id)).all()
     task = db.scalar(select(WorkflowTask).where(WorkflowTask.workflow_id == workflow.id, WorkflowTask.status == "open"))
+    flags = _review_flags(db, workflow, customer, documents)
+    tone = _case_tone(db, workflow, customer, documents, flags)
     return {
         "id": workflow.ballerine_runtime_id,
         "workflow_id": workflow.id,
@@ -509,7 +553,8 @@ def _kyc_card(db: Session, workflow: WorkflowInstance) -> dict:
         "documents": len(documents),
         "revisions": sum(1 for document in documents if document.decision == "revisions"),
         "created_at": iso(workflow.created_at),
-        "alert": _review_flags(db, workflow, customer, documents)["alert"],
+        "alert": tone == "danger" or bool(flags.get("alert")),
+        "tone": tone,
     }
 
 

@@ -2098,6 +2098,11 @@ def test_partial_approval_opens_the_account_and_reviews_the_funding_transfer(tmp
         assert fiche.status_code == 200, fiche.text
         cycles = fiche.json().get("kyc_cycles") or []
         assert len(cycles) >= 2, cycles
+        runtimes = [row.get("workflow_runtime_id") for row in cycles if row.get("workflow_runtime_id")]
+        assert len(runtimes) == len(set(runtimes)), cycles
+        assert any(row.get("definition_key") == "clarityFundingOrigin" for row in cycles), cycles
+        assert any(row.get("workflow_runtime_id") == funding["id"] for row in cycles), cycles
+        assert funding.get("tone") in {None, "warn", "danger"}
         funding_case = client.get(f"/api/clarity/v1/desks/kyc/{funding['id']}", headers=analyst_headers)
         assert funding_case.status_code == 200, funding_case.text
         transfer = funding_case.json().get("transfer") or {}

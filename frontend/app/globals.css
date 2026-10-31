@@ -376,7 +376,43 @@ html[dir="rtl"] .verify-side-head .score-chip {
 .kv span { display: contents; }
 .form label { display: grid; gap: 0.25rem; color: var(--muted); font-size: 0.85rem; }
 .form label.mismatch input { border-color: var(--danger); background: #fdecee; }
-.queue button.alert { border: 1.5px solid var(--danger); background: #fdecee; }
+.queue button.alert,
+.queue button.tone-danger {
+  border: 1.5px solid var(--danger);
+  background: #fdecee;
+}
+.queue button.tone-warn {
+  border: 1.5px solid #d4a017;
+  background: #fff6d6;
+}
+.queue button.tone-warn.active {
+  border-color: #d4a017;
+  background: #fff1b8;
+}
+.queue button.tone-danger.active {
+  border-color: var(--danger);
+  background: #fdecee;
+}
+.customer-verification-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+.customer-verification-head > div:first-child {
+  min-width: 0;
+}
+.customer-verification-head h3 {
+  margin: 0;
+}
+.customer-verification-head .score-chip {
+  flex: none;
+  margin-left: auto;
+}
+html[dir="rtl"] .customer-verification-head .score-chip {
+  margin-left: 0;
+  margin-right: auto;
+}
 .case-tabs button.tab-alert,
 .tabs.case-tabs button.tab-alert,
 .case-tabs button.tab-danger,
