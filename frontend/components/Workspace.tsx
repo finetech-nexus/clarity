@@ -113,20 +113,8 @@ type KycCycle = {
 const LIST_PAGE = 20;
 const CYCLE_PAGE = 5;
 
-const CLIENT_STATUSES = [
-  { value: "pending", label: "En attente" },
-  { value: "valid", label: "Valide" },
-  { value: "expired", label: "Expiré" },
-  { value: "overdue", label: "Relance" },
-  { value: "approved-partially", label: "Approuvé partiellement" },
-  { value: "rejected", label: "Rejeté" },
-];
-
-const CLIENT_RISKS = [
-  { value: "low", label: "Faible" },
-  { value: "medium", label: "Moyen" },
-  { value: "high", label: "Élevé" },
-];
+const CLIENT_STATUS_VALUES = ["pending", "valid", "expired", "overdue", "approved-partially", "rejected"] as const;
+const CLIENT_RISK_VALUES = ["low", "medium", "high"] as const;
 
 
 export default function Workspace({ section, customerId }: { section: string; customerId?: string }) {
@@ -404,6 +392,7 @@ function day(value?: string | null) {
 }
 
 function CustomerList({ title, kind }: { title: string; kind: string }) {
+  const { t } = useI18n();
   const [rows, setRows] = useState<Customer[]>([]);
   const [name, setName] = useState("");
   const [statuses, setStatuses] = useState<string[]>([]);
@@ -468,39 +457,39 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
           <input aria-label="Filtrer par nom" placeholder="Rechercher" value={name} onChange={(event) => { resetList(() => setName(event.target.value)); }} />
         </div>
         <div className="filter-group">
-          <span className="label">Statut de la vérification</span>
-          <div className="checks" role="group" aria-label="Statut de la vérification">
-            {CLIENT_STATUSES.map((item) => (
-              <label key={item.value}>
+          <span className="label">{t("verify.filterStatus")}</span>
+          <div className="checks" role="group" aria-label={t("verify.filterStatus")}>
+            {CLIENT_STATUS_VALUES.map((value) => (
+              <label key={value}>
                 <input
                   type="checkbox"
-                  checked={statuses.includes(item.value)}
+                  checked={statuses.includes(value)}
                   onChange={() => {
                     resetList(() => {
-                      setStatuses((current) => current.includes(item.value) ? current.filter((value) => value !== item.value) : [...current, item.value]);
+                      setStatuses((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value]);
                     });
                   }}
                 />
-                {item.label}
+                {t(`client.status.${value}`)}
               </label>
             ))}
           </div>
         </div>
         <div className="filter-group">
-          <span className="label">Niveau de risque</span>
-          <div className="checks" role="group" aria-label="Niveau de risque">
-            {CLIENT_RISKS.map((item) => (
-              <label key={item.value}>
+          <span className="label">{t("nav.risk")}</span>
+          <div className="checks" role="group" aria-label={t("nav.risk")}>
+            {CLIENT_RISK_VALUES.map((value) => (
+              <label key={value}>
                 <input
                   type="checkbox"
-                  checked={risks.includes(item.value)}
+                  checked={risks.includes(value)}
                   onChange={() => {
                     resetList(() => {
-                      setRisks((current) => current.includes(item.value) ? current.filter((value) => value !== item.value) : [...current, item.value]);
+                      setRisks((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value]);
                     });
                   }}
                 />
-                {item.label}
+                {t(`client.risk.${value}`)}
               </label>
             ))}
           </div>
@@ -550,6 +539,7 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
 }
 
 function CustomerView({ profile, onChange }: { profile: Record<string, unknown>; onChange: (next: Record<string, unknown>) => void }) {
+  const { t } = useI18n();
   const cycles = (profile.kyc_cycles as KycCycle[]) || [];
   const risk = (profile.risk as { score?: number | null; tier?: string | null; formula_note?: string; factors?: Array<{ code: string; points: number; explanation: string }> } | null) || null;
   const latestCycle = cycles[0];
@@ -578,21 +568,21 @@ function CustomerView({ profile, onChange }: { profile: Record<string, unknown>;
             external-id = {String(profile.client_reference || "—")}
           </p>
           <p className="lede">
-            Statut {String(profile.status)}
-            {latestCycle ? ` · dernière vérification ${latestCycle.label}` : ""}
+            {t("client.statusCol")} {t(`client.status.${String(profile.status)}`) !== `client.status.${String(profile.status)}` ? t(`client.status.${String(profile.status)}`) : String(profile.status)}
+            {latestCycle ? ` · ${latestCycle.label}` : ""}
           </p>
         </div>
       </header>
-      <h2>Vérifications</h2>
+      <h2>{t("client.verifications")}</h2>
       <table className="inbox sheet">
         <thead>
-          <tr><th>Statut</th><th>Workflow</th><th>Date</th><th>Validation</th><th>Expiration</th><th>Relance</th></tr>
+          <tr><th>{t("client.statusCol")}</th><th>{t("client.workflowCol")}</th><th>{t("client.dateCol")}</th><th>{t("client.validationCol")}</th><th>{t("client.expiryCol")}</th><th>{t("client.reminderCol")}</th></tr>
         </thead>
         <tbody>
-          {!cycles.length ? <tr><td colSpan={6}>Aucune vérification.</td></tr> : null}
+          {!cycles.length ? <tr><td colSpan={6}>{t("client.noVerification")}</td></tr> : null}
           {visibleCycles.map((cycle) => (
             <tr key={cycle.id} className={cycle.id === openId ? "selected" : ""} onClick={() => setOpenId(cycle.id)}>
-              <td><span className={`badge ${cycle.status}`}>{cycle.label}</span></td>
+              <td><span className={`badge ${cycle.status}`}>{t(`client.status.${cycle.status}`) !== `client.status.${cycle.status}` ? t(`client.status.${cycle.status}`) : cycle.label}</span></td>
               <td>{cycle.definition || cycle.definition_key || "—"}</td>
               <td>{day(cycle.created_at)}</td>
               <td>{day(cycle.validated_at)}</td>
@@ -605,7 +595,7 @@ function CustomerView({ profile, onChange }: { profile: Record<string, unknown>;
       {visibleCycles.length < cycles.length ? (
         <div className="load-more">
           <button className="ghost" type="button" onClick={() => setCycleLimit((current) => current + CYCLE_PAGE)}>
-            Charger plus ({visibleCycles.length}/{cycles.length})
+            {t("verify.loadMore")} ({visibleCycles.length}/{cycles.length})
           </button>
         </div>
       ) : null}
@@ -631,11 +621,11 @@ function CustomerView({ profile, onChange }: { profile: Record<string, unknown>;
           {openCycle.workflow_runtime_id ? (
             <VerificationPreview runtimeId={openCycle.workflow_runtime_id} onChanged={() => void refreshProfile()} />
           ) : (
-            <p className="label">Aucun dossier ouvert pour cette vérification. Ouvrez le bureau Vérification pour instruire le dossier.</p>
+            <p className="label">{t("client.noCase")}</p>
           )}
         </section>
       ) : null}
-      <p className="label">Le score affiché correspond à la dernière vérification. Les notes sont dans l&apos;onglet Notes. Les pièces se demandent dans l&apos;onglet Action.</p>
+      <p className="label">{t("client.scoreHint")}</p>
     </>
   );
 }

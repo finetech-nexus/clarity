@@ -3,7 +3,7 @@
 import { CSSProperties, FormEvent, useEffect, useState } from "react";
 import DocumentViewer, { ViewerDocument } from "./DocumentViewer";
 import { api, searchPage } from "../lib/api";
-import { useI18n } from "../lib/i18n";
+import { fieldLabel, useI18n } from "../lib/i18n";
 
 type QueueItem = {
   id: string;
@@ -136,10 +136,10 @@ function TopicChips({ topics }: { topics: TopicDetail[] }) {
 }
 
 const TAB_ALERT_REASONS: Record<string, string[]> = {
-  "Données du document": ["correspondence"],
-  Documents: ["document"],
-  "Reconnaissance faciale": ["face"],
-  Criblage: ["screening"],
+  documentData: ["correspondence"],
+  documents: ["document"],
+  face: ["face"],
+  screening: ["screening"],
 };
 
 function tabHasAlert(tab: string, reasons: string[] | undefined) {
@@ -147,36 +147,36 @@ function tabHasAlert(tab: string, reasons: string[] | undefined) {
   return keys.some((key) => reasons?.includes(key));
 }
 
-const TABS = [
-  "Informations saisies",
-  "Documents",
-  "Données du document",
-  "Authenticité document",
-  "Reconnaissance faciale",
-  "Criblage",
-  "Notes",
-  "Action",
+const TAB_KEYS = [
+  "submitted",
+  "documents",
+  "documentData",
+  "authenticity",
+  "face",
+  "screening",
+  "notes",
+  "action",
 ] as const;
-const PREVIEW_TABS = TABS;
+type TabKey = (typeof TAB_KEYS)[number];
 const QUEUE_PAGE = 20;
 
-function tabToneClass(tab: string, detail: Detail | null | undefined): string {
+function tabToneClass(tab: TabKey, detail: Detail | null | undefined): string {
   if (!detail) return "";
   const funding = detail.case.definition_key === "clarityFundingOrigin";
-  if (tab === "Documents" && !funding) {
+  if (tab === "documents" && !funding) {
     const toApprove = (detail.documents || []).some(
       (document) => document.status !== "requested" && document.decision !== "approved" && document.decision !== "reject" && document.decision !== "rejected",
     );
     return toApprove ? " tab-warn" : "";
   }
-  if (tab === "Données du document") {
+  if (tab === "documentData") {
     const mismatch = (detail.identity || []).some((field) => field.match === false) || tabHasAlert(tab, detail.alert_reasons);
     return mismatch ? " tab-warn" : "";
   }
-  if (tab === "Reconnaissance faciale" && !funding) {
+  if (tab === "face" && !funding) {
     return detail.face_match == null ? " tab-warn" : "";
   }
-  if (tab === "Criblage") {
+  if (tab === "screening") {
     const matches = (detail.customer?.screening || []).flatMap((item) => item.matches || []);
     if (matches.some((match) => match.status === "confirmed_hit")) return " tab-danger";
     if (matches.some((match) => match.status === "pending")) return " tab-warn";
@@ -187,35 +187,20 @@ function tabToneClass(tab: string, detail: Detail | null | undefined): string {
 
 function caseToneFromDetail(detail: Detail | null | undefined): "warn" | "danger" | null {
   if (!detail) return null;
-  const tones = TABS.map((tab) => tabToneClass(tab, detail));
+  const tones = TAB_KEYS.map((tab) => tabToneClass(tab, detail));
   if (tones.some((tone) => tone.includes("danger") || tone.includes("alert"))) return "danger";
   if (tones.some((tone) => tone.includes("warn"))) return "warn";
   return null;
 }
 
 function AuthenticityPlaceholder() {
+  const { t } = useI18n();
   return (
     <article className="card">
-      <p className="label">Ce contrôle d&apos;authenticité document n&apos;est pas encore mis en place.</p>
+      <p className="label">{t("verify.authenticitySoon")}</p>
     </article>
   );
 }
-
-const STEP_LABEL: Record<string, string> = {
-  collect: "Collecte",
-  verify: "Vérification",
-  screen: "Criblage",
-  score: "Évaluation du risque",
-  analystReview: "Revue analyste",
-  checkerReview: "Contrôle checker",
-  documentsRequested: "Pièces demandées",
-  remediate: "Complément",
-  investigate: "Investigation",
-  approved: "Approuvé",
-  "approved-partially": "Approuvé partiellement",
-  rejected: "Rejeté",
-  closed: "Clôturé",
-};
 
 function facePercent(score: number | null | undefined) {
   if (score == null) return null;
@@ -223,6 +208,7 @@ function facePercent(score: number | null | undefined) {
 }
 
 function FaceScale({ score, threshold }: { score: number | null | undefined; threshold: number }) {
+  const { t } = useI18n();
   const value = facePercent(score);
   const cut = Math.max(0, Math.min(100, threshold));
   return (
@@ -233,16 +219,16 @@ function FaceScale({ score, threshold }: { score: number | null | undefined; thr
       </div>
       <div className="face-axis">
         <span>0</span>
-        <span className="face-threshold-label" style={{ left: `${cut}%` }}>seuil {cut}</span>
+        <span className="face-threshold-label" style={{ left: `${cut}%` }}>{t("verify.faceThreshold")} {cut}</span>
         <span>100</span>
       </div>
     </div>
   );
 }
 
-function faceMatchLabel(match: boolean | null | undefined, comparing: boolean) {
-  if (match == null) return comparing ? "Comparaison des visages…" : "Comparaison non faite";
-  return match ? "Résultat de correspondance : OK" : "Résultat de correspondance : KO";
+function faceMatchLabel(t: (key: string) => string, match: boolean | null | undefined, comparing: boolean) {
+  if (match == null) return comparing ? t("verify.faceComparing") : t("verify.faceNotDone");
+  return match ? t("verify.faceOk") : t("verify.faceKo");
 }
 
 function ScoreFormulaHint({ note }: { note?: string }) {
@@ -313,13 +299,14 @@ export function RiskScoreChip({
   metric?: boolean;
   labels?: { score: string; breakdown: string; empty: string; click: string };
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const value = score == null ? "—" : score;
   const copy = {
-    score: labels?.score || "Score de risque",
-    breakdown: labels?.breakdown || "Détail du calcul",
-    empty: labels?.empty || "Score non calculé",
-    click: labels?.click || "Cliquer pour voir le détail du calcul",
+    score: labels?.score || t("verify.score"),
+    breakdown: labels?.breakdown || t("verify.score.breakdown"),
+    empty: labels?.empty || t("verify.score.empty"),
+    click: labels?.click || t("verify.score.click"),
   };
   return (
     <div className={`score-chip${open ? " is-open" : ""}${metric ? " is-metric" : ""}`} style={riskScoreChipStyle(score)}>
@@ -359,6 +346,7 @@ function ScreeningMatchRow({
   match: ScreeningMatch;
   pendingActions?: { onClear: () => void; onConfirm: () => void } | null;
 }) {
+  const { t } = useI18n();
   const topics = topicRows(match);
   const datasets = match.datasets?.length ? match.datasets.join(", ") : "";
   const explanation = Array.isArray(match.explanation) ? match.explanation.join(" ") : match.explanation || "";
@@ -366,17 +354,17 @@ function ScreeningMatchRow({
     <div className="screening-match">
       <p className="file-row">
         <span>
-          <strong>{match.name || "Correspondance"}</strong>
+          <strong>{match.name || t("verify.match")}</strong>
           {" · score "}{match.score}
           {" · "}{match.status}
         </span>
         {match.status === "pending" && pendingActions ? (
           <span className="tabs">
-            <button type="button" onClick={pendingActions.onClear}>Faux positif</button>
-            <button className="ghost" type="button" onClick={pendingActions.onConfirm}>Confirmer</button>
+            <button type="button" onClick={pendingActions.onClear}>{t("verify.screeningFalsePositive")}</button>
+            <button className="ghost" type="button" onClick={pendingActions.onConfirm}>{t("verify.screeningConfirm")}</button>
           </span>
         ) : (
-          <span className="tag">{match.status === "no_hit" ? "Écartée" : match.status === "confirmed_hit" ? "Confirmée" : match.status}</span>
+          <span className="tag">{match.status === "no_hit" ? t("verify.screeningCleared") : match.status === "confirmed_hit" ? t("verify.screeningConfirmed") : match.status}</span>
         )}
       </p>
       <div className="screening-topics">
@@ -384,38 +372,39 @@ function ScreeningMatchRow({
         <TopicChips topics={topics} />
       </div>
       <dl className="kv screening-detail">
-        {datasets ? <span><dt>Jeux</dt><dd>{datasets}</dd></span> : null}
-        {match.note ? <span><dt>Détail</dt><dd>{match.note}</dd></span> : null}
-        {explanation ? <span><dt>Explication</dt><dd>{explanation}</dd></span> : null}
-        {match.provider ? <span><dt>Source</dt><dd>{match.provider}{match.synthetic ? " · synthétique" : ""}</dd></span> : null}
+        {datasets ? <span><dt>{t("verify.screeningDatasets")}</dt><dd>{datasets}</dd></span> : null}
+        {match.note ? <span><dt>{t("verify.screeningDetail")}</dt><dd>{match.note}</dd></span> : null}
+        {explanation ? <span><dt>{t("verify.screeningExplanation")}</dt><dd>{explanation}</dd></span> : null}
+        {match.provider ? <span><dt>{t("verify.screeningSource")}</dt><dd>{match.provider}{match.synthetic ? ` · ${t("verify.screeningSynthetic")}` : ""}</dd></span> : null}
       </dl>
     </div>
   );
 }
 
-function formatNoteDate(value?: string) {
+function formatNoteDate(value: string | undefined, locale: string) {
   if (!value) return "";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+  const tag = locale === "en" ? "en-GB" : locale === "ar" ? "ar" : "fr-FR";
+  return date.toLocaleString(tag, { dateStyle: "short", timeStyle: "short" });
 }
 
-function stepLabel(state: string | null | undefined, fallback: string) {
+function stepLabel(t: (key: string) => string, state: string | null | undefined, fallback: string) {
   if (!state) return fallback;
-  return STEP_LABEL[state] || state;
+  const key = `verify.step.${state}`;
+  const translated = t(key);
+  return translated === key ? state : translated;
 }
 
-const STATUS_FILTERS = [
-  { value: "active", label: "En cours" },
-  { value: "completed", label: "Terminée" },
-  { value: "approved-partially", label: "Approuvé partiellement" },
-  { value: "failed", label: "Échec" },
-];
+const STATUS_FILTER_VALUES = ["active", "completed", "approved-partially", "failed"] as const;
 
-function statusLabel(status: string, state?: string | null) {
-  if (status === "failed" || state === "rejected") return "Échec";
-  if (status === "approved-partially" || state === "approved-partially") return "Approuvé partiellement";
-  return STATUS_FILTERS.find((item) => item.value === status)?.label || stepLabel(state, status);
+function statusLabel(t: (key: string) => string, status: string, state?: string | null) {
+  if (status === "failed" || state === "rejected") return t("verify.status.failed");
+  if (status === "approved-partially" || state === "approved-partially") return t("verify.status.approved-partially");
+  const key = `verify.status.${status}`;
+  const translated = t(key);
+  if (translated !== key) return translated;
+  return stepLabel(t, state, status);
 }
 
 function filtersQuery(name: string, statuses: string[]) {
@@ -426,18 +415,19 @@ function filtersQuery(name: string, statuses: string[]) {
   return parts.join(" ");
 }
 
-const TASK_ACTION: Record<string, string> = {
-  analystReview: "Transmettre au contrôle",
-  checkerReview: "Approuver",
-  investigate: "Clôturer l'instruction",
-};
-
-const ACTIVATE_TASK_ACTION: Record<string, string> = {
-  analystReview: "Transmettre pour activation",
-  checkerReview: "Approuver le KYC",
-};
+function taskActionLabel(t: (key: string) => string, fundingReview: boolean, reviewState: string) {
+  if (fundingReview) {
+    if (reviewState === "analystReview") return t("verify.transmitActivation");
+    if (reviewState === "checkerReview") return t("verify.approveKyc");
+  }
+  if (reviewState === "analystReview") return t("verify.transmitControl");
+  if (reviewState === "checkerReview") return t("verify.approve");
+  if (reviewState === "investigate") return t("verify.closeInstruction");
+  return "";
+}
 
 function TransferDetail({ transfer, submitted }: { transfer?: Detail["transfer"]; submitted: Field[] }) {
+  const { t } = useI18n();
   const fields = transfer?.fields?.length ? transfer.fields : submitted.filter((field) =>
     ["amount", "currency", "counterpartyName", "direction", "description", "paymentReference", "transactionReference", "accountId", "channel", "transactionType", "occurredAt", "country"].includes(field.key)
   );
@@ -445,23 +435,23 @@ function TransferDetail({ transfer, submitted }: { transfer?: Detail["transfer"]
   return (
     <div className="stack">
       <article className="card">
-        <h3>Détail du virement</h3>
+        <h3>{t("verify.transferTitle")}</h3>
         {fields.length ? (
           <dl className="kv">
             {fields.map((field) => (
-              <span key={field.key}><dt>{field.label}</dt><dd>{field.value}</dd></span>
+              <span key={field.key}><dt>{fieldLabel(t, field.key, field.label)}</dt><dd>{field.value}</dd></span>
             ))}
           </dl>
         ) : (
-          <p className="label">Aucun détail de virement sur ce dossier.</p>
+          <p className="label">{t("verify.transferEmpty")}</p>
         )}
       </article>
       {profile.length ? (
         <article className="card">
-          <h3>Client</h3>
+          <h3>{t("verify.client")}</h3>
           <dl className="kv">
             {profile.map((field) => (
-              <span key={field.key}><dt>{field.label}</dt><dd>{field.value}</dd></span>
+              <span key={field.key}><dt>{fieldLabel(t, field.key, field.label)}</dt><dd>{field.value}</dd></span>
             ))}
           </dl>
         </article>
@@ -470,12 +460,13 @@ function TransferDetail({ transfer, submitted }: { transfer?: Detail["transfer"]
   );
 }
 
-const NOTE_ACTION_LABEL: Record<string, string> = {
-  approve: "Transmission / approbation",
-  reject: "Rejet",
-  approvePartial: "Approbation partielle",
-  "approve-partial": "Approbation partielle",
-};
+function noteActionLabel(t: (key: string) => string, action?: string | null) {
+  if (!action) return "";
+  if (action === "approve") return t("verify.note.approve");
+  if (action === "reject") return t("verify.note.reject");
+  if (action === "approvePartial" || action === "approve-partial") return t("verify.note.approvePartial");
+  return action;
+}
 
 function NotesHistory({
   notes,
@@ -490,14 +481,15 @@ function NotesHistory({
   onAddNote: () => void;
   canAdd: boolean;
 }) {
+  const { t, locale } = useI18n();
   return (
     <article className="card notes-panel">
-      <h3>Historique des notes</h3>
+      <h3>{t("verify.notesTitle")}</h3>
       {canAdd ? (
         <div className="note-compose">
-          <textarea value={freeNote} onChange={(event) => onFreeNote(event.target.value)} placeholder="Écrire une note…" rows={3} />
+          <textarea value={freeNote} onChange={(event) => onFreeNote(event.target.value)} placeholder={t("verify.notesPlaceholder")} rows={3} />
           <div className="note-compose-actions">
-            <button type="button" disabled={!freeNote.trim()} onClick={onAddNote}>Ajouter</button>
+            <button type="button" disabled={!freeNote.trim()} onClick={onAddNote}>{t("verify.notesAdd")}</button>
           </div>
         </div>
       ) : null}
@@ -506,15 +498,15 @@ function NotesHistory({
           {[...notes].reverse().map((note) => (
             <li key={note.id}>
               <p className="note-meta">
-                <strong>{note.actor || "Équipe"}</strong>
-                {note.created_at ? <span>{formatNoteDate(note.created_at)}</span> : null}
-                {note.action ? <span>{NOTE_ACTION_LABEL[note.action] || note.action}</span> : null}
+                <strong>{note.actor || t("verify.notesTeam")}</strong>
+                {note.created_at ? <span>{formatNoteDate(note.created_at, locale)}</span> : null}
+                {note.action ? <span>{noteActionLabel(t, note.action)}</span> : null}
               </p>
               <p className="note-body">{note.comment}</p>
             </li>
           ))}
         </ul>
-      ) : <p className="label">Aucune note sur ce dossier.</p>}
+      ) : <p className="label">{t("verify.notesEmpty")}</p>}
     </article>
   );
 }
@@ -564,32 +556,35 @@ function ActionTiles({
   onAskReason: (value: string) => void;
   onRequestDocuments: (event: FormEvent, mode: "resubmit" | "additional", target: string) => void;
 }) {
+  const { t, locale } = useI18n();
   const isAnalyst = reviewState === "analystReview";
   const isChecker = reviewState === "checkerReview";
   const canPartial = Boolean(canDecide && isChecker && !fundingReview);
-  const primaryLabel = (fundingReview ? ACTIVATE_TASK_ACTION[reviewState] : TASK_ACTION[reviewState])
-    || (isAnalyst ? "Transmettre au contrôle" : "Approuver");
+  const primaryLabel = taskActionLabel(t, fundingReview, reviewState)
+    || (isAnalyst ? t("verify.transmitControl") : t("verify.approve"));
+  const approveTitle = fundingReview && isChecker ? t("verify.approveKyc") : isAnalyst ? t("verify.transmit") : isChecker ? t("verify.approve") : t("verify.decision");
+  const approvePlaceholder = fundingReview && isChecker ? t("verify.noteActivation") : isAnalyst ? t("verify.noteTransmit") : t("verify.noteApprove");
   return (
     <div className="stack">
-      {finished ? <p className="label">Aucune action ouverte sur ce dossier.</p> : (
+      {finished ? <p className="label">{t("verify.actionNone")}</p> : (
         <div className="action-grid">
           {canDecide ? (
             <article className="card action-tile">
-              <h3>Rejeter</h3>
+              <h3>{t("verify.reject")}</h3>
               <div className="form">
-                <textarea value={rejectNote} onChange={(event) => onRejectNote(event.target.value)} placeholder="Note de rejet" />
-                <button className="ghost" type="button" onClick={() => onDecide("reject", rejectNote)}>Rejeter</button>
+                <textarea value={rejectNote} onChange={(event) => onRejectNote(event.target.value)} placeholder={t("verify.rejectNote")} />
+                <button className="ghost" type="button" onClick={() => onDecide("reject", rejectNote)}>{t("verify.reject")}</button>
               </div>
             </article>
           ) : null}
           {canDecide && (isAnalyst || isChecker || reviewState === "investigate") ? (
             <article className="card action-tile">
-              <h3>{fundingReview && isChecker ? "Approuver le KYC" : isAnalyst ? "Transmettre" : isChecker ? "Approuver" : "Décision"}</h3>
+              <h3>{approveTitle}</h3>
               <div className="form">
                 <textarea
                   value={approveNote}
                   onChange={(event) => onApproveNote(event.target.value)}
-                  placeholder={fundingReview && isChecker ? "Note d'activation KYC" : isAnalyst ? "Note de transmission" : "Note d'approbation"}
+                  placeholder={approvePlaceholder}
                 />
                 <button type="button" disabled={!canApprove} onClick={() => onDecide("approve", approveNote)}>{primaryLabel}</button>
               </div>
@@ -597,47 +592,47 @@ function ActionTiles({
           ) : null}
           {canPartial ? (
             <article className="card action-tile">
-              <h3>Approuver partiellement</h3>
+              <h3>{t("verify.approvePartial")}</h3>
               <div className="form">
-                <textarea value={partialNote} onChange={(event) => onPartialNote(event.target.value)} placeholder="Note d'approbation partielle" />
-                <button type="button" disabled={!canApprove} onClick={() => onDecide("approve-partial", partialNote)}>Approuver partiellement</button>
+                <textarea value={partialNote} onChange={(event) => onPartialNote(event.target.value)} placeholder={t("verify.notePartial")} />
+                <button type="button" disabled={!canApprove} onClick={() => onDecide("approve-partial", partialNote)}>{t("verify.approvePartial")}</button>
               </div>
             </article>
           ) : null}
           {canDecide && !fundingReview ? (
             <>
               <article className="card action-tile">
-                <h3>Demande de renvoi</h3>
+                <h3>{t("verify.resubmitTitle")}</h3>
                 <form className="form" onSubmit={(event) => onRequestDocuments(event, "resubmit", resubmitId)}>
                   <label>
-                    Pièce déjà envoyée
+                    {t("verify.resubmitDoc")}
                     <select value={resubmitId} onChange={(event) => onResubmitId(event.target.value)} required>
-                      <option value="">Choisir</option>
+                      <option value="">{t("verify.choose")}</option>
                       {sentDocuments.map((document) => (
                         <option key={document.id} value={document.id}>{document.title || document.type}</option>
                       ))}
                     </select>
                   </label>
-                  <textarea value={askReason} onChange={(event) => onAskReason(event.target.value)} placeholder="Motif" />
-                  <button type="submit">Demander le renvoi</button>
+                  <textarea value={askReason} onChange={(event) => onAskReason(event.target.value)} placeholder={t("verify.reason")} />
+                  <button type="submit">{t("verify.askResubmit")}</button>
                 </form>
               </article>
               <article className="card action-tile">
-                <h3>Demander un complément</h3>
+                <h3>{t("verify.complementTitle")}</h3>
                 <form className="form" onSubmit={(event) => onRequestDocuments(event, "additional", complementTarget)}>
                   <label>
-                    Pièce complémentaire
+                    {t("verify.complementDoc")}
                     <select value={complementTarget} onChange={(event) => onComplementTarget(event.target.value)} required>
-                      <option value="">Choisir</option>
+                      <option value="">{t("verify.choose")}</option>
                       {complements.map((row) => (
                         <option key={`${row.type}-${row.category}`} value={`${row.type}|${row.category}|${row.country || "ZZ"}`}>
-                          {row.label?.fr || row.type}
+                          {(row.label as Record<string, string> | undefined)?.[locale] || row.label?.fr || row.type}
                         </option>
                       ))}
                     </select>
                   </label>
-                  <textarea value={askReason} onChange={(event) => onAskReason(event.target.value)} placeholder="Motif" />
-                  <button type="submit">Demander le complément</button>
+                  <textarea value={askReason} onChange={(event) => onAskReason(event.target.value)} placeholder={t("verify.reason")} />
+                  <button type="submit">{t("verify.askComplement")}</button>
                 </form>
               </article>
             </>
@@ -649,7 +644,7 @@ function ActionTiles({
 }
 
 export default function KycDesk({ kind }: { kind?: "business" }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [selected, setSelected] = useState("");
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -660,7 +655,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
   const [statuses, setStatuses] = useState<string[]>(["active"]);
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
-  const [tab, setTab] = useState<(typeof TABS)[number]>("Informations saisies");
+  const [tab, setTab] = useState<TabKey>("submitted");
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [reading, setReading] = useState(false);
   const [resubmitId, setResubmitId] = useState("");
@@ -904,7 +899,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
   }, [selected]);
 
   useEffect(() => {
-    if (tab !== "Reconnaissance faciale" || !selected || !detail || detail.face_match || faceTried === selected || comparing) return;
+    if (tab !== "face" || !selected || !detail || detail.face_match || faceTried === selected || comparing) return;
     setFaceTried(selected);
     void compareFaces();
   }, [tab, selected, detail, faceTried, comparing]);
@@ -916,7 +911,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
       {error ? <p className="error">{error}</p> : null}
       {message ? <p className="label">{message}</p> : null}
       <div className="filters">
-        <label className="field">Nom
+        <label className="field">{t("verify.filterName")}
           <input
             aria-label="Rechercher par nom"
             placeholder="Rechercher"
@@ -929,20 +924,20 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
             }}
           />
         </label>
-        <div className="checks" role="group" aria-label="Statut">
-          {STATUS_FILTERS.map((item) => (
-            <label key={item.value}>
+        <div className="checks" role="group" aria-label={t("verify.filterStatus")}>
+          {STATUS_FILTER_VALUES.map((value) => (
+            <label key={value}>
               <input
                 type="checkbox"
-                checked={statuses.includes(item.value)}
+                checked={statuses.includes(value)}
                 onChange={() => {
-                  const next = statuses.includes(item.value) ? statuses.filter((value) => value !== item.value) : [...statuses, item.value];
+                  const next = statuses.includes(value) ? statuses.filter((item) => item !== value) : [...statuses, value];
                   setStatuses(next);
                   setPage(0);
                   setQuery(filtersQuery(nameQuery, next));
                 }}
               />
-              {item.label}
+              {t(`verify.status.${value}`)}
             </label>
           ))}
         </div>
@@ -963,7 +958,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                 onClick={() => setSelected(item.id)}
               >
                 <span>{item.name}</span>
-                <span className="label">{item.status === "active" ? stepLabel(item.state, item.status) : statusLabel(item.status, item.state)} · {item.documents} pièce(s){item.revisions ? ` · ${item.revisions} à renvoyer` : ""}</span>
+                <span className="label">{item.status === "active" ? stepLabel(t, item.state, item.status) : statusLabel(t, item.status, item.state)} · {item.documents} {t("verify.pieces")}{item.revisions ? ` · ${item.revisions} ${t("verify.revisions")}` : ""}</span>
               </button>
             ))}
           </div>
@@ -978,7 +973,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                   void loadQueue(undefined, query, next, true);
                 }}
               >
-                Charger plus
+                {t("verify.loadMore")}
               </button>
             </div>
           ) : null}
@@ -1036,7 +1031,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                 <p className="label" style={{ marginTop: 2, marginBottom: 0 }}>
                   workflow = {detail.case.definition || detail.case.definition_key || "—"}
                 </p>
-                <p className="label">{statusLabel(detail.case.status, detail.case.state)} · {detail.task?.name || stepLabel(detail.case.state, "sans tâche ouverte")}</p>
+                <p className="label">{statusLabel(t, detail.case.status, detail.case.state)} · {detail.task?.name || stepLabel(t, detail.case.state, t("verify.noTask"))}</p>
                 {detail.steps?.length ? (
                   <ol className="stepper">
                     {detail.steps.map((step) => (
@@ -1048,19 +1043,19 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
             </header>
             <div className="case-layout">
             <div className="tabs case-tabs">
-              {TABS.map((item) => (
+              {TAB_KEYS.map((item) => (
                 <button
                   className={`${tab === item ? "active" : ""}${tabToneClass(item, detail)}`}
                   key={item}
                   type="button"
                   onClick={() => setTab(item)}
                 >
-                  {item}
+                  {t(`verify.tab.${item}`)}
                 </button>
               ))}
             </div>
             <div className="case-pane">
-            {tab === "Informations saisies" ? (
+            {tab === "submitted" ? (
               fundingReview ? (
                 <TransferDetail transfer={detail.transfer} submitted={detail.submitted || []} />
               ) : (
@@ -1068,23 +1063,23 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                   {detail.submitted?.length ? (
                     <dl className="kv">
                       {detail.submitted.map((field) => (
-                        <span key={field.key}><dt>{field.label}</dt><dd>{field.value}</dd></span>
+                        <span key={field.key}><dt>{fieldLabel(t, field.key, field.label)}</dt><dd>{field.value}</dd></span>
                       ))}
                     </dl>
-                  ) : <p className="label">Aucune information saisie sur ce dossier.</p>}
+                  ) : <p className="label">{t("verify.noSubmitted")}</p>}
                 </article>
               )
             ) : null}
-            {tab === "Documents" ? (
+            {tab === "documents" ? (
               <div className="document-data">
-                <h3>Liste des pièces</h3>
+                <h3>{t("verify.docsList")}</h3>
                 {!detail.documents.length ? (
                   <p className="label">
                     {fundingReview
-                      ? "Pièces KYC du client (référence). L'activation se décide sur le virement."
+                      ? t("verify.noDocsFunding")
                       : detail.case.state === "collect"
-                      ? "Aucune pièce pour l'instant. Le dossier est encore en collecte — les documents apparaissent après l'envoi du parcours client."
-                      : "Aucune pièce fournie."}
+                      ? t("verify.noDocsCollect")
+                      : t("verify.noDocs")}
                   </p>
                 ) : null}
                 <DocumentViewer
@@ -1094,13 +1089,13 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                 />
               </div>
             ) : null}
-            {tab === "Données du document" ? (
+            {tab === "documentData" ? (
               <article className="card">
                 {detail.identity?.length ? (
                   <form className="form" onSubmit={(event) => void saveIdentity(event)}>
                     {detail.identity.map((field) => (
                       <label className={field.match === false ? "mismatch" : ""} key={field.key}>
-                        {field.label}
+                        {fieldLabel(t, field.key, field.label)}
                         <input
                           value={draft[field.key] ?? field.value}
                           onChange={(event) => setDraft((current) => ({ ...current, [field.key]: event.target.value }))}
@@ -1109,25 +1104,25 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                     ))}
                     <div className="actions">
                       <button className="ghost" type="button" disabled={reading} onClick={() => void readIdentity()}>
-                        {reading ? "Lecture…" : "Lire les pièces"}
+                        {reading ? t("verify.reading") : t("verify.readDocs")}
                       </button>
-                      <button type="submit">Enregistrer</button>
+                      <button type="submit">{t("verify.save")}</button>
                     </div>
                   </form>
-                ) : <p className="label">Aucune carte d'identité ou passeport sur ce dossier.</p>}
+                ) : <p className="label">{t("verify.noIdentity")}</p>}
               </article>
             ) : null}
-            {tab === "Authenticité document" ? <AuthenticityPlaceholder /> : null}
-            {tab === "Reconnaissance faciale" ? (
+            {tab === "authenticity" ? <AuthenticityPlaceholder /> : null}
+            {tab === "face" ? (
               <article className="card">
                 <FaceScale score={detail.face_match?.score} threshold={detail.face_threshold ?? detail.face_match?.threshold ?? 40} />
-                <p>{faceMatchLabel(detail.face_match?.match, comparing)}</p>
-                <p className="label">{detail.face_match?.source === "video" ? "Visage extrait de la vidéo, comparé à la photo de la pièce." : "Selfie comparé à la photo de la pièce."}</p>
+                <p>{faceMatchLabel(t, detail.face_match?.match, comparing)}</p>
+                <p className="label">{detail.face_match?.source === "video" ? t("verify.faceVideo") : t("verify.faceSelfie")}</p>
                 {detail.face_match?.detail ? <p className="label">{detail.face_match.detail}</p> : null}
-                <button type="button" disabled={comparing} onClick={() => void compareFaces()}>Comparer à nouveau</button>
+                <button type="button" disabled={comparing} onClick={() => void compareFaces()}>{t("verify.faceAgain")}</button>
               </article>
             ) : null}
-            {tab === "Criblage" ? (
+            {tab === "screening" ? (
               <article className="card">
                 {screeningFactors.map((factor) => (
                   <p className="factor" key={factor.code}>{factor.points} pts — {factor.explanation}</p>
@@ -1144,13 +1139,13 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                 )) : (
                   <p className="label">
                     {detail.case.state === "collect"
-                      ? "Criblage non lancé. Il démarre à la fin de la collecte client."
-                      : "Aucune correspondance sur ce dossier."}
+                      ? t("verify.screeningCollect")
+                      : t("verify.screeningNone")}
                   </p>
                 )}
               </article>
             ) : null}
-            {tab === "Notes" ? (
+            {tab === "notes" ? (
               <NotesHistory
                 notes={detail.notes || []}
                 freeNote={freeNote}
@@ -1159,18 +1154,18 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                 canAdd={!finished}
               />
             ) : null}
-            {tab === "Action" ? (
+            {tab === "action" ? (
               <div className="stack">
                 {!canDecide && !finished ? (
                   <p className="label">
                     {detail.case.state === "collect"
-                      ? "Aucune action de revue pour l'instant. Le dossier est encore en collecte — les décisions s'ouvrent à l'étape Revue analyste."
-                      : `Aucune action ouverte à l'étape « ${stepLabel(detail.case.state, detail.task?.name || "en cours")} ».`}
+                      ? t("verify.actionNoneCollect")
+                      : t("verify.actionNoneStep", { step: stepLabel(t, detail.case.state, detail.task?.name || t("verify.status.active")) })}
                   </p>
                 ) : null}
-                {fundingReview && !finished ? <p className="label">Virement reçu sur un compte limité. Vérifiez le détail du transfert puis approuvez le KYC pour activer le compte.</p> : null}
-                {canDecide && !piecesApproved && !fundingReview && !finished ? <p className="error">Approuvez chaque pièce pour activer la validation.</p> : null}
-                {canDecide && screeningPending && !finished ? <p className="label">Vérifiez chaque correspondance de criblage avant de valider.</p> : null}
+                {fundingReview && !finished ? <p className="label">{t("verify.actionFunding")}</p> : null}
+                {canDecide && !piecesApproved && !fundingReview && !finished ? <p className="error">{t("verify.actionNeedDocs")}</p> : null}
+                {canDecide && screeningPending && !finished ? <p className="label">{t("verify.actionNeedScreening")}</p> : null}
                 <ActionTiles
                   reviewState={reviewState}
                   fundingReview={Boolean(fundingReview)}
@@ -1197,7 +1192,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                 {detail.requested_documents?.length ? (
                   <ul className="factors">
                     {detail.requested_documents.map((item) => (
-                      <li key={item.id}>{item.label?.fr || item.type} — {item.mode === "resubmit" ? "à renvoyer" : "pièce complémentaire"}{item.reason ? ` · ${item.reason}` : ""}</li>
+                      <li key={item.id}>{(item.label as any)?.[locale] || item.label?.fr || item.type} — {item.mode === "resubmit" ? t("verify.requestedResubmit") : t("verify.requestedExtra")}{item.reason ? ` · ${item.reason}` : ""}</li>
                     ))}
                   </ul>
                 ) : null}
@@ -1207,17 +1202,18 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
             </div>
           </div>
           </div>
-        ) : selected ? <p>Chargement du dossier…</p> : null}
+        ) : selected ? <p>{t("verify.loadingCase")}</p> : null}
       </div>
     </>
   );
 }
 
 export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: string; onChanged?: () => void }) {
+  const { t, locale } = useI18n();
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [tab, setTab] = useState<(typeof PREVIEW_TABS)[number]>("Informations saisies");
+  const [tab, setTab] = useState<TabKey>("submitted");
   const [comparing, setComparing] = useState(false);
   const [faceTried, setFaceTried] = useState("");
   const [resubmitId, setResubmitId] = useState("");
@@ -1232,7 +1228,7 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
     setDetail(null);
     setError("");
     setMessage("");
-    setTab("Informations saisies");
+    setTab("submitted");
     setFaceTried("");
     setResubmitId("");
     setComplementTarget("");
@@ -1265,7 +1261,7 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
   }
 
   useEffect(() => {
-    if (tab !== "Reconnaissance faciale" || !detail || detail.face_match || faceTried === runtimeId || comparing) return;
+    if (tab !== "face" || !detail || detail.face_match || faceTried === runtimeId || comparing) return;
     setFaceTried(runtimeId);
     void compareFaces();
   }, [tab, detail, faceTried, comparing, runtimeId]);
@@ -1350,7 +1346,7 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
   }
 
   if (error && !detail) return <p className="error">{error}</p>;
-  if (!detail) return <p className="label">Chargement de la vérification…</p>;
+  if (!detail) return <p className="label">{t("verify.loadingVerification")}</p>;
   const matches = (detail.customer?.screening || []).flatMap((item) => item.matches || []);
   const taskKey = detail.task?.key || "";
   const fundingReview = detail.case.definition_key === "clarityFundingOrigin";
@@ -1367,14 +1363,14 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
     <div className="verify-preview">
       <aside className="verify-side">
         <div className="tabs case-tabs">
-          {PREVIEW_TABS.map((item) => (
+          {TAB_KEYS.map((item) => (
             <button
               className={`${tab === item ? "active" : ""}${tabToneClass(item, detail)}`}
               key={item}
               type="button"
               onClick={() => setTab(item)}
             >
-              {item}
+              {t(`verify.tab.${item}`)}
             </button>
           ))}
         </div>
@@ -1382,7 +1378,7 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
       <div>
         {error ? <p className="error">{error}</p> : null}
         {message ? <p className="label">{message}</p> : null}
-        {tab === "Informations saisies" ? (
+        {tab === "submitted" ? (
           fundingReview ? (
             <TransferDetail transfer={detail.transfer} submitted={detail.submitted || []} />
           ) : (
@@ -1390,49 +1386,49 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
               {detail.submitted?.length ? (
                 <dl className="kv">
                   {detail.submitted.map((field) => (
-                    <span key={field.key}><dt>{field.label}</dt><dd>{field.value}</dd></span>
+                    <span key={field.key}><dt>{fieldLabel(t, field.key, field.label)}</dt><dd>{field.value}</dd></span>
                   ))}
                 </dl>
-              ) : <p className="label">Aucune information saisie sur ce dossier.</p>}
+              ) : <p className="label">{t("verify.noSubmitted")}</p>}
             </article>
           )
         ) : null}
-        {tab === "Documents" ? (
+        {tab === "documents" ? (
           <DocumentViewer
             documents={detail.documents}
             locked={docsLocked || fundingReview}
             onDecide={docsLocked || fundingReview ? undefined : (id, decision) => void decideDocument(id, decision)}
           />
         ) : null}
-        {tab === "Données du document" ? (
+        {tab === "documentData" ? (
           <article className="card">
             {detail.identity?.length ? (
               <form className="form">
                 {detail.identity.map((field) => (
                   <label key={field.key}>
-                    {field.label}
+                    {fieldLabel(t, field.key, field.label)}
                     <input disabled readOnly value={field.value} />
                   </label>
                 ))}
                 <div className="actions">
-                  <button className="ghost" type="button" disabled>Lire les pièces</button>
-                  <button type="button" disabled>Enregistrer</button>
+                  <button className="ghost" type="button" disabled>{t("verify.readDocs")}</button>
+                  <button type="button" disabled>{t("verify.save")}</button>
                 </div>
               </form>
-            ) : <p className="label">Aucune carte d'identité ou passeport sur ce dossier.</p>}
+            ) : <p className="label">{t("verify.noIdentity")}</p>}
           </article>
         ) : null}
-        {tab === "Authenticité document" ? <AuthenticityPlaceholder /> : null}
-        {tab === "Reconnaissance faciale" ? (
+        {tab === "authenticity" ? <AuthenticityPlaceholder /> : null}
+        {tab === "face" ? (
           <article className="card">
             <FaceScale score={detail.face_match?.score} threshold={detail.face_threshold ?? detail.face_match?.threshold ?? 40} />
-            <p>{faceMatchLabel(detail.face_match?.match, comparing)}</p>
-            <p className="label">{detail.face_match?.source === "video" ? "Visage extrait de la vidéo, comparé à la photo de la pièce." : "Selfie comparé à la photo de la pièce."}</p>
+            <p>{faceMatchLabel(t, detail.face_match?.match, comparing)}</p>
+            <p className="label">{detail.face_match?.source === "video" ? t("verify.faceVideo") : t("verify.faceSelfie")}</p>
             {detail.face_match?.detail ? <p className="label">{detail.face_match.detail}</p> : null}
-            <button type="button" disabled={comparing} onClick={() => void compareFaces()}>Comparer à nouveau</button>
+            <button type="button" disabled={comparing} onClick={() => void compareFaces()}>{t("verify.faceAgain")}</button>
           </article>
         ) : null}
-        {tab === "Criblage" ? (
+        {tab === "screening" ? (
           <article className="card">
             {(detail.customer?.risk?.factors || [])
               .filter((factor) => factor.code === "screening_confirmed" || factor.code === "screening_candidate")
@@ -1452,10 +1448,10 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
                     : null
                 }
               />
-            )) : <p className="label">Aucune correspondance sur ce dossier.</p>}
+            )) : <p className="label">{t("verify.screeningNone")}</p>}
           </article>
         ) : null}
-        {tab === "Notes" ? (
+        {tab === "notes" ? (
           <NotesHistory
             notes={detail.notes || []}
             freeNote={freeNote}
@@ -1464,10 +1460,18 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
             canAdd={!finished}
           />
         ) : null}
-        {tab === "Action" ? (
+        {tab === "action" ? (
           <div className="stack">
-            {fundingReview && !finished ? <p className="label">Virement reçu sur un compte limité. Vérifiez le détail du transfert puis approuvez le KYC pour activer le compte.</p> : null}
-            {canDecide && !piecesApproved && !fundingReview && !finished ? <p className="error">Approuvez chaque pièce pour activer la validation.</p> : null}
+            {!canDecide && !finished ? (
+              <p className="label">
+                {detail.case.state === "collect"
+                  ? t("verify.actionNoneCollect")
+                  : t("verify.actionNoneStep", { step: stepLabel(t, detail.case.state, detail.task?.name || t("verify.status.active")) })}
+              </p>
+            ) : null}
+            {fundingReview && !finished ? <p className="label">{t("verify.actionFunding")}</p> : null}
+            {canDecide && !piecesApproved && !fundingReview && !finished ? <p className="error">{t("verify.actionNeedDocs")}</p> : null}
+            {canDecide && screeningPending && !finished ? <p className="label">{t("verify.actionNeedScreening")}</p> : null}
             <ActionTiles
               reviewState={reviewState}
               fundingReview={Boolean(fundingReview)}
@@ -1494,7 +1498,7 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
             {detail.requested_documents?.length ? (
               <ul className="factors">
                 {detail.requested_documents.map((item) => (
-                  <li key={item.id}>{item.label?.fr || item.type} — {item.mode === "resubmit" ? "à renvoyer" : "pièce complémentaire"}{item.reason ? ` · ${item.reason}` : ""}</li>
+                  <li key={item.id}>{(item.label as any)?.[locale] || item.label?.fr || item.type} — {item.mode === "resubmit" ? t("verify.requestedResubmit") : t("verify.requestedExtra")}{item.reason ? ` · ${item.reason}` : ""}</li>
                 ))}
               </ul>
             ) : null}
