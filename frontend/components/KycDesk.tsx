@@ -356,7 +356,7 @@ function ScreeningMatchRow({
         <span>
           <strong>{match.name || t("verify.match")}</strong>
           {" · score "}{match.score}
-          {" · "}{match.status}
+          {" · "}{match.status === "pending" ? t("verify.screeningPending") : match.status === "no_hit" ? t("verify.screeningNoHit") : match.status === "confirmed_hit" ? t("verify.screeningHit") : match.status}
         </span>
         {match.status === "pending" && pendingActions ? (
           <span className="tabs">
@@ -364,7 +364,7 @@ function ScreeningMatchRow({
             <button className="ghost" type="button" onClick={pendingActions.onConfirm}>{t("verify.screeningConfirm")}</button>
           </span>
         ) : (
-          <span className="tag">{match.status === "no_hit" ? t("verify.screeningCleared") : match.status === "confirmed_hit" ? t("verify.screeningConfirmed") : match.status}</span>
+          <span className="tag">{match.status === "no_hit" ? t("verify.screeningCleared") : match.status === "confirmed_hit" ? t("verify.screeningConfirmed") : match.status === "pending" ? t("verify.screeningPending") : match.status}</span>
         )}
       </p>
       <div className="screening-topics">
@@ -913,8 +913,8 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
       <div className="filters">
         <label className="field">{t("verify.filterName")}
           <input
-            aria-label="Rechercher par nom"
-            placeholder="Rechercher"
+            aria-label={t("verify.filterName")}
+            placeholder={t("verify.searchPlaceholder")}
             value={nameQuery}
             onChange={(event) => {
               const next = event.target.value;
@@ -1035,7 +1035,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                 {detail.steps?.length ? (
                   <ol className="stepper">
                     {detail.steps.map((step) => (
-                      <li className={step.status} key={step.key}><span className="dot" />{step.label}</li>
+                      <li className={step.status} key={step.key}><span className="dot" />{stepLabel(t, step.key, step.label)}</li>
                     ))}
                   </ol>
                 ) : null}

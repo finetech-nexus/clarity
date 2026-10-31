@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { API_URL, authHeader } from "../lib/api";
+import { useI18n } from "../lib/i18n";
 
 export type ViewerDocument = {
   id: string;
@@ -14,12 +15,6 @@ export type ViewerDocument = {
   synthetic?: boolean;
 };
 
-const DECISION_LABEL: Record<string, string> = {
-  approved: "Approuvé",
-  rejected: "Rejeté",
-  revisions: "À renvoyer",
-};
-
 function DocumentCard({
   document,
   onDecide,
@@ -29,6 +24,7 @@ function DocumentCard({
   onDecide?: (id: string, decision: "approve" | "reject" | "revision") => void;
   locked?: boolean;
 }) {
+  const { t } = useI18n();
   const [src, setSrc] = useState("");
   const [rotation, setRotation] = useState(0);
   const [zoom, setZoom] = useState(1);
@@ -43,12 +39,12 @@ function DocumentCard({
       .then(async (response) => {
         if (!response.ok) {
           const text = await response.text();
-          let message = text || "Fichier introuvable.";
+          let message = text || t("verify.docMissing");
           try {
             const body = JSON.parse(text) as { message?: string };
             if (body.message) message = body.message;
           } catch {
-            message = text || "Fichier introuvable.";
+            message = text || t("verify.docMissing");
           }
           throw new Error(message);
         }
@@ -66,36 +62,45 @@ function DocumentCard({
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [document.id, document.url]);
+  }, [document.id, document.url, t]);
+
+  const decisionKey = document.decision || "";
+  const decisionLabel = decisionKey
+    ? (() => {
+        const key = `verify.docDecision.${decisionKey}`;
+        const translated = t(key);
+        return translated === key ? decisionKey : translated;
+      })()
+    : t("verify.docProvided");
 
   return (
     <article className="viewer">
       <div className="viewer-caption">
         <strong>{document.title}</strong>
-        <span className="label">{document.fileName} · {DECISION_LABEL[document.decision || ""] || document.status || "fourni"}</span>
+        <span className="label">{document.fileName} · {decisionLabel || document.status || t("verify.docProvided")}</span>
       </div>
       <div className="viewer-stage">
         <div className="viewer-canvas">
           {src ? (
             <img alt={document.title} src={src} style={{ transform: `rotate(${rotation}deg) scale(${zoom})` }} />
           ) : (
-            <p className="label">{error || "Chargement de la pièce…"}</p>
+            <p className="label">{error || t("verify.docLoading")}</p>
           )}
         </div>
         <div className="viewer-tools">
-          <button className="ghost" type="button" disabled={locked} onClick={() => setRotation((value) => value - 90)} aria-label="Pivoter à gauche">↺</button>
-          <button className="ghost" type="button" disabled={locked} onClick={() => setRotation((value) => value + 90)} aria-label="Pivoter à droite">↻</button>
-          <button className="ghost" type="button" disabled={locked} onClick={() => setZoom((value) => Math.min(2.4, value + 0.2))} aria-label="Agrandir">+</button>
-          <button className="ghost" type="button" disabled={locked} onClick={() => setZoom((value) => Math.max(0.6, value - 0.2))} aria-label="Réduire">−</button>
-          {src && !locked ? <a className="ghost tool-link" href={src} target="_blank" rel="noreferrer">Ouvrir</a> : null}
-          {locked ? <button className="ghost" type="button" disabled>Ouvrir</button> : null}
+          <button className="ghost" type="button" disabled={locked} onClick={() => setRotation((value) => value - 90)} aria-label={t("verify.rotateLeft")}>↺</button>
+          <button className="ghost" type="button" disabled={locked} onClick={() => setRotation((value) => value + 90)} aria-label={t("verify.rotateRight")}>↻</button>
+          <button className="ghost" type="button" disabled={locked} onClick={() => setZoom((value) => Math.min(2.4, value + 0.2))} aria-label={t("verify.zoomIn")}>+</button>
+          <button className="ghost" type="button" disabled={locked} onClick={() => setZoom((value) => Math.max(0.6, value - 0.2))} aria-label={t("verify.zoomOut")}>−</button>
+          {src && !locked ? <a className="ghost tool-link" href={src} target="_blank" rel="noreferrer">{t("verify.open")}</a> : null}
+          {locked ? <button className="ghost" type="button" disabled>{t("verify.open")}</button> : null}
         </div>
       </div>
       {onDecide ? (
         <div className="tabs">
-          <button type="button" disabled={locked} onClick={() => onDecide(document.id, "approve")}>Approuver la pièce</button>
-          <button className="ghost" type="button" disabled={locked} onClick={() => onDecide(document.id, "revision")}>À renvoyer</button>
-          <button className="ghost" type="button" disabled={locked} onClick={() => onDecide(document.id, "reject")}>Rejeter la pièce</button>
+          <button type="button" disabled={locked} onClick={() => onDecide(document.id, "approve")}>{t("verify.docApprove")}</button>
+          <button className="ghost" type="button" disabled={locked} onClick={() => onDecide(document.id, "revision")}>{t("verify.docRevision")}</button>
+          <button className="ghost" type="button" disabled={locked} onClick={() => onDecide(document.id, "reject")}>{t("verify.docReject")}</button>
         </div>
       ) : null}
     </article>
@@ -111,8 +116,9 @@ export default function DocumentViewer({
   onDecide?: (id: string, decision: "approve" | "reject" | "revision") => void;
   locked?: boolean;
 }) {
+  const { t } = useI18n();
   if (!documents.length) {
-    return <p className="label">Aucun document fourni pour ce dossier.</p>;
+    return <p className="label">{t("verify.noDocs")}</p>;
   }
   return (
     <div className="doc-stack">

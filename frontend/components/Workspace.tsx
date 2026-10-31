@@ -447,14 +447,26 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
     });
   }
   const mark = (column: string) => (sort === column ? (direction === "asc" ? " ↑" : " ↓") : "");
+  function statusText(status?: string | null, fallback?: string | null) {
+    if (!status) return fallback || "—";
+    const key = `client.status.${status}`;
+    const translated = t(key);
+    return translated !== key ? translated : fallback || status;
+  }
+  function riskText(tier?: string | null) {
+    if (!tier) return "—";
+    const key = `client.risk.${tier}`;
+    const translated = t(key);
+    return translated !== key ? translated : tier;
+  }
   return (
     <>
       <h1>{title}</h1>
-      <p className="lede">Filtrez par nom, statut de vérification ou niveau de risque. Cliquez une colonne pour trier.</p>
+      <p className="lede">{t("client.lede")}</p>
       <div className="filters">
         <div className="filter-group">
-          <span className="label">Nom</span>
-          <input aria-label="Filtrer par nom" placeholder="Rechercher" value={name} onChange={(event) => { resetList(() => setName(event.target.value)); }} />
+          <span className="label">{t("client.filterName")}</span>
+          <input aria-label={t("client.filterName")} placeholder={t("client.searchPlaceholder")} value={name} onChange={(event) => { resetList(() => setName(event.target.value)); }} />
         </div>
         <div className="filter-group">
           <span className="label">{t("verify.filterStatus")}</span>
@@ -498,17 +510,17 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
       <table className="inbox sheet">
         <thead>
           <tr>
-            <th><button className="sort" type="button" onClick={() => toggle("updated_at")}>Client{mark("updated_at")}</button></th>
-            <th><button className="sort" type="button" onClick={() => toggle("kyc_label")}>Vérification{mark("kyc_label")}</button></th>
-            <th><button className="sort" type="button" onClick={() => toggle("risk_tier")}>Risque{mark("risk_tier")}</button></th>
-            <th><button className="sort" type="button" onClick={() => toggle("kyc_created_at")}>Création{mark("kyc_created_at")}</button></th>
-            <th><button className="sort" type="button" onClick={() => toggle("kyc_validated_at")}>Validation{mark("kyc_validated_at")}</button></th>
-            <th><button className="sort" type="button" onClick={() => toggle("kyc_expires_at")}>Expiration{mark("kyc_expires_at")}</button></th>
-            <th>Relance</th>
+            <th><button className="sort" type="button" onClick={() => toggle("updated_at")}>{t("client.colClient")}{mark("updated_at")}</button></th>
+            <th><button className="sort" type="button" onClick={() => toggle("kyc_label")}>{t("client.colVerification")}{mark("kyc_label")}</button></th>
+            <th><button className="sort" type="button" onClick={() => toggle("risk_tier")}>{t("client.colRisk")}{mark("risk_tier")}</button></th>
+            <th><button className="sort" type="button" onClick={() => toggle("kyc_created_at")}>{t("client.colCreated")}{mark("kyc_created_at")}</button></th>
+            <th><button className="sort" type="button" onClick={() => toggle("kyc_validated_at")}>{t("client.colValidated")}{mark("kyc_validated_at")}</button></th>
+            <th><button className="sort" type="button" onClick={() => toggle("kyc_expires_at")}>{t("client.colExpiry")}{mark("kyc_expires_at")}</button></th>
+            <th>{t("client.colReminder")}</th>
           </tr>
         </thead>
         <tbody>
-          {!rows.length ? <tr><td colSpan={7}>{loading ? "Chargement…" : "Aucun client de ce type."}</td></tr> : null}
+          {!rows.length ? <tr><td colSpan={7}>{loading ? t("verify.loading") : t("client.empty")}</td></tr> : null}
           {rows.map((row) => (
             <tr key={row.id}>
               <td>
@@ -516,8 +528,8 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
                 <div className="label">id = {row.external_ref || row.id}</div>
                 <div className="label">external-id = {row.client_reference || "—"}</div>
               </td>
-              <td><span className={`badge ${row.kyc_status || ""}`}>{row.kyc_label || "—"}</span></td>
-              <td>{row.risk_tier || "—"}</td>
+              <td><span className={`badge ${row.kyc_status || ""}`}>{statusText(row.kyc_status, row.kyc_label)}</span></td>
+              <td>{riskText(row.risk_tier)}</td>
               <td>{day(row.kyc_created_at)}</td>
               <td>{day(row.kyc_validated_at)}</td>
               <td>{day(row.kyc_expires_at)}</td>
@@ -526,11 +538,11 @@ function CustomerList({ title, kind }: { title: string; kind: string }) {
           ))}
         </tbody>
       </table>
-      <p className="label">{rows.length}/{total} client(s)</p>
+      <p className="label">{rows.length}/{total} {t("client.count")}</p>
       {rows.length < total ? (
         <div className="load-more">
           <button className="ghost" type="button" disabled={loading} onClick={() => setPage((current) => current + 1)}>
-            {loading ? "Chargement…" : "Charger plus"}
+            {loading ? t("verify.loading") : t("verify.loadMore")}
           </button>
         </div>
       ) : null}
