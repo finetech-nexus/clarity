@@ -19,6 +19,7 @@ from app.models import (
     CaseRecord,
     Customer,
     Evidence,
+    IdentityDocument,
     MonitoringRule,
     Notification,
     ProviderConnection,
@@ -1373,6 +1374,10 @@ class NewUserBody(BaseModel):
 class UserRoleBody(BaseModel):
     role: str = ""
     roles: list[str] = []
+    given_name: str | None = None
+    family_name: str | None = None
+    email: str | None = None
+    password: str | None = None
 
 
 def _keep_bootstrap_admin(row: User, roles: list[str], settings) -> None:
@@ -1433,6 +1438,30 @@ def assign_user_role(user_id: str, body: UserRoleBody, request: Request, princip
         raise clarity_error(404, "not_found", "Utilisateur introuvable.")
     _keep_bootstrap_admin(row, parse_roles(stored), request.app.state.settings)
     row.role = stored
+    given = (body.given_name or "").strip()
+    family = (body.family_name or "").strip()
+    if given or family:
+        if not given or not family:
+            raise clarity_error(422, "invalid_user", "Le nom et le prénom sont requis.")
+        row.full_name = f"{given} {family}"
+    if body.email is not None:
+        email = body.email.strip().lower()
+        if "@" not in email:
+            raise clarity_error(422, "invalid_user", "Un e-mail valide est requis. L'e-mail est l'identifiant.")
+        taken = db.scalar(select(User).where(User.tenant_id == principal.tenant_id, User.email == email, User.id != row.id))
+        if taken:
+            raise clarity_error(409, "exists", "Cet e-mail est déjà un membre de l'équipe.")
+        row.email = email
+    secret = (body.password or "").strip()
+    if secret:
+        from app.config import current_settings
+        from app.security import hash_password
+
+        if current_settings().resolved_auth_mode != "password":
+            raise clarity_error(422, "invalid_user", "Le mot de passe se gère dans Keycloak.")
+        if len(secret) < 8:
+            raise clarity_error(422, "invalid_user", "Un mot de passe d'au moins 8 caractères est requis.")
+        row.password_hash = hash_password(secret)
     audit(db, principal.tenant_id, actor_label(principal), "user.role", "user", row.id, {"roles": parse_roles(stored)})
     return _user_view(row)
 
@@ -1453,13 +1482,93 @@ def reports(principal: Principal = Depends(clarity_principal), db: Session = Dep
     ]
 
 
+def _review_view(db: Session, row: WorkflowTask) -> dict:
+    workflow = db.get(WorkflowInstance, row.workflow_id)
+    customer = db.get(Customer, workflow.customer_id) if workflow and workflow.customer_id else None
+    assignee = db.get(User, row.assignee_id) if row.assignee_id else None
+    context = (workflow.context or {}) if workflow else {}
+    entity = context.get("entity") if isinstance(context.get("entity"), dict) else {}
+    entity_data = entity.get("data") if isinstance(entity.get("data"), dict) else {}
+    documents = 0
+    if workflow:
+        documents = db.scalar(select(func.count()).select_from(IdentityDocument).where(IdentityDocument.workflow_id == workflow.id)) or 0
+    risk = None
+    case = None
+    if customer:
+        risk = db.scalar(
+            select(RiskAssessment)
+            .where(RiskAssessment.customer_id == customer.id, RiskAssessment.current.is_(True))
+            .order_by(RiskAssessment.created_at.desc())
+        )
+        case = db.scalar(
+            select(CaseRecord)
+            .where(CaseRecord.tenant_id == row.tenant_id, CaseRecord.customer_id == customer.id)
+            .order_by(CaseRecord.created_at.desc())
+        )
+    return {
+        "id": row.id,
+        "workflow_id": row.workflow_id,
+        "task_key": row.task_key,
+        "name": row.name,
+        "status": row.status,
+        "due_at": iso(row.due_at),
+        "created_at": iso(row.created_at),
+        "assignee": assignee.full_name if assignee else None,
+        "customer": None
+        if not customer
+        else {
+            "id": customer.id,
+            "name": customer.display_name,
+            "kind": customer.kind,
+            "status": customer.canonical_status,
+            "risk_tier": customer.risk_tier,
+        },
+        "workflow": None
+        if not workflow
+        else {
+            "name": workflow.definition_name,
+            "key": workflow.definition_key,
+            "state": workflow.state,
+            "status": workflow.status,
+            "runtime_id": workflow.ballerine_runtime_id,
+        },
+        "scenario": context.get("scenario"),
+        "entity_type": entity.get("type"),
+        "nationality": entity_data.get("nationality"),
+        "documents": documents,
+        "risk": None if not risk else {"score": risk.score, "tier": risk.tier},
+        "case": None if not case else {"id": case.id, "name": case.name, "status": case.status, "outcome": case.outcome},
+    }
+
+
 @router.get("/reviews")
-def reviews(principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+def reviews(q: str = "", limit: int | None = None, offset: int | None = None, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
     rows = db.scalars(
-        select(WorkflowTask).where(
+        select(WorkflowTask)
+        .where(
             WorkflowTask.tenant_id == principal.tenant_id,
             WorkflowTask.status == "open",
             WorkflowTask.task_key.in_(["analystReview", "checkerReview", "screen", "investigate"]),
         )
+        .order_by(WorkflowTask.created_at.desc())
     ).all()
-    return [{"id": row.id, "workflow_id": row.workflow_id, "task_key": row.task_key, "name": row.name, "due_at": iso(row.due_at)} for row in rows]
+    if (q or "").strip():
+        listed = [_review_view(db, row) for row in rows]
+        return present(
+            listed,
+            q,
+            lambda row: {
+                "name": ((row.get("customer") or {}).get("name") or row["name"]),
+                "task": row["task_key"],
+                "status": row["status"],
+                "scenario": row.get("scenario") or "",
+            },
+            limit,
+            offset,
+        )
+    if limit is None:
+        return [_review_view(db, row) for row in rows]
+    size = min(max(int(limit), 1), 100)
+    start = max(int(offset or 0), 0)
+    page = rows[start : start + size]
+    return {"items": [_review_view(db, row) for row in page], "total": len(rows), "limit": size, "offset": start}

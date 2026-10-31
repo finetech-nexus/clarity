@@ -1,14 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import CaseDesk from "./CaseDesk";
 import KycDesk, { RiskScoreChip, VerificationPreview } from "./KycDesk";
 import ScreeningDesk from "./ScreeningDesk";
 import StudioDesk from "./StudioDesk";
 import WorkflowEditor from "./WorkflowEditor";
-import { AdminBoard, AlertBoard, AuditBoard, IntegrationBoard, ReportBoard, ReviewBoard, RiskBoard, TransactionBoard } from "./Workboards";
+import { AdminBoard, AlertBoard, ReportBoard, ReviewBoard, RiskBoard, TransactionBoard } from "./Workboards";
 import { QueryStack } from "./QueryStack";
 import { api, searchPage } from "../lib/api";
 import { logout as keycloakLogout, startKeycloak } from "../lib/keycloak";
@@ -45,7 +45,6 @@ const GROUPS = [
       ["/transactions", "nav.transactions"],
       ["/alerts", "nav.alerts"],
       ["/investigations", "nav.investigations"],
-      ["/reviews", "nav.reviews"],
       ["/reports", "nav.reports"],
     ],
   },
@@ -55,8 +54,7 @@ const GROUPS = [
     links: [
       ["/rules", "nav.rules"],
       ["/workflows", "nav.workflows"],
-      ["/audit", "nav.audit"],
-      ["/integrations", "nav.integrations"],
+      ["/reviews", "nav.reviews"],
       ["/administration", "nav.administration"],
     ],
   },
@@ -137,6 +135,7 @@ const CLIENT_RISK_VALUES = ["low", "medium", "high"] as const;
 
 export default function Workspace({ section, customerId }: { section: string; customerId?: string }) {
   const pathname = usePathname();
+  const router = useRouter();
   const search = useSearchParams().toString();
   const { t, locale, setLocale } = useI18n();
   const [menus, setMenus] = useState<DeskMenuNav[]>([]);
@@ -178,6 +177,11 @@ export default function Workspace({ section, customerId }: { section: string; cu
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (section === "integrations") router.replace("/administration?tab=thirdparty");
+    if (section === "audit") router.replace("/administration?tab=audit");
+  }, [section, router]);
 
   useEffect(() => {
     if (!token) {
@@ -371,8 +375,6 @@ export default function Workspace({ section, customerId }: { section: string; cu
         {!customerId && section === "reports" ? <ReportBoard /> : null}
         {!customerId && section === "rules" ? <StudioDesk /> : null}
         {!customerId && section === "workflows" ? <WorkflowEditor /> : null}
-        {!customerId && section === "audit" ? <AuditBoard /> : null}
-        {!customerId && section === "integrations" ? <IntegrationBoard /> : null}
         {!customerId && section === "administration" ? <AdminBoard /> : null}
       </main>
     </div>

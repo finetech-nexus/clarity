@@ -3,7 +3,8 @@
 import { FormEvent, useEffect, useState } from "react";
 import { QueryStack, queryMatches } from "./QueryStack";
 import { api } from "../lib/api";
-import { Copy, Lang, LanguageTabs, copyFrom, preferred } from "./LanguageFields";
+import { Copy, copyFrom, preferred } from "./LanguageFields";
+import { useI18n } from "../lib/i18n";
 
 type Scenario = { id: string; name: string; description?: string; trigger_object_type: string; live_version_id?: string; i18n?: { name?: Partial<Copy>; description?: Partial<Copy> } };
 type Iteration = { id: string; version: number | null; body: { score_review_threshold?: number | null; score_block_and_review_threshold?: number | null; score_decline_threshold?: number | null; rules?: string[] } };
@@ -36,7 +37,7 @@ export default function ScenarioEditor() {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [listPage, setListPage] = useState(0);
-  const [language, setLanguage] = useState<Lang>("fr");
+  const { locale } = useI18n();
   const [names, setNames] = useState<Copy>(copyFrom(undefined));
   const [descriptions, setDescriptions] = useState<Copy>(copyFrom(undefined));
   const live = Boolean(iteration?.version);
@@ -201,7 +202,7 @@ export default function ScenarioEditor() {
         />
         {scenarioPage.map((row) => (
           <button className={row.id === selected ? "active" : "ghost"} key={row.id} type="button" onClick={() => setSelected(row.id)}>
-            <span>{row.name}</span>
+            <span>{row.i18n?.name?.[locale] || row.name}</span>
             <span className="label">{row.trigger_object_type} · {row.live_version_id ? "publié" : "brouillon"}</span>
           </button>
         ))}
@@ -210,7 +211,7 @@ export default function ScenarioEditor() {
         <section className="case-sheet">
           <header className="case-bar">
             <div>
-              <h2>{preferred(names, current.name)}</h2>
+              <h2>{names[locale] || preferred(names, current.name)}</h2>
               <p className="label">{live ? `Version ${iteration.version} publiée` : "Brouillon"} · déclencheur {current.trigger_object_type}</p>
             </div>
             {live ? <button type="button" onClick={() => void draftFromLive()}>Nouveau brouillon</button> : <button type="button" onClick={() => void publish()}>Publier</button>}
@@ -218,14 +219,13 @@ export default function ScenarioEditor() {
           {error ? <p className="error">{error}</p> : null}
           {message ? <p className="label">{message}</p> : null}
           <form className="card connector" onSubmit={(event) => void saveCopy(event)}>
-            <LanguageTabs language={language} onChange={setLanguage} />
             <label>
-              Nom · {language.toUpperCase()}
-              <input dir={language === "ar" ? "rtl" : "ltr"} value={names[language]} onChange={(event) => setNames((current) => ({ ...current, [language]: event.target.value }))} />
+              Nom
+              <input dir={locale === "ar" ? "rtl" : "ltr"} value={names[locale]} onChange={(event) => setNames((current) => ({ ...current, [locale]: event.target.value }))} />
             </label>
             <label>
-              Description · {language.toUpperCase()}
-              <input dir={language === "ar" ? "rtl" : "ltr"} value={descriptions[language]} onChange={(event) => setDescriptions((current) => ({ ...current, [language]: event.target.value }))} />
+              Description
+              <input dir={locale === "ar" ? "rtl" : "ltr"} value={descriptions[locale]} onChange={(event) => setDescriptions((current) => ({ ...current, [locale]: event.target.value }))} />
             </label>
             <button type="submit">Enregistrer les libellés</button>
           </form>

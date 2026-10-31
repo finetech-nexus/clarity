@@ -24,15 +24,3 @@ export function copyFrom(value: Partial<Copy> | undefined, legacy = ""): Copy {
 export function preferred(copy: Copy, legacy = ""): string {
   return copy.fr || copy.en || copy.ar || legacy;
 }
-
-export function LanguageTabs({ language, onChange }: { language: Lang; onChange: (language: Lang) => void }) {
-  return (
-    <div className="tabs" role="group" aria-label="Langue du libellé">
-      {LANGUAGES.map((option) => (
-        <button key={option.value} type="button" className={language === option.value ? "active" : ""} aria-pressed={language === option.value} onClick={() => onChange(option.value)}>
-          {option.label}
-        </button>
-      ))}
-    </div>
-  );
-}

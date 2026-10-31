@@ -1,12 +1,10 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import DocumentCatalog from "./DocumentCatalog";
 import ScenarioEditor from "./ScenarioEditor";
-import WorkflowEditor from "./WorkflowEditor";
 import { api } from "../lib/api";
 
-const TABS = ["Scénarios", "Modèle", "Import", "Workflows", "Pièces", "IA", "Listes"] as const;
+const TABS = ["Scénarios", "Modèle", "Import", "IA", "Listes"] as const;
 
 const COLUMN_TYPES = ["String", "Int", "Float", "Bool", "Timestamp"] as const;
 const LOCKED_COLUMNS = new Set(["object_id", "updated_at"]);
@@ -135,7 +133,7 @@ export default function StudioDesk() {
   return (
     <>
       <h1>Paramétrage</h1>
-      <p className="lede">Atelier unique pour le modèle, les scénarios, les workflows et l'assistance d'analyse. OpenSanctions, Veriff et le modèle de langage ne répondent que si leurs clés sont configurées.</p>
+      <p className="lede">Atelier unique pour le modèle, les scénarios et l'assistance d'analyse. OpenSanctions, Veriff et le modèle de langage ne répondent que si leurs clés sont configurées.</p>
       <div className="tabs">
         {TABS.map((item) => (
           <button className={item === tab ? "active" : ""} key={item} onClick={() => setTab(item)} type="button">{item}</button>
@@ -215,8 +213,6 @@ export default function StudioDesk() {
           <button type="submit">Importer la transaction</button>
         </form>
       ) : null}
-      {tab === "Workflows" ? <WorkflowEditor embedded /> : null}
-      {tab === "Pièces" ? <DocumentCatalog /> : null}
       {tab === "IA" ? (
         <article className="card">
           <div className="label">Fournisseurs</div>

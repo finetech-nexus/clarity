@@ -3,7 +3,8 @@
 import { FormEvent, useEffect, useState } from "react";
 import { QueryStack, queryMatches } from "./QueryStack";
 import { api } from "../lib/api";
-import { Copy, Lang, LanguageTabs, copyFrom, preferred } from "./LanguageFields";
+import { Copy, copyFrom, preferred } from "./LanguageFields";
+import { useI18n } from "../lib/i18n";
 
 const PROCESSES = [
   ["clarityKycIndividual", "Personne physique"],
@@ -235,11 +236,11 @@ function layout(ids: string[], edges: Edge[], initial: string | undefined) {
 }
 
 export default function WorkflowEditor({ embedded = false }: { embedded?: boolean }) {
+  const { locale } = useI18n();
   const [definitions, setDefinitions] = useState<Definition[]>([]);
   const [selected, setSelected] = useState("");
   const [draft, setDraft] = useState<Chart | null>(null);
   const [displayName, setDisplayName] = useState<Copy>(copyFrom(undefined));
-  const [language, setLanguage] = useState<Lang>("fr");
   const [processKey, setProcessKey] = useState<string>(PROCESSES[0][0]);
   const [entityType, setEntityType] = useState("individual");
   const [stateId, setStateId] = useState("");
@@ -484,10 +485,9 @@ export default function WorkflowEditor({ embedded = false }: { embedded?: boolea
           ))}
         </div>
         <div className="flow-stage">
-          <LanguageTabs language={language} onChange={setLanguage} />
           <div className="flow-toolbar">
-            <label>Nom affiché · {language.toUpperCase()}
-              <input dir={language === "ar" ? "rtl" : "ltr"} value={displayName[language]} onChange={(event) => { setDisplayName((current) => ({ ...current, [language]: event.target.value })); setDirty(true); }} />
+            <label>Nom affiché
+              <input dir={locale === "ar" ? "rtl" : "ltr"} value={displayName[locale]} onChange={(event) => { setDisplayName((current) => ({ ...current, [locale]: event.target.value })); setDirty(true); }} />
             </label>
             <label>Processus exécuté
               <select value={processKey} onChange={(event) => { setProcessKey(event.target.value); setDirty(true); }}>
@@ -556,7 +556,7 @@ export default function WorkflowEditor({ embedded = false }: { embedded?: boolea
                     style={{ left: point.x, top: point.y, width: NODE_W }}
                     onClick={() => setStateId(id)}
                   >
-                    <strong>{titled ? (stepCopy(body)[language] || preferred(stepCopy(body))) : id}</strong>
+                    <strong>{titled ? (stepCopy(body)[locale] || preferred(stepCopy(body))) : id}</strong>
                     <span>{ghost ? "terminal" : titled ? id : id === draft?.initial ? "initiale" : final ? "finale" : "étape"}</span>
                   </button>
                 );
@@ -568,12 +568,12 @@ export default function WorkflowEditor({ embedded = false }: { embedded?: boolea
             <form className="flow-inspector" onSubmit={addTransition}>
               <div className="flow-toolbar">
                 <label>Identifiant<input defaultValue={stateId} key={stateId} onBlur={(event) => renameState(event.target.value)} /></label>
-                <label>Libellé · {language.toUpperCase()}
+                <label>Libellé
                   <input
-                    dir={language === "ar" ? "rtl" : "ltr"}
-                    value={stepCopy(node)[language]}
+                    dir={locale === "ar" ? "rtl" : "ltr"}
+                    value={stepCopy(node)[locale]}
                     onChange={(event) => {
-                      const i18n = { ...stepCopy(node), [language]: event.target.value };
+                      const i18n = { ...stepCopy(node), [locale]: event.target.value };
                       updateNode(stateId, { ...node, meta: { ...(node.meta || {}), label: preferred(i18n), i18n } });
                     }}
                   />

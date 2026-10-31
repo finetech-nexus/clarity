@@ -1,8 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { FormEvent, ReactNode, useEffect, useState } from "react";
+import DocumentCatalog from "./DocumentCatalog";
 import { MenuAdmin } from "./MenuAdmin";
+import { TeamAdmin } from "./TeamAdmin";
 import { QueryStack } from "./QueryStack";
 import { api, searchPage } from "../lib/api";
 
@@ -161,31 +164,62 @@ export function AlertBoard() {
   const [query, setQuery] = useState("status:open");
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [reload, setReload] = useState(0);
+  const pageSize = 20;
 
-  async function load(nextQuery = query, nextPage = page) {
-    const body = await searchPage<Row>("/api/clarity/v1/alerts", nextQuery, nextPage);
-    setRows(body.items);
-    setTotal(body.total);
-  }
-  useEffect(() => { void load(query, page).catch((err: Error) => setError(err.message)); }, [query, page]);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    void searchPage<Row>("/api/clarity/v1/alerts", query, page, pageSize)
+      .then((body) => {
+        if (cancelled) return;
+        setTotal(body.total);
+        setRows((current) => {
+          if (page === 0) return body.items;
+          const seen = new Set(current.map((row) => String(row.id)));
+          return [...current, ...body.items.filter((row) => !seen.has(String(row.id)))];
+        });
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [query, page, reload]);
 
   async function decide(id: string, status: string) {
     setError("");
     try {
       await api(`/api/clarity/v1/alerts/${id}/disposition`, { method: "POST", body: JSON.stringify({ status, rationale: "Qualification manuelle." }) });
       setMessage(status === "escalated" ? "Alerte escaladée vers un dossier." : "Alerte qualifiée. Ce n'est pas une conclusion de blanchiment.");
-      await load();
+      setRows([]);
+      setPage(0);
+      setReload((current) => current + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Qualification refusée");
     }
   }
 
   return (
-    <Board title="Alertes" lede="Chaque alerte désigne un schéma à investiguer. Les filtres se cumulent.">
+    <Board title="Alertes" lede="Chaque alerte désigne un schéma à investiguer. Les filtres se cumulent. Chargement par bloc.">
       {error ? <p className="error">{error}</p> : null}
       {message ? <p className="label">{message}</p> : null}
-      <QueryStack query={query} onChange={(next) => { setPage(0); setQuery(next); }} fields={[{ key: "status", label: "Statut", options: ["open", "closed"] }, { key: "priority", label: "Priorité" }, { key: "name", label: "Client" }, { key: "title", label: "Titre" }]} total={total} page={page} pageSize={25} onPage={setPage} />
+      <QueryStack
+        query={query}
+        onChange={(next) => { setPage(0); setRows([]); setQuery(next); }}
+        fields={[{ key: "status", label: "Statut", options: ["open", "closed"] }, { key: "priority", label: "Priorité" }, { key: "name", label: "Client" }, { key: "title", label: "Titre" }]}
+        total={total}
+        page={0}
+        pageSize={Math.max(total, 1)}
+        onPage={() => undefined}
+      />
       <div className="list">
+        {!rows.length ? <p className="label">{loading ? "Chargement…" : "Aucune alerte."}</p> : null}
         {rows.map((row) => (
           <div className="row" key={String(row.id)}>
             <span>
@@ -202,28 +236,127 @@ export function AlertBoard() {
           </div>
         ))}
       </div>
+      <p className="label">{rows.length}/{total} alerte(s)</p>
+      {rows.length < total ? (
+        <div className="load-more">
+          <button className="ghost" type="button" disabled={loading} onClick={() => setPage((current) => current + 1)}>
+            {loading ? "Chargement…" : "Charger plus"}
+          </button>
+        </div>
+      ) : null}
     </Board>
   );
 }
 
+type ReviewRow = {
+  id: string;
+  task_key: string;
+  name: string;
+  status: string;
+  due_at?: string | null;
+  created_at?: string | null;
+  assignee?: string | null;
+  customer?: { id: string; name: string; kind: string; status: string; risk_tier?: string | null } | null;
+  workflow?: { name: string; key: string; state?: string | null; status: string; runtime_id?: string | null } | null;
+  scenario?: string | null;
+  entity_type?: string | null;
+  nationality?: string | null;
+  documents?: number;
+  risk?: { score: number; tier: string } | null;
+  case?: { id: string; name: string; status: string; outcome: string } | null;
+};
+
+function reviewHref(row: ReviewRow) {
+  if (row.task_key === "investigate") return "/investigations";
+  const runtime = row.workflow?.runtime_id;
+  const base = row.workflow?.key === "clarityKybBusiness" || row.customer?.kind === "business" ? "/kyb-verification" : "/verification";
+  return runtime ? `${base}?case=${encodeURIComponent(runtime)}` : base;
+}
+
 export function ReviewBoard() {
-  const [rows, setRows] = useState<Row[]>([]);
-  useEffect(() => { void api<Row[]>("/api/clarity/v1/reviews").then(setRows); }, []);
+  const [rows, setRows] = useState<ReviewRow[]>([]);
+  const [selected, setSelected] = useState("");
+  const [page, setPage] = useState(0);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const pageSize = 20;
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    void searchPage<ReviewRow>("/api/clarity/v1/reviews", "", page, pageSize)
+      .then((body) => {
+        if (cancelled) return;
+        setTotal(body.total);
+        setRows((current) => {
+          const next = page === 0
+            ? body.items
+            : [...current, ...body.items.filter((row) => !current.some((item) => item.id === row.id))];
+          setSelected((chosen) => chosen || next[0]?.id || "");
+          return next;
+        });
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [page]);
+
+  const current = rows.find((row) => row.id === selected) || rows[0];
   return (
-    <Board title="Revues" lede="Tâches humaines encore ouvertes : revue analyste, contrôle, criblage ou investigation.">
-      <table className="inbox">
-        <thead><tr><th>Tâche</th><th>Étape</th><th>Échéance</th><th></th></tr></thead>
-        <tbody>
+    <Board title="Revues" lede="Tâches humaines encore ouvertes. Chargement par bloc.">
+      {error ? <p className="error">{error}</p> : null}
+      <div className="editor">
+        <div className="queue">
+          {!rows.length ? <p className="label">{loading ? "Chargement…" : "Aucune revue ouverte."}</p> : null}
           {rows.map((row) => (
-            <tr key={String(row.id)}>
-              <td>{String(row.name)}</td>
-              <td>{String(row.task_key)}</td>
-              <td>{row.due_at ? new Date(String(row.due_at)).toLocaleDateString("fr-FR") : "—"}</td>
-              <td><Link href={row.task_key === "investigate" ? "/investigations" : "/verification"}>{row.task_key === "investigate" ? "Ouvrir l'AML" : "Ouvrir le KYC"}</Link></td>
-            </tr>
+            <button className={current?.id === row.id ? "active" : "ghost"} key={row.id} type="button" onClick={() => setSelected(row.id)}>
+              <span>{row.customer?.name || row.name}</span>
+              <span className="label">{row.name} · {row.due_at ? new Date(row.due_at).toLocaleDateString("fr-FR") : "sans échéance"}</span>
+            </button>
           ))}
-        </tbody>
-      </table>
+          <p className="label">{rows.length}/{total}</p>
+          {rows.length < total ? (
+            <button className="ghost" type="button" disabled={loading} onClick={() => setPage((value) => value + 1)}>
+              {loading ? "Chargement…" : "Charger plus"}
+            </button>
+          ) : null}
+        </div>
+        {current ? (
+          <section className="case-sheet">
+            <header className="case-bar">
+              <div>
+                <h2>{current.customer?.name || current.name}</h2>
+                <p className="label">{current.name} · {current.workflow?.name || current.task_key}</p>
+              </div>
+              <Link href={reviewHref(current)}>{current.task_key === "investigate" ? "Ouvrir l'investigation" : "Ouvrir la vérification"}</Link>
+            </header>
+            <dl className="kv">
+              <dt>Client</dt><dd>{current.customer?.name || "—"}</dd>
+              <dt>Type</dt><dd>{current.customer?.kind === "business" || current.entity_type === "business" ? "Personne morale" : current.customer ? "Personne physique" : "—"}</dd>
+              <dt>Statut client</dt><dd>{current.customer?.status || "—"}</dd>
+              <dt>Parcours</dt><dd>{current.workflow?.name || "—"}</dd>
+              <dt>Étape du parcours</dt><dd>{current.workflow?.state || "—"}</dd>
+              <dt>Tâche</dt><dd>{current.name} ({current.task_key})</dd>
+              <dt>Statut de la tâche</dt><dd>{current.status}</dd>
+              <dt>Ouverte le</dt><dd>{current.created_at ? new Date(current.created_at).toLocaleString("fr-FR") : "—"}</dd>
+              <dt>Échéance</dt><dd>{current.due_at ? new Date(current.due_at).toLocaleDateString("fr-FR") : "—"}</dd>
+              <dt>Assigné</dt><dd>{current.assignee || "Non assigné"}</dd>
+              <dt>Scénario</dt><dd>{current.scenario || "—"}</dd>
+              <dt>Nationalité</dt><dd>{current.nationality || "—"}</dd>
+              <dt>Pièces</dt><dd>{current.documents ?? 0}</dd>
+              <dt>Score</dt><dd>{current.risk ? `${current.risk.score} · ${current.risk.tier}` : current.customer?.risk_tier || "—"}</dd>
+              <dt>Dossier</dt><dd>{current.case ? `${current.case.name} · ${current.case.status}` : "—"}</dd>
+            </dl>
+          </section>
+        ) : null}
+      </div>
     </Board>
   );
 }
@@ -284,7 +417,8 @@ export function AuditBoard() {
   }
 
   return (
-    <Board title="Audit" lede="Journal des actions du tenant. Les secrets ne sont pas enregistrés.">
+    <div className="stack">
+      <p className="lede">Journal des actions du tenant. Les secrets ne sont pas enregistrés.</p>
       {error ? <p className="error">{error}</p> : null}
       <table className="inbox sheet">
         <thead>
@@ -312,7 +446,7 @@ export function AuditBoard() {
         <button className="ghost" type="button" disabled={page === 0} onClick={() => setPage((current) => Math.max(0, current - 1))}>Précédent</button>
         <button className="ghost" type="button" disabled={(page + 1) * pageSize >= total} onClick={() => setPage((current) => current + 1)}>Suivant</button>
       </div>
-    </Board>
+    </div>
   );
 }
 
@@ -388,7 +522,8 @@ export function IntegrationBoard() {
   }
 
   return (
-    <Board title="Intégrations" lede="Pour chaque usage, choisissez un fournisseur dans la liste connue. La clé enregistrée n'est pas renvoyée. Sans clé, le criblage reste sur la liste de démonstration.">
+    <div className="stack">
+      <p className="lede">Pour chaque usage, choisissez un fournisseur dans la liste connue. La clé enregistrée n'est pas renvoyée. Sans clé, le criblage reste sur la liste de démonstration.</p>
       {error ? <p className="error">{error}</p> : null}
       {message ? <p>{message}</p> : null}
       <div className="connectors">
@@ -437,20 +572,8 @@ export function IntegrationBoard() {
           );
         })}
       </div>
-    </Board>
+    </div>
   );
-}
-
-const TEAM_ROLES = [
-  ["analyst", "Analyste"],
-  ["checker", "Checker"],
-  ["investigator", "Investigateur"],
-  ["admin", "Administrateur"],
-] as const;
-
-function roleList(row: Row): string[] {
-  if (Array.isArray(row.roles)) return row.roles.map(String);
-  return String(row.role || "").split(",").map((item) => item.trim()).filter(Boolean);
 }
 
 type StorageConfig = {
@@ -473,9 +596,12 @@ const EMPTY_STORAGE: StorageConfig = {
   force_path_style: true,
 };
 
+const ADMIN_TABS = ["equipe", "config", "stockage", "menu", "documents", "thirdparty", "audit"] as const;
+type AdminTab = (typeof ADMIN_TABS)[number];
+
 export function AdminBoard() {
-  const [tab, setTab] = useState<"equipe" | "config" | "stockage" | "menu">("equipe");
-  const [rows, setRows] = useState<Row[]>([]);
+  const requested = useSearchParams().get("tab");
+  const [tab, setTab] = useState<AdminTab>(ADMIN_TABS.includes(requested as AdminTab) ? (requested as AdminTab) : "equipe");
   const [me, setMe] = useState<Row | null>(null);
   const [error, setError] = useState("");
   const [years, setYears] = useState("1");
@@ -486,15 +612,8 @@ export function AdminBoard() {
   const [thresholdSaved, setThresholdSaved] = useState("");
   const [storage, setStorage] = useState<StorageConfig>(EMPTY_STORAGE);
   const [storageSaved, setStorageSaved] = useState("");
-  const [givenName, setGivenName] = useState("");
-  const [familyName, setFamilyName] = useState("");
-  const [email, setEmail] = useState("");
-  const [memberPassword, setMemberPassword] = useState("");
-  const [passwordMode, setPasswordMode] = useState(false);
-  const [chosen, setChosen] = useState<string[]>(["analyst"]);
   useEffect(() => {
     void api<Row>("/api/clarity/v1/me").then(setMe);
-    void api<Row[]>("/api/clarity/v1/administration/users").then(setRows).catch((err: Error) => setError(err.message));
     void api<{ kyc_validity_years: number; maker_checker_enforced?: boolean }>("/api/clarity/v1/administration/kyc")
       .then((body) => {
         setYears(String(body.kyc_validity_years));
@@ -513,7 +632,6 @@ export function AdminBoard() {
         force_path_style: body.force_path_style !== false,
       }))
       .catch(() => undefined);
-    void api<{ mode: string }>("/api/clarity/v1/auth/mode").then((body) => setPasswordMode(body.mode === "password")).catch(() => undefined);
   }, []);
   async function savePolicy(event: FormEvent) {
     event.preventDefault();
@@ -584,33 +702,6 @@ export function AdminBoard() {
       setError(err instanceof Error ? err.message : "Enregistrement refusé");
     }
   }
-  async function assignRoles(id: string, roles: string[]) {
-    setError("");
-    try {
-      const updated = await api<Row>(`/api/clarity/v1/administration/users/${id}`, { method: "PATCH", body: JSON.stringify({ roles }) });
-      setRows((current) => current.map((row) => (row.id === id ? updated : row)));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Attribution refusée");
-    }
-  }
-  async function addMember(event: FormEvent) {
-    event.preventDefault();
-    setError("");
-    try {
-      const created = await api<Row>("/api/clarity/v1/administration/users", {
-        method: "POST",
-        body: JSON.stringify({ given_name: givenName, family_name: familyName, email, roles: chosen, password: passwordMode ? memberPassword : undefined }),
-      });
-      setRows((current) => [...current, created]);
-      setGivenName("");
-      setFamilyName("");
-      setEmail("");
-      setMemberPassword("");
-      setChosen(["analyst"]);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Ajout refusé");
-    }
-  }
   return (
     <Board title="Administration" lede={me ? `Session ${String(me.name)}.` : "Équipe et configuration."}>
       <div className="tabs">
@@ -618,9 +709,15 @@ export function AdminBoard() {
         <button className={tab === "config" ? "active" : ""} type="button" onClick={() => setTab("config")}>Configuration globale</button>
         <button className={tab === "stockage" ? "active" : ""} type="button" onClick={() => setTab("stockage")}>Stockage</button>
         <button className={tab === "menu" ? "active" : ""} type="button" onClick={() => setTab("menu")}>Menu</button>
+        <button className={tab === "documents" ? "active" : ""} type="button" onClick={() => setTab("documents")}>Documents</button>
+        <button className={tab === "thirdparty" ? "active" : ""} type="button" onClick={() => setTab("thirdparty")}>Third party</button>
+        <button className={tab === "audit" ? "active" : ""} type="button" onClick={() => setTab("audit")}>Audit</button>
       </div>
       {error ? <p className="error">{error}</p> : null}
       {tab === "menu" ? <MenuAdmin /> : null}
+      {tab === "documents" ? <DocumentCatalog /> : null}
+      {tab === "thirdparty" ? <IntegrationBoard /> : null}
+      {tab === "audit" ? <AuditBoard /> : null}
       {tab === "stockage" ? (
         <form className="form card" onSubmit={(event) => void saveStorage(event)}>
           <h3>Stockage des pièces</h3>
@@ -676,7 +773,6 @@ export function AdminBoard() {
                 />
                 Path-style (requis pour MinIO)
               </label>
-              <p className="label">Même paramétrage que Ballerine : bucket, clé visible, secret, endpoint MinIO et path-style.</p>
             </>
           ) : (
             <p className="label">Les fichiers restent sur le disque de l&apos;API tant qu&apos;aucun S3 ou MinIO n&apos;est enregistré.</p>
@@ -722,61 +818,7 @@ export function AdminBoard() {
           </form>
         </div>
       ) : null}
-      {tab === "equipe" ? (
-        <>
-          <form className="form" onSubmit={(event) => void addMember(event)}>
-            <label>Prénom<input value={givenName} onChange={(event) => setGivenName(event.target.value)} required /></label>
-            <label>Nom<input value={familyName} onChange={(event) => setFamilyName(event.target.value)} required /></label>
-            <label>E-mail<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
-            {passwordMode ? <label>Mot de passe<input type="password" autoComplete="new-password" minLength={8} value={memberPassword} onChange={(event) => setMemberPassword(event.target.value)} required /></label> : null}
-            <div className="checks" role="group" aria-label="Rôles du nouveau membre">
-              {TEAM_ROLES.map(([value, label]) => (
-                <label key={value}>
-                  <input
-                    type="checkbox"
-                    checked={chosen.includes(value)}
-                    onChange={() => setChosen((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value])}
-                  />
-                  {label}
-                </label>
-              ))}
-            </div>
-            <p className="label">{passwordMode ? "L'identifiant est l'e-mail. La personne se connecte avec ce mot de passe." : "L'identifiant est l'e-mail. La personne se connecte ensuite avec Keycloak."}</p>
-            <button type="submit">Ajouter</button>
-          </form>
-          <table className="inbox">
-            <thead><tr><th>Nom</th><th>E-mail</th><th>Rôles</th></tr></thead>
-            <tbody>
-              {rows.map((row) => {
-                const held = roleList(row);
-                return (
-                  <tr key={String(row.id)}>
-                    <td>{String(row.name)}</td>
-                    <td>{String(row.email)}</td>
-                    <td>
-                      <div className="checks" role="group" aria-label={`Rôles de ${String(row.name)}`}>
-                        {TEAM_ROLES.map(([value, label]) => (
-                          <label key={value}>
-                            <input
-                              type="checkbox"
-                              checked={held.includes(value)}
-                              onChange={() => {
-                                const next = held.includes(value) ? held.filter((item) => item !== value) : [...held, value];
-                                void assignRoles(String(row.id), next.filter((item) => item !== "pending"));
-                              }}
-                            />
-                            {label}
-                          </label>
-                        ))}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </>
-      ) : null}
+      {tab === "equipe" ? <TeamAdmin /> : null}
     </Board>
   );
 }
