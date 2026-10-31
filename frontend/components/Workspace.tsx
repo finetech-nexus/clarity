@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import CaseDesk from "./CaseDesk";
 import KycDesk, { RiskScoreChip, VerificationPreview } from "./KycDesk";
@@ -62,13 +62,31 @@ const GROUPS = [
   },
 ];
 
-function isCurrent(pathname: string, href: string, customerKind?: string) {
-  if (pathname.startsWith("/customers/") && customerKind) {
-    if (href === "/businesses") return customerKind === "business";
-    if (href === "/customers") return customerKind !== "business";
+function isCurrent(pathname: string, href: string, customerKind?: string, search = "") {
+  const [path, query = ""] = href.split("?");
+  const currentMenu = new URLSearchParams(search).get("menu");
+  const wantedMenu = new URLSearchParams(query).get("menu");
+  if (pathname.startsWith("/customers/") && customerKind && !wantedMenu) {
+    if (path === "/businesses") return customerKind === "business";
+    if (path === "/customers") return customerKind !== "business";
   }
-  if (href === "/") return pathname === "/";
-  return pathname === href || pathname.startsWith(`${href}/`);
+  if (path === "/") return pathname === "/";
+  if (wantedMenu) return pathname === path && currentMenu === wantedMenu;
+  if (currentMenu && (path === "/verification" || path === "/kyb-verification")) return false;
+  return pathname === path || pathname.startsWith(`${path}/`);
+}
+
+type DeskMenuNav = {
+  id: string;
+  technical_id: string;
+  category: string;
+  label_fr: string;
+  label_en: string;
+};
+
+function menuHref(menu: DeskMenuNav) {
+  const base = menu.category === "kyb" ? "/kyb-verification" : "/verification";
+  return `${base}?menu=${encodeURIComponent(menu.technical_id)}`;
 }
 
 type Customer = {
@@ -119,7 +137,9 @@ const CLIENT_RISK_VALUES = ["low", "medium", "high"] as const;
 
 export default function Workspace({ section, customerId }: { section: string; customerId?: string }) {
   const pathname = usePathname();
+  const search = useSearchParams().toString();
   const { t, locale, setLocale } = useI18n();
+  const [menus, setMenus] = useState<DeskMenuNav[]>([]);
   const [token, setToken] = useState<string | null>(null);
   const [authMode, setAuthMode] = useState<"" | "oidc" | "password">("");
   const [email, setEmail] = useState("");
@@ -158,6 +178,19 @@ export default function Workspace({ section, customerId }: { section: string; cu
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!token) {
+      setMenus([]);
+      return;
+    }
+    const load = () => {
+      void api<DeskMenuNav[]>("/api/clarity/v1/menus").then(setMenus).catch(() => undefined);
+    };
+    load();
+    window.addEventListener("clarity-menus-changed", load);
+    return () => window.removeEventListener("clarity-menus-changed", load);
+  }, [token]);
 
   useEffect(() => {
     if (!token) {
@@ -279,10 +312,19 @@ export default function Workspace({ section, customerId }: { section: string; cu
               <div className="nav-group">{t(group.labelKey)}</div>
               <div className="submenu" aria-label={t(group.labelKey)}>
                 {group.links.map(([href, labelKey]) => (
-                  <Link key={href} href={href} className={isCurrent(pathname, href, String(profile?.kind || "")) ? "active" : ""}>
+                  <Link key={href} href={href} className={isCurrent(pathname, href, String(profile?.kind || ""), search) ? "active" : ""}>
                     {t(labelKey)}
                   </Link>
                 ))}
+                {menus.filter((menu) => menu.category === group.id).map((menu) => {
+                  const href = menuHref(menu);
+                  const label = locale === "fr" ? menu.label_fr : menu.label_en || menu.label_fr;
+                  return (
+                    <Link key={menu.id} href={href} className={isCurrent(pathname, href, String(profile?.kind || ""), search) ? "active" : ""}>
+                      {label}
+                    </Link>
+                  );
+                })}
               </div>
             </div>
           ))}

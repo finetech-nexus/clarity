@@ -1,6 +1,7 @@
 "use client";
 
-import { CSSProperties, FormEvent, useEffect, useState } from "react";
+import { CSSProperties, FormEvent, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import DocumentViewer, { ViewerDocument } from "./DocumentViewer";
 import { api, searchPage } from "../lib/api";
 import { fieldLabel, useI18n } from "../lib/i18n";
@@ -416,20 +417,6 @@ function filtersQuery(name: string, statuses: string[], workflows: string[]) {
   return parts.join(" ");
 }
 
-type WorkflowOption = { key: string; label: string };
-
-function uniqueWorkflowOptions(rows: Array<{ processKey?: string | null; displayName?: string; name?: string; entityType?: string | null }>, kind?: string): WorkflowOption[] {
-  const wanted = kind === "business" ? "business" : kind ? "individual" : "";
-  const seen = new Map<string, string>();
-  for (const row of rows) {
-    const key = String(row.processKey || "").trim();
-    if (!key) continue;
-    if (wanted && row.entityType && row.entityType !== wanted) continue;
-    if (!seen.has(key)) seen.set(key, String(row.displayName || row.name || key));
-  }
-  return [...seen.entries()].map(([key, label]) => ({ key, label })).sort((a, b) => a.label.localeCompare(b.label));
-}
-
 function taskActionLabel(t: (key: string) => string, fundingReview: boolean, reviewState: string) {
   if (fundingReview) {
     if (reviewState === "analystReview") return t("verify.transmitActivation");
@@ -660,6 +647,9 @@ function ActionTiles({
 
 export default function KycDesk({ kind }: { kind?: "business" }) {
   const { t, locale } = useI18n();
+  const menuId = useSearchParams().get("menu") || "";
+  const [menuReady, setMenuReady] = useState(!menuId);
+  const [menuTitle, setMenuTitle] = useState("");
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [selected, setSelected] = useState("");
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -669,7 +659,6 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
   const [nameQuery, setNameQuery] = useState("");
   const [statuses, setStatuses] = useState<string[]>(["active"]);
   const [workflows, setWorkflows] = useState<string[]>([]);
-  const [workflowOptions, setWorkflowOptions] = useState<WorkflowOption[]>([]);
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const [tab, setTab] = useState<TabKey>("submitted");
@@ -684,6 +673,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
   const [approveNote, setApproveNote] = useState("");
   const [partialNote, setPartialNote] = useState("");
   const [freeNote, setFreeNote] = useState("");
+  const previousMenu = useRef<string | null>(null);
 
   async function loadQueue(prefer?: string, nextQuery = query, nextPage = page, append = false) {
     const body = await searchPage<QueueItem>(
@@ -739,15 +729,38 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
   }
 
   useEffect(() => {
-    void api<Array<{ processKey?: string | null; displayName?: string; name?: string; entityType?: string | null }>>("/api/v1/workflow-definition")
-      .then((rows) => setWorkflowOptions(uniqueWorkflowOptions(rows, kind)))
-      .catch(() => setWorkflowOptions([]));
-  }, [kind]);
+    const leftMenu = Boolean(previousMenu.current) && !menuId;
+    previousMenu.current = menuId;
+    if (!menuId) {
+      setMenuTitle("");
+      if (leftMenu) {
+        setWorkflows([]);
+        setQuery(filtersQuery(nameQuery, statuses, []));
+      }
+      setMenuReady(true);
+      return;
+    }
+    setMenuReady(false);
+    void api<{ label_fr: string; label_en: string; process_keys: string[] }>(`/api/clarity/v1/menus/${menuId}`)
+      .then((menu) => {
+        const keys = menu.process_keys || [];
+        setMenuTitle(locale === "fr" ? menu.label_fr : menu.label_en || menu.label_fr);
+        setWorkflows(keys);
+        setPage(0);
+        setQuery(filtersQuery(nameQuery, statuses, keys));
+        setMenuReady(true);
+      })
+      .catch((err: Error) => {
+        setError(err.message);
+        setMenuReady(true);
+      });
+  }, [menuId, locale]);
 
   useEffect(() => {
+    if (!menuReady) return;
     setPage(0);
     void loadQueue(undefined, query, 0, false).catch((err: Error) => setError(err.message));
-  }, [query, kind]);
+  }, [query, kind, menuReady]);
 
   useEffect(() => {
     if (!selected) {
@@ -929,7 +942,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
 
   return (
     <>
-      <h1>{t("verify.title")}</h1>
+      <h1>{menuTitle || t("verify.title")}</h1>
       <p className="lede">{t("verify.lede")}</p>
       {error ? <p className="error">{error}</p> : null}
       {message ? <p className="label">{message}</p> : null}
@@ -964,27 +977,6 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                   }}
                 />
                 {t(`verify.status.${value}`)}
-              </label>
-            ))}
-          </div>
-        </div>
-        <div className="filter-group">
-          <span className="label">{t("verify.filterWorkflow")}</span>
-          <div className="checks" role="group" aria-label={t("verify.filterWorkflow")}>
-            {!workflowOptions.length ? <span className="label">—</span> : null}
-            {workflowOptions.map((option) => (
-              <label key={option.key}>
-                <input
-                  type="checkbox"
-                  checked={workflows.includes(option.key)}
-                  onChange={() => {
-                    const next = workflows.includes(option.key) ? workflows.filter((item) => item !== option.key) : [...workflows, option.key];
-                    setWorkflows(next);
-                    setPage(0);
-                    setQuery(filtersQuery(nameQuery, statuses, next));
-                  }}
-                />
-                {option.label}
               </label>
             ))}
           </div>

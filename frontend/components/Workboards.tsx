@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, ReactNode, useEffect, useState } from "react";
+import { MenuAdmin } from "./MenuAdmin";
 import { QueryStack } from "./QueryStack";
 import { api, searchPage } from "../lib/api";
 
@@ -473,7 +474,7 @@ const EMPTY_STORAGE: StorageConfig = {
 };
 
 export function AdminBoard() {
-  const [tab, setTab] = useState<"equipe" | "config" | "stockage" | "donnees">("equipe");
+  const [tab, setTab] = useState<"equipe" | "config" | "stockage" | "menu">("equipe");
   const [rows, setRows] = useState<Row[]>([]);
   const [me, setMe] = useState<Row | null>(null);
   const [error, setError] = useState("");
@@ -610,40 +611,16 @@ export function AdminBoard() {
       setError(err instanceof Error ? err.message : "Ajout refusé");
     }
   }
-  const [reseedNote, setReseedNote] = useState("");
-  const [reseeding, setReseeding] = useState(false);
-  async function purgeAndReseed() {
-    setError("");
-    setReseedNote("");
-    setReseeding(true);
-    try {
-      const body = await api<Record<string, number>>("/api/clarity/v1/administration/reseed-clients", { method: "POST", body: "{}" });
-      setReseedNote(`Clients et vérifications remplacés : ${body.seeded_customers || 0} dossiers tunisiens.`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Rechargement refusé");
-    } finally {
-      setReseeding(false);
-    }
-  }
   return (
     <Board title="Administration" lede={me ? `Session ${String(me.name)}.` : "Équipe et configuration."}>
       <div className="tabs">
         <button className={tab === "equipe" ? "active" : ""} type="button" onClick={() => setTab("equipe")}>Équipe</button>
         <button className={tab === "config" ? "active" : ""} type="button" onClick={() => setTab("config")}>Configuration globale</button>
         <button className={tab === "stockage" ? "active" : ""} type="button" onClick={() => setTab("stockage")}>Stockage</button>
-        <button className={tab === "donnees" ? "active" : ""} type="button" onClick={() => setTab("donnees")}>Données démo</button>
+        <button className={tab === "menu" ? "active" : ""} type="button" onClick={() => setTab("menu")}>Menu</button>
       </div>
       {error ? <p className="error">{error}</p> : null}
-      {tab === "donnees" ? (
-        <article className="card">
-          <h3>Remplacer clients et vérifications</h3>
-          <p className="label">Supprime les dossiers actuels et charge 100 clients tunisiens avec des scénarios de score différents.</p>
-          {reseedNote ? <p className="label">{reseedNote}</p> : null}
-          <button type="button" disabled={reseeding} onClick={() => void purgeAndReseed()}>
-            {reseeding ? "Rechargement…" : "Purger et recharger 100 cas tunisiens"}
-          </button>
-        </article>
-      ) : null}
+      {tab === "menu" ? <MenuAdmin /> : null}
       {tab === "stockage" ? (
         <form className="form card" onSubmit={(event) => void saveStorage(event)}>
           <h3>Stockage des pièces</h3>

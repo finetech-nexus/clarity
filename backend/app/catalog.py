@@ -444,6 +444,7 @@ def ensure_studio(db: Session) -> None:
     _ensure_workflows(db)
     _ensure_document_schemas(db)
     _ensure_kyc_api_fields(db)
+    _ensure_desk_menus(db)
 
 
 KYC_API_FIELDS = {
@@ -537,6 +538,63 @@ KYB_DOCUMENTS = [
     {"id": "doc-registration", "category": "proof_of_registration", "type": "certificate_of_registration", "issuer": {"country": "ZZ"}, "version": 1, "propertiesSchema": {"type": "object", "properties": {}}, "required": True},
     {"id": "doc-company-address", "category": "proof_of_address", "type": "general_document", "issuer": {"country": "ZZ"}, "version": 1, "propertiesSchema": {"type": "object", "properties": {}}, "required": True},
 ]
+
+
+def _kyc_workflow_ids() -> list[str]:
+    return [
+        WF_KYC_ID,
+        WF_KYC_DEMO_ID,
+        str(uuid.uuid5(uuid.UUID(TENANT_ID), "workflow:kyc_collection_flow")),
+        str(uuid.uuid5(uuid.UUID(TENANT_ID), "workflow:risk-score-improvement")),
+        str(uuid.uuid5(uuid.UUID(TENANT_ID), "workflow:activate-account")),
+    ]
+
+
+def _ensure_desk_menus(db: Session) -> None:
+    specs = [
+        (
+            str(uuid.uuid5(uuid.UUID(TENANT_ID), "desk-menu:verification-kyc")),
+            "verification-kyc",
+            "kyc",
+            "Vérification KYC",
+            "KYC verification",
+            _kyc_workflow_ids(),
+        ),
+        (
+            str(uuid.uuid5(uuid.UUID(TENANT_ID), "desk-menu:verification-kyb")),
+            "verification-kyb",
+            "kyb",
+            "Vérification KYB",
+            "KYB verification",
+            [WF_KYB_ID],
+        ),
+    ]
+    for doc_id, technical_id, category, label_fr, label_en, workflows in specs:
+        if db.get(ConfigDocument, doc_id):
+            continue
+        existing = db.scalar(
+            select(ConfigDocument).where(
+                ConfigDocument.tenant_id == TENANT_ID,
+                ConfigDocument.kind == "desk_menu",
+                ConfigDocument.name == technical_id,
+            )
+        )
+        if existing:
+            continue
+        add_doc(
+            db,
+            TENANT_ID,
+            "desk_menu",
+            technical_id,
+            {
+                "technical_id": technical_id,
+                "category": category,
+                "label_fr": label_fr,
+                "label_en": label_en,
+                "workflows": workflows,
+            },
+            doc_id=doc_id,
+        )
 
 
 def _ensure_document_schemas(db: Session) -> None:

@@ -2462,6 +2462,69 @@ def test_risk_score_includes_manager_confirmed_operations(tmp_path):
         db.close()
 
 
+def test_desk_menus_are_seeded_and_editable(tmp_path):
+    with _client(tmp_path) as client:
+        admin = {"Authorization": f"Bearer {_login(client, ADMIN_EMAIL)}"}
+        analyst = {"Authorization": f"Bearer {_login(client, ANALYST_EMAIL)}"}
+        listed = client.get("/api/clarity/v1/menus", headers=analyst)
+        assert listed.status_code == 200, listed.text
+        by_id = {row["technical_id"]: row for row in listed.json()}
+        assert set(by_id) >= {"verification-kyc", "verification-kyb"}
+        assert by_id["verification-kyc"]["category"] == "kyc"
+        assert by_id["verification-kyc"]["label_fr"] == "Vérification KYC"
+        assert by_id["verification-kyc"]["label_en"] == "KYC verification"
+        assert "clarityKycIndividual" in by_id["verification-kyc"]["process_keys"]
+        assert "risk-score-improvement" in by_id["verification-kyc"]["process_keys"]
+        assert "clarityFundingOrigin" in by_id["verification-kyc"]["process_keys"]
+        assert by_id["verification-kyb"]["category"] == "kyb"
+        assert by_id["verification-kyb"]["process_keys"] == ["clarityKybBusiness"]
+        refused = client.post(
+            "/api/clarity/v1/administration/menus",
+            headers=analyst,
+            json={
+                "technical_id": "aml-watch",
+                "category": "aml",
+                "label_fr": "Surveillance",
+                "label_en": "Monitoring",
+                "workflows": [item["id"] for item in by_id["verification-kyb"]["workflows"]],
+            },
+        )
+        assert refused.status_code == 403
+        created = client.post(
+            "/api/clarity/v1/administration/menus",
+            headers=admin,
+            json={
+                "technical_id": "aml-watch",
+                "category": "aml",
+                "label_fr": "Surveillance",
+                "label_en": "Monitoring",
+                "workflows": [item["id"] for item in by_id["verification-kyb"]["workflows"]],
+            },
+        )
+        assert created.status_code == 201, created.text
+        menu_id = created.json()["id"]
+        updated = client.patch(
+            f"/api/clarity/v1/administration/menus/{menu_id}",
+            headers=admin,
+            json={
+                "technical_id": "aml-watch",
+                "category": "aml",
+                "label_fr": "Surveillance AML",
+                "label_en": "AML monitoring",
+                "workflows": [item["id"] for item in by_id["verification-kyc"]["workflows"][:1]],
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["label_fr"] == "Surveillance AML"
+        fetched = client.get("/api/clarity/v1/menus/aml-watch", headers=analyst)
+        assert fetched.status_code == 200
+        assert fetched.json()["label_en"] == "AML monitoring"
+        deleted = client.delete(f"/api/clarity/v1/administration/menus/{menu_id}", headers=admin)
+        assert deleted.status_code == 200
+        missing = client.get("/api/clarity/v1/menus/aml-watch", headers=analyst)
+        assert missing.status_code == 404
+
+
 def normalize_template(path: str) -> str:
     import re
 

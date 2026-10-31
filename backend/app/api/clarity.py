@@ -7,10 +7,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.catalog import add_doc, get_doc, list_docs
 from app.config import ROOT
 from app.deps import clarity_principal, db_session
 from app.ids import DEMO_PASSWORD
 from app.models import (
+    ConfigDocument,
     Alert,
     AuditEvent,
     CaseComment,
@@ -1222,6 +1224,134 @@ def redeliver_account_hook(workflow_id: str, principal: Principal = Depends(clar
         "error": hook.get("error"),
         "response": hook.get("response"),
     }
+
+
+MENU_CATEGORIES = {"kyc", "kyb", "aml"}
+
+
+def _menu_dto(db: Session, row: ConfigDocument) -> dict:
+    payload = row.payload or {}
+    definitions = []
+    process_keys: list[str] = []
+    for doc_id in payload.get("workflows") or []:
+        found = get_doc(db, row.tenant_id, "workflow_definition", str(doc_id))
+        if not found:
+            continue
+        key = str(found.payload.get("processKey") or found.name)
+        definitions.append(
+            {
+                "id": found.id,
+                "name": found.name,
+                "displayName": found.payload.get("displayName") or found.name,
+                "processKey": key,
+            }
+        )
+        if key not in process_keys:
+            process_keys.append(key)
+    return {
+        "id": row.id,
+        "technical_id": payload.get("technical_id") or row.name,
+        "category": payload.get("category"),
+        "label_fr": payload.get("label_fr") or "",
+        "label_en": payload.get("label_en") or "",
+        "workflows": definitions,
+        "process_keys": process_keys,
+    }
+
+
+def _menu_by_technical_id(db: Session, tenant_id: str, technical_id: str) -> ConfigDocument | None:
+    return db.scalar(
+        select(ConfigDocument).where(
+            ConfigDocument.tenant_id == tenant_id,
+            ConfigDocument.kind == "desk_menu",
+            ConfigDocument.name == technical_id,
+        )
+    )
+
+
+def _clean_menu(db: Session, tenant_id: str, body: dict, current_id: str | None = None) -> dict:
+    technical_id = str(body.get("technical_id") or "").strip().lower()
+    category = str(body.get("category") or "").strip().lower()
+    label_fr = str(body.get("label_fr") or "").strip()
+    label_en = str(body.get("label_en") or "").strip()
+    workflow_ids = body.get("workflows") or []
+    if not technical_id.replace("-", "").isalnum() or not technical_id:
+        raise clarity_error(400, "invalid", "L'identifiant technique ne peut contenir que des lettres, chiffres et tirets.")
+    if category not in MENU_CATEGORIES:
+        raise clarity_error(400, "invalid", "La catégorie doit être KYC, KYB ou AML.")
+    if not label_fr or not label_en:
+        raise clarity_error(400, "invalid", "Les libellés français et anglais sont requis.")
+    if not isinstance(workflow_ids, list) or not workflow_ids:
+        raise clarity_error(400, "invalid", "Choisissez au moins un workflow.")
+    cleaned: list[str] = []
+    for doc_id in workflow_ids:
+        found = get_doc(db, tenant_id, "workflow_definition", str(doc_id))
+        if not found:
+            raise clarity_error(400, "invalid", "Un workflow sélectionné n'existe pas.")
+        if found.id not in cleaned:
+            cleaned.append(found.id)
+    other = _menu_by_technical_id(db, tenant_id, technical_id)
+    if other and other.id != current_id:
+        raise clarity_error(409, "conflict", "Cet identifiant technique est déjà utilisé.")
+    return {
+        "technical_id": technical_id,
+        "category": category,
+        "label_fr": label_fr,
+        "label_en": label_en,
+        "workflows": cleaned,
+    }
+
+
+@router.get("/menus")
+def desk_menus(principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    return [_menu_dto(db, row) for row in list_docs(db, principal.tenant_id, "desk_menu")]
+
+
+@router.get("/menus/{technical_id}")
+def desk_menu(technical_id: str, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    row = _menu_by_technical_id(db, principal.tenant_id, technical_id)
+    if not row:
+        raise clarity_error(404, "not_found", "Menu introuvable.")
+    return _menu_dto(db, row)
+
+
+@router.post("/administration/menus", status_code=201)
+def create_desk_menu(body: dict, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    if not principal.allows("admin"):
+        raise clarity_error(403, "forbidden", "Réservé à l'administration.")
+    payload = _clean_menu(db, principal.tenant_id, body)
+    row = add_doc(db, principal.tenant_id, "desk_menu", payload["technical_id"], payload)
+    audit(db, principal.tenant_id, actor_label(principal), "menu.create", "desk_menu", row.id, {"technical_id": payload["technical_id"]})
+    return _menu_dto(db, row)
+
+
+@router.patch("/administration/menus/{menu_id}")
+def update_desk_menu(menu_id: str, body: dict, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    if not principal.allows("admin"):
+        raise clarity_error(403, "forbidden", "Réservé à l'administration.")
+    row = get_doc(db, principal.tenant_id, "desk_menu", menu_id)
+    if not row:
+        raise clarity_error(404, "not_found", "Menu introuvable.")
+    payload = _clean_menu(db, principal.tenant_id, body, row.id)
+    from sqlalchemy.orm.attributes import flag_modified
+
+    row.name = payload["technical_id"]
+    row.payload = payload
+    flag_modified(row, "payload")
+    audit(db, principal.tenant_id, actor_label(principal), "menu.update", "desk_menu", row.id, {"technical_id": payload["technical_id"]})
+    return _menu_dto(db, row)
+
+
+@router.delete("/administration/menus/{menu_id}")
+def delete_desk_menu(menu_id: str, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    if not principal.allows("admin"):
+        raise clarity_error(403, "forbidden", "Réservé à l'administration.")
+    row = get_doc(db, principal.tenant_id, "desk_menu", menu_id)
+    if not row:
+        raise clarity_error(404, "not_found", "Menu introuvable.")
+    db.delete(row)
+    audit(db, principal.tenant_id, actor_label(principal), "menu.delete", "desk_menu", menu_id, {"technical_id": row.name})
+    return {"deleted": True}
 
 
 @router.get("/administration/users")
