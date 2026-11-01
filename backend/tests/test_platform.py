@@ -1562,6 +1562,35 @@ def test_admin_can_purge_clients_and_verifications(tmp_path):
         assert any("Ben" in row["display_name"] or "Trabelsi" in row["display_name"] or "Gharbi" in row["display_name"] for row in items)
 
 
+def test_admin_can_delete_a_single_workflow(tmp_path):
+    with _client(tmp_path) as client:
+        headers = {"Authorization": f"Bearer {BALLERINE_API_KEY}"}
+        entity = {
+            "type": "individual",
+            "id": "delete-workflow-user",
+            "data": {"firstName": "Omar", "lastName": "Delete", "dateOfBirth": "1990-01-01"},
+        }
+        started = client.post(
+            "/api/v1/external/workflows/run",
+            headers=headers,
+            json={"workflowId": "kyc_collection_flow", "context": {"entity": entity, "documents": []}},
+        )
+        assert started.status_code == 200, started.text
+        runtime_id = started.json()["workflowRuntimeId"]
+        customer_id = started.json()["ballerineEntityId"]
+        analyst = {"Authorization": f"Bearer {_login(client, ANALYST_EMAIL)}"}
+        denied = client.delete(f"/api/clarity/v1/desks/kyc/{runtime_id}", headers=analyst)
+        assert denied.status_code == 403
+        admin = {"Authorization": f"Bearer {_login(client, ADMIN_EMAIL)}"}
+        deleted = client.delete(f"/api/clarity/v1/desks/kyc/{runtime_id}", headers=admin)
+        assert deleted.status_code == 200, deleted.text
+        assert deleted.json()["runtime_id"] == runtime_id
+        missing = client.get(f"/api/clarity/v1/desks/kyc/{runtime_id}", headers=analyst)
+        assert missing.status_code == 404
+        still_there = client.get(f"/api/clarity/v1/customers/{customer_id}", headers=analyst)
+        assert still_there.status_code == 200, still_there.text
+
+
 def test_oidc_user_stays_pending_until_an_admin_assigns_a_role(tmp_path):
     from datetime import datetime, timedelta, timezone
     from urllib.parse import parse_qs, urlparse

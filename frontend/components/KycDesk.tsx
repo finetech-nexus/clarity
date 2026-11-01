@@ -519,6 +519,7 @@ function ActionTiles({
   canDecide,
   canApprove,
   finished,
+  isAdmin,
   rejectNote,
   approveNote,
   partialNote,
@@ -526,6 +527,7 @@ function ActionTiles({
   onApproveNote,
   onPartialNote,
   onDecide,
+  onDeleteWorkflow,
   resubmitId,
   complementTarget,
   askReason,
@@ -541,6 +543,7 @@ function ActionTiles({
   canDecide: boolean;
   canApprove: boolean;
   finished: boolean;
+  isAdmin: boolean;
   rejectNote: string;
   approveNote: string;
   partialNote: string;
@@ -548,6 +551,7 @@ function ActionTiles({
   onApproveNote: (value: string) => void;
   onPartialNote: (value: string) => void;
   onDecide: (action: "approve" | "reject" | "approve-partial", note: string) => void;
+  onDeleteWorkflow: () => void;
   resubmitId: string;
   complementTarget: string;
   askReason: string;
@@ -641,6 +645,17 @@ function ActionTiles({
           ) : null}
         </div>
       )}
+      {isAdmin ? (
+        <div className="action-grid">
+          <article className="card action-tile">
+            <h3>{t("verify.deleteWorkflow")}</h3>
+            <p className="label">{t("verify.deleteWorkflowHelp")}</p>
+            <div className="form">
+              <button className="ghost" type="button" onClick={onDeleteWorkflow}>{t("verify.deleteWorkflow")}</button>
+            </div>
+          </article>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -673,7 +688,17 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
   const [approveNote, setApproveNote] = useState("");
   const [partialNote, setPartialNote] = useState("");
   const [freeNote, setFreeNote] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
   const previousMenu = useRef<string | null>(null);
+
+  useEffect(() => {
+    void api<{ role?: string; roles?: string[] }>("/api/clarity/v1/me")
+      .then((me) => {
+        const roles = Array.isArray(me.roles) ? me.roles.map(String) : [];
+        setIsAdmin(me.role === "admin" || roles.includes("admin"));
+      })
+      .catch(() => setIsAdmin(false));
+  }, []);
 
   async function loadQueue(prefer?: string, nextQuery = query, nextPage = page, append = false) {
     const body = await searchPage<QueueItem>(
@@ -774,6 +799,21 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
       })
       .catch((err: Error) => setError(err.message));
   }, [selected]);
+
+  async function deleteWorkflow() {
+    if (!selected) return;
+    if (!window.confirm(t("verify.deleteWorkflowConfirm"))) return;
+    setError("");
+    try {
+      await api(`/api/clarity/v1/desks/kyc/${selected}`, { method: "DELETE" });
+      setDetail(null);
+      setSelected("");
+      setMessage(t("verify.deleteWorkflowDone"));
+      await loadQueue();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("verify.deleteWorkflow"));
+    }
+  }
 
   async function decideCase(action: "approve" | "reject" | "revision" | "approve-partial", note = "") {
     setError("");
@@ -1212,6 +1252,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                   canDecide={Boolean(canDecide)}
                   canApprove={Boolean(canApprove)}
                   finished={Boolean(finished)}
+                  isAdmin={isAdmin}
                   rejectNote={rejectNote}
                   approveNote={approveNote}
                   partialNote={partialNote}
@@ -1219,6 +1260,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                   onApproveNote={setApproveNote}
                   onPartialNote={setPartialNote}
                   onDecide={(action, note) => void decideCase(action, note)}
+                  onDeleteWorkflow={() => void deleteWorkflow()}
                   resubmitId={resubmitId}
                   complementTarget={complementTarget}
                   askReason={askReason}
@@ -1263,6 +1305,16 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
   const [approveNote, setApproveNote] = useState("");
   const [partialNote, setPartialNote] = useState("");
   const [freeNote, setFreeNote] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    void api<{ role?: string; roles?: string[] }>("/api/clarity/v1/me")
+      .then((me) => {
+        const roles = Array.isArray(me.roles) ? me.roles.map(String) : [];
+        setIsAdmin(me.role === "admin" || roles.includes("admin"));
+      })
+      .catch(() => setIsAdmin(false));
+  }, []);
 
   useEffect(() => {
     setDetail(null);
@@ -1342,6 +1394,19 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
       onChanged?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Décision refusée");
+    }
+  }
+
+  async function deleteWorkflow() {
+    if (!window.confirm(t("verify.deleteWorkflowConfirm"))) return;
+    setError("");
+    try {
+      await api(`/api/clarity/v1/desks/kyc/${runtimeId}`, { method: "DELETE" });
+      setDetail(null);
+      setMessage(t("verify.deleteWorkflowDone"));
+      onChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("verify.deleteWorkflow"));
     }
   }
 
@@ -1518,6 +1583,7 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
               canDecide={Boolean(canDecide)}
               canApprove={Boolean(canApprove)}
               finished={Boolean(finished)}
+              isAdmin={isAdmin}
               rejectNote={rejectNote}
               approveNote={approveNote}
               partialNote={partialNote}
@@ -1525,6 +1591,7 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
               onApproveNote={setApproveNote}
               onPartialNote={setPartialNote}
               onDecide={(action, note) => void decideCase(action, note)}
+              onDeleteWorkflow={() => void deleteWorkflow()}
               resubmitId={resubmitId}
               complementTarget={complementTarget}
               askReason={askReason}

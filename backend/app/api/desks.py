@@ -44,6 +44,7 @@ from app.services import (
     case_payload,
     clarity_error,
     customer_view,
+    delete_workflow,
     document_labels,
     document_record,
     refuse_verification,
@@ -700,6 +701,13 @@ def decide_kyc(runtime_id: str, body: dict, request: Request, principal: Princip
     else:
         advance_workflow(db, request.app.state.engine, tenant, principal, workflow, action, rationale)
     return kyc_case(runtime_id, principal, db)
+
+
+@router.delete("/kyc/{runtime_id}")
+def delete_kyc(runtime_id: str, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    """Admin-only: permanently remove one verification dossier from the desk."""
+    workflow = _workflow(db, principal, runtime_id)
+    return delete_workflow(db, principal, workflow)
 
 
 @router.post("/kyc/{runtime_id}/document-requests")

@@ -1505,6 +1505,64 @@ def purge_clients(db: Session, tenant_id: str) -> dict:
     return {"customers": len(customer_ids), "verifications": len(workflow_ids), "files": removed_files}
 
 
+def delete_workflow(db: Session, principal: Principal, workflow: WorkflowInstance) -> dict:
+    """Admin-only: remove one verification dossier without deleting the customer."""
+    if not principal.allows("admin"):
+        raise clarity_error(403, "forbidden", "Seul un administrateur peut supprimer un dossier.")
+    workflow_id = workflow.id
+    runtime_id = workflow.ballerine_runtime_id
+    customer_id = workflow.customer_id
+    documents = db.scalars(
+        select(IdentityDocument).where(
+            IdentityDocument.tenant_id == principal.tenant_id,
+            IdentityDocument.workflow_id == workflow_id,
+        )
+    ).all()
+    removed_files = 0
+    for document in documents:
+        if document.storage_path:
+            path = Path(document.storage_path)
+            if path.is_file():
+                path.unlink()
+                removed_files += 1
+        db.delete(document)
+    db.execute(delete(WorkflowTask).where(WorkflowTask.workflow_id == workflow_id))
+    db.execute(delete(Approval).where(Approval.workflow_id == workflow_id))
+    for cycle in db.scalars(select(KycCycle).where(KycCycle.workflow_id == workflow_id)).all():
+        if cycle.status == "pending":
+            db.delete(cycle)
+        else:
+            cycle.workflow_id = None
+    remaining = None
+    if customer_id:
+        remaining = db.scalar(
+            select(WorkflowInstance).where(
+                WorkflowInstance.customer_id == customer_id,
+                WorkflowInstance.id != workflow_id,
+                WorkflowInstance.status == "active",
+            )
+        )
+    db.delete(workflow)
+    customer = db.get(Customer, customer_id) if customer_id else None
+    if (
+        customer is not None
+        and remaining is None
+        and customer.canonical_status
+        in {"in_review", "collecting", "screening_pending", "documents_requested", "remediation"}
+    ):
+        customer.canonical_status = "draft"
+    audit(
+        db,
+        principal.tenant_id,
+        actor_label(principal),
+        "workflow.delete",
+        "workflow",
+        workflow_id,
+        {"runtime_id": runtime_id, "customer_id": customer_id, "files": removed_files},
+    )
+    return {"id": workflow_id, "runtime_id": runtime_id, "files": removed_files}
+
+
 def _progress_verification(db: Session, engine, tenant: Tenant, customer: Customer, workflow: WorkflowInstance) -> None:
     _advance_if_ready(db, engine, workflow)
     _advance_if_ready(db, engine, workflow)
