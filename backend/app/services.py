@@ -1515,7 +1515,12 @@ def _progress_verification(db: Session, engine, tenant: Tenant, customer: Custom
         assess_customer(db, tenant, customer, source="ruleset")
         if moved:
             _advance_if_ready(db, engine, workflow)
-        customer.canonical_status = "in_review"
+        # Only "Revue du score de risque" drives in_review — unfinished
+        # "Collecte des informations" must stay collecting.
+        if workflow.definition_key == "risk-score-improvement":
+            customer.canonical_status = "in_review"
+        elif customer.canonical_status not in {"approved", "approved-partially", "rejected"}:
+            customer.canonical_status = "collecting"
     else:
         customer.canonical_status = "screening_pending"
         assess_customer(db, tenant, customer, source="ruleset")
@@ -2905,7 +2910,14 @@ def disposition_match(db: Session, tenant: Tenant, principal: Principal, match: 
                         )
                     )
                     if workflow:
-                        customer.canonical_status = "in_review"
+                        if workflow.definition_key == "risk-score-improvement":
+                            customer.canonical_status = "in_review"
+                        elif (
+                            workflow.definition_key in {"clarityKycIndividual", "clarityKybBusiness"}
+                            and customer.canonical_status
+                            not in {"approved", "approved-partially", "rejected"}
+                        ):
+                            customer.canonical_status = "collecting"
     audit(db, tenant.id, actor_label(principal), "screening.disposition", "screening_match", match.id, {"status": status})
     return match
 

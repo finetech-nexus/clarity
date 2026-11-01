@@ -366,7 +366,11 @@ def update_workflow(
     bind_workflow_documents(db, workflow, workflow.context)
     customer = db.get(Customer, workflow.customer_id) if workflow.customer_id else None
     page = str(body.get("state") or context.get("collectionState") or "").replace("_", "-").lower()
-    if customer is not None and workflow.state == "collect" and page in {"check-selfie", "manual-review", "done", "completed", "loading"}:
+    # Mid-collection pages (check-selfie / loading / manual-review) must not
+    # advance past collect or flip canonical_status to in_review. Only terminal
+    # collection pages — or an already-started risk-score review — may progress.
+    may_progress = page in {"done", "completed"} or workflow.definition_key == "risk-score-improvement"
+    if customer is not None and workflow.state == "collect" and may_progress:
         _progress_verification(db, request.app.state.engine, _tenant(db, principal), customer, workflow)
     return workflow_list_item(workflow, customer)
 
