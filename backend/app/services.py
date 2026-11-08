@@ -2166,6 +2166,21 @@ def authenticity_for_desk(documents: list[IdentityDocument], face: dict | None =
                     "detail": str(block.get("detail") or ""),
                 }
             )
+        findings = auth.get("passiveFindings") if isinstance(auth.get("passiveFindings"), list) else []
+        for item in findings:
+            if not isinstance(item, dict):
+                continue
+            finding_key = str(item.get("key") or "")
+            finding_status = str(item.get("status") or "")
+            if not finding_key or not finding_status:
+                continue
+            checks.append(
+                {
+                    "key": finding_key,
+                    "status": finding_status,
+                    "detail": str(item.get("detail") or ""),
+                }
+            )
         if not auth and ocr.get("mrz") is False and document.doc_type == "passport" and not _document_is_chip_or_french_id(document):
             text = str(ocr.get("extracted_text") or "")
             checks.append(
@@ -2189,6 +2204,8 @@ def authenticity_for_desk(documents: list[IdentityDocument], face: dict | None =
             "manual_review": manual,
             "reasons": [str(item) for item in (auth.get("reasons") or []) if isinstance(item, str)],
             "document_number": auth.get("documentNumber") or "",
+            "chip_mrz": str((auth.get("chipRead") or {}).get("mrz") or "") if isinstance(auth.get("chipRead"), dict) else "",
+            "chip_files": str((auth.get("chipRead") or {}).get("files") or "") if isinstance(auth.get("chipRead"), dict) else "",
             "checks": checks,
             "side": side,
         }

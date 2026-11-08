@@ -99,6 +99,8 @@ type Detail = {
     manual_review: boolean;
     reasons: string[];
     document_number?: string;
+    chip_mrz?: string;
+    chip_files?: string;
     checks: Array<{ key: string; status: string; detail?: string }>;
   }>;
   steps?: Array<{ key: string; label: string; status: "done" | "current" | "upcoming" }>;
@@ -236,24 +238,22 @@ function AuthenticityPanel({ detail }: { detail: Detail }) {
           <p className="label">{t("verify.authenticityTechnology")}</p>
           <p>{t(`verify.technology.${row.technology}`)}</p>
           {row.document_number ? <p className="label">{t("verify.authenticityNumber")} {row.document_number}</p> : null}
+          {row.chip_mrz ? <p className="label">{t("verify.authenticityChip")} {row.chip_mrz}</p> : null}
+          {row.chip_files ? <p className="label">{t("verify.authenticityChipFiles")} {row.chip_files}</p> : null}
           {row.manual_review ? <p className="factor">{t("verify.authenticityManual")}</p> : null}
           <div className="check-list">
             {row.checks.map((check) => (
               <div className="check-row" key={check.key}>
-                <span>{t(`verify.check.${check.key}`)}</span>
+                <span>
+                  {t(`verify.check.${check.key}`)}
+                  {check.detail ? <span className="factor"> {check.detail}</span> : null}
+                </span>
                 <strong className={authenticityStatusClass(check.status)}>
                   {t(`verify.checkStatus.${check.status}`)}
                 </strong>
               </div>
             ))}
           </div>
-          {row.checks.some((check) => check.detail) ? (
-            <ul className="factors">
-              {row.checks.filter((check) => check.detail).map((check) => (
-                <li key={`${check.key}-detail`}>{check.detail}</li>
-              ))}
-            </ul>
-          ) : null}
         </article>
       ))}
     </div>
