@@ -13,6 +13,7 @@ onnxruntime==1.22.1
 opencv-python-headless>=4.10,<4.12
 numpy>=1.26,<2.3
 Pillow>=10
+zxing-cpp>=2.3,<3
 jsonschema>=4.23
 pytest>=8.3
 pyjwt>=2.9

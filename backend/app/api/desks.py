@@ -791,6 +791,49 @@ def match_faces(runtime_id: str, principal: Principal = Depends(clarity_principa
     return kyc_case(runtime_id, principal, db)
 
 
+@router.post("/kyc/{runtime_id}/barcode")
+def read_barcode(runtime_id: str, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    from app.barcode import barcode_result, decode_barcode
+    from app.face import _file_bytes
+    from sqlalchemy.orm.attributes import flag_modified
+
+    workflow = _workflow(db, principal, runtime_id)
+    documents = _case_documents(db, workflow)
+    identity = [
+        document
+        for document in documents
+        if document.doc_type in {"id_card", "id-card", "drivers_license"} and document.status != "requested"
+    ]
+    identity.sort(key=lambda document: 0 if (document.properties or {}).get("side") == "back" else 1)
+    payload = ""
+    for document in identity:
+        data = _file_bytes(document, db=db)
+        if not data:
+            continue
+        payload = decode_barcode(data) or ""
+        if payload:
+            break
+    if not payload:
+        from app.services import clarity_error
+
+        raise clarity_error(422, "barcode_missing", "Aucun code-barres lisible sur la photo du verso.")
+    expected = ""
+    for document in identity:
+        auth = (document.properties or {}).get("authenticity")
+        if isinstance(auth, dict) and auth.get("documentNumber"):
+            expected = str(auth.get("documentNumber"))
+            break
+    result = barcode_result(payload, expected)
+    for document in identity:
+        properties = dict(document.properties or {})
+        auth = dict(properties.get("authenticity") or {})
+        auth["barcode"] = result
+        properties["authenticity"] = auth
+        document.properties = properties
+        flag_modified(document, "properties")
+    return kyc_case(runtime_id, principal, db)
+
+
 @router.put("/kyc/face-threshold")
 def update_face_threshold(body: dict, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
     saved = set_face_threshold(db, principal.tenant_id, body.get("threshold"))

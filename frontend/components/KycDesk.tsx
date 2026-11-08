@@ -219,7 +219,19 @@ function authenticityStatusClass(status: string) {
   return "check-wait";
 }
 
-function AuthenticityPanel({ detail }: { detail: Detail }) {
+function AuthenticityPanel({
+  detail,
+  onFace,
+  onBarcode,
+  faceBusy,
+  barcodeBusy,
+}: {
+  detail: Detail;
+  onFace?: () => void;
+  onBarcode?: () => void;
+  faceBusy?: boolean;
+  barcodeBusy?: boolean;
+}) {
   const { t } = useI18n();
   const rows = detail.authenticity || [];
   if (!rows.length) {
@@ -247,6 +259,16 @@ function AuthenticityPanel({ detail }: { detail: Detail }) {
                 <span>
                   {t(`verify.check.${check.key}`)}
                   {check.detail ? <span className="factor"> {check.detail}</span> : null}
+                  {check.key === "barcode" && onBarcode ? (
+                    <button className="ghost" type="button" disabled={barcodeBusy} onClick={onBarcode}>
+                      {barcodeBusy ? t("verify.readingBarcode") : t("verify.runBarcode")}
+                    </button>
+                  ) : null}
+                  {check.key === "faceMatch" && onFace ? (
+                    <button className="ghost" type="button" disabled={faceBusy} onClick={onFace}>
+                      {faceBusy ? t("verify.faceComparing") : t("verify.runFace")}
+                    </button>
+                  ) : null}
                 </span>
                 <strong className={authenticityStatusClass(check.status)}>
                   {t(`verify.checkStatus.${check.status}`)}
@@ -740,6 +762,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
   const [complementTarget, setComplementTarget] = useState("");
   const [askReason, setAskReason] = useState("");
   const [comparing, setComparing] = useState(false);
+  const [readingBarcode, setReadingBarcode] = useState(false);
   const [faceTried, setFaceTried] = useState("");
   const [rejectNote, setRejectNote] = useState("");
   const [approveNote, setApproveNote] = useState("");
@@ -996,6 +1019,21 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
     }
   }
 
+  async function readBarcode() {
+    if (!selected) return;
+    setError("");
+    setReadingBarcode(true);
+    try {
+      const refreshed = await api<Detail>(`/api/clarity/v1/desks/kyc/${selected}/barcode`, { method: "POST" });
+      setDetail(refreshed);
+      applyCaseColors(selected, refreshed);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Lecture du code-barres refusée");
+    } finally {
+      setReadingBarcode(false);
+    }
+  }
+
   async function decideDocument(id: string, decision: "approve" | "reject" | "revision") {
     setError("");
     try {
@@ -1249,7 +1287,15 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                 ) : <p className="label">{t("verify.noIdentity")}</p>}
               </article>
             ) : null}
-            {tab === "authenticity" ? <AuthenticityPanel detail={detail} /> : null}
+            {tab === "authenticity" ? (
+              <AuthenticityPanel
+                detail={detail}
+                faceBusy={comparing}
+                barcodeBusy={readingBarcode}
+                onFace={() => void compareFaces()}
+                onBarcode={() => void readBarcode()}
+              />
+            ) : null}
             {tab === "face" ? (
               <article className="card">
                 <FaceScale score={detail.face_match?.score} threshold={detail.face_threshold ?? detail.face_match?.threshold ?? 40} />
@@ -1354,6 +1400,7 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
   const [message, setMessage] = useState("");
   const [tab, setTab] = useState<TabKey>("submitted");
   const [comparing, setComparing] = useState(false);
+  const [readingBarcode, setReadingBarcode] = useState(false);
   const [faceTried, setFaceTried] = useState("");
   const [resubmitId, setResubmitId] = useState("");
   const [complementTarget, setComplementTarget] = useState("");
@@ -1406,6 +1453,19 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
       setError(err instanceof Error ? err.message : "Comparaison des visages refusée");
     } finally {
       setComparing(false);
+    }
+  }
+
+  async function readBarcode() {
+    setError("");
+    setReadingBarcode(true);
+    try {
+      setDetail(await api<Detail>(`/api/clarity/v1/desks/kyc/${runtimeId}/barcode`, { method: "POST" }));
+      onChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Lecture du code-barres refusée");
+    } finally {
+      setReadingBarcode(false);
     }
   }
 
@@ -1580,7 +1640,15 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
             ) : <p className="label">{t("verify.noIdentity")}</p>}
           </article>
         ) : null}
-        {tab === "authenticity" ? <AuthenticityPanel detail={detail} /> : null}
+        {tab === "authenticity" ? (
+          <AuthenticityPanel
+            detail={detail}
+            faceBusy={comparing}
+            barcodeBusy={readingBarcode}
+            onFace={() => void compareFaces()}
+            onBarcode={() => void readBarcode()}
+          />
+        ) : null}
         {tab === "face" ? (
           <article className="card">
             <FaceScale score={detail.face_match?.score} threshold={detail.face_threshold ?? detail.face_match?.threshold ?? 40} />
