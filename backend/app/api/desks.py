@@ -590,7 +590,7 @@ def kyc_queue(q: str = "", kind: str = "", limit: int | None = None, offset: int
 @router.get("/kyc/{runtime_id}")
 def kyc_case(runtime_id: str, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
     from app.models import RiskAssessment
-    from app.services import RISK_METHODOLOGY, assess_customer
+    from app.services import RISK_METHODOLOGY, assess_customer, authenticity_for_desk
 
     workflow = _workflow(db, principal, runtime_id)
     customer = db.get(Customer, workflow.customer_id) if workflow.customer_id else None
@@ -626,6 +626,7 @@ def kyc_case(runtime_id: str, principal: Principal = Depends(clarity_principal),
         "notes": list((workflow.context or {}).get("notes") or []),
         "face_match": stored_face_match(db, workflow),
         "face_threshold": face_threshold(db, principal.tenant_id),
+        "authenticity": authenticity_for_desk(documents, stored_face_match(db, workflow)),
     }
 
 

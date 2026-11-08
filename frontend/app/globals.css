@@ -299,6 +299,11 @@ button.active, button.active:hover {
 .stepper .dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: currentColor; flex: none; }
 .error { color: var(--danger); }
 .factor { color: var(--muted); font-size: 0.92rem; margin: 0.35rem 0; }
+.check-list { display: flex; flex-direction: column; margin-top: 0.6rem; }
+.check-row { display: flex; justify-content: space-between; gap: 1rem; padding: 0.45rem 0; border-bottom: 1px solid var(--line); }
+.check-ok { color: #157347; }
+.check-bad { color: #b42318; }
+.check-wait { color: #b54708; }
 .kyc-shell { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 1rem; align-items: start; }
 .queue-panel, .case-panel {
   display: grid;

@@ -2110,14 +2110,154 @@ def _document_is_chip_or_french_id(document: IdentityDocument) -> bool:
     return False
 
 
-def _document_authenticity_factors(documents: list[IdentityDocument]) -> list[dict]:
-    """Authenticity check is always OK for now; the real mechanism will come later.
+_AUTH_IDENTITY_TYPES = {"passport", "id_card", "id-card", "drivers_license", "residence_permit"}
+_AUTH_CHECKS = (
+    "mrz",
+    "bacPace",
+    "passiveAuthentication",
+    "chipAuthentication",
+    "activeAuthentication",
+    "barcode",
+    "imageTampering",
+    "faceMatch",
+    "liveness",
+)
 
-    Missing MRZ/barcode on French or chip identity cards is considered normal and must not
-    raise points when the check is re-enabled.
+
+def _auth_block(auth: dict, key: str) -> dict:
+    block = auth.get(key)
+    return block if isinstance(block, dict) else {}
+
+
+def _auth_status(auth: dict, key: str) -> str:
+    return str(_auth_block(auth, key).get("status") or "not_performed")
+
+
+def _factor(code: str, points: int, explanation: str) -> dict:
+    return {"code": code, "points": points, "explanation": explanation}
+
+
+def authenticity_for_desk(documents: list[IdentityDocument], face: dict | None = None) -> list[dict]:
+    """Document authenticity rows for the analyst, including document type and technology."""
+    rows: dict[str, dict] = {}
+    for document in documents:
+        if document.doc_type not in _AUTH_IDENTITY_TYPES:
+            continue
+        props = document.properties if isinstance(document.properties, dict) else {}
+        auth = props.get("authenticity") if isinstance(props.get("authenticity"), dict) else {}
+        ocr = props.get("ocr") if isinstance(props.get("ocr"), dict) else {}
+        if not auth and not ocr:
+            continue
+        technology = str(auth.get("technology") or ("unknown" if not auth else ""))
+        document_type = str(auth.get("documentType") or document.doc_type)
+        checks = []
+        for key in _AUTH_CHECKS:
+            block = dict(_auth_block(auth, key))
+            status = str(block.get("status") or "")
+            if key == "faceMatch" and face:
+                status = "passed" if face.get("match") else "failed" if face.get("match") is False else "not_performed"
+                block["detail"] = face.get("detail") or block.get("detail")
+            if not status and not auth:
+                continue
+            checks.append(
+                {
+                    "key": key,
+                    "status": status or "not_performed",
+                    "detail": str(block.get("detail") or ""),
+                }
+            )
+        if not auth and ocr.get("mrz") is False and document.doc_type == "passport" and not _document_is_chip_or_french_id(document):
+            text = str(ocr.get("extracted_text") or "")
+            checks.append(
+                {
+                    "key": "mrz",
+                    "status": "failed" if _looks_like_mrz_text(text) else "incomplete",
+                    "detail": text[:180],
+                }
+            )
+            technology = technology or "nfcElectronic"
+        if not checks:
+            continue
+        manual = bool(auth.get("manualReview")) or any(
+            item["status"] in {"failed", "incomplete"} for item in checks if item["key"] != "faceMatch"
+        )
+        side = str(props.get("side") or "front")
+        row = {
+            "document_id": document.id,
+            "document_type": document_type,
+            "technology": technology or "unknown",
+            "manual_review": manual,
+            "reasons": [str(item) for item in (auth.get("reasons") or []) if isinstance(item, str)],
+            "document_number": auth.get("documentNumber") or "",
+            "checks": checks,
+            "side": side,
+        }
+        previous = rows.get(document_type)
+        if previous and side == "back":
+            continue
+        rows[document_type] = row
+    return list(rows.values())
+
+
+def _document_authenticity_factors(documents: list[IdentityDocument]) -> list[dict]:
+    """Score document authenticity. French chip cards without an MRZ stay quiet.
+
+    A client report (technology, MRZ, BAC/PACE, barcode) is preferred. Older dossiers
+    still flag a passport whose OCR says the MRZ did not verify.
     """
-    _ = documents
-    return []
+    factors: list[dict] = []
+    seen: set[str] = set()
+
+    def add(code: str, points: int, explanation: str) -> None:
+        if code in seen:
+            return
+        seen.add(code)
+        factors.append(_factor(code, points, explanation))
+
+    for document in documents:
+        if document.doc_type not in _AUTH_IDENTITY_TYPES:
+            continue
+        props = document.properties if isinstance(document.properties, dict) else {}
+        auth = props.get("authenticity") if isinstance(props.get("authenticity"), dict) else None
+        if auth:
+            technology = str(auth.get("technology") or "")
+            doc_type = str(auth.get("documentType") or document.doc_type)
+            if _auth_status(auth, "mrz") == "failed":
+                add("document_mrz_invalid", 16, f"MRZ check digits failed on {doc_type}.")
+            if technology == "nfcElectronic" and _auth_status(auth, "bacPace") in {"failed", "incomplete", "not_performed"}:
+                add("document_chip_access", 18, f"BAC/PACE did not establish chip access on {doc_type}.")
+            if technology == "nfcElectronic" and _auth_status(auth, "passiveAuthentication") == "failed":
+                add("document_passive_auth", 20, "Passive authentication failed. Issuer trust is not proven.")
+            if technology == "nfcElectronic" and _auth_status(auth, "chipAuthentication") == "failed":
+                add("document_chip_clone", 22, "Chip authentication failed. The chip may be cloned.")
+            if technology == "nfcElectronic" and _auth_status(auth, "activeAuthentication") == "failed":
+                add("document_chip_clone", 22, "Active authentication failed. The chip may be cloned.")
+            if _auth_status(auth, "barcode") == "failed":
+                add("document_barcode_mismatch", 18, "Barcode number does not match the printed identity number.")
+            if _auth_status(auth, "imageTampering") == "failed":
+                add("document_tamper", 12, "Document image is not consistent enough to trust.")
+            if technology == "unknown" or auth.get("manualReview") is True:
+                add("document_manual_review", 8, f"Manual review requested for {doc_type} ({technology or 'unknown'}).")
+            continue
+        if _document_is_chip_or_french_id(document):
+            continue
+        ocr = props.get("ocr") if isinstance(props.get("ocr"), dict) else {}
+        if document.doc_type == "passport" and ocr.get("mrz") is False:
+            text = str(ocr.get("extracted_text") or "")
+            if _looks_like_mrz_text(text):
+                add("document_mrz_invalid", 16, "Passport MRZ is present but did not verify.")
+            else:
+                add("document_mrz_missing", 12, "Passport has no readable MRZ.")
+    capped: list[dict] = []
+    total = 0
+    for factor in factors:
+        room = 28 - total
+        if room <= 0:
+            break
+        points = min(room, int(factor["points"]))
+        total += points
+        capped.append({**factor, "points": points})
+    return capped
 
 
 def _face_risk_factors(db: Session, customer: Customer) -> list[dict]:

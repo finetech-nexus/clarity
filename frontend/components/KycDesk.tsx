@@ -92,6 +92,15 @@ type Detail = {
   requested_documents?: Array<{ id: string; type: string; mode: string; reason?: string; label?: { fr?: string; en?: string; ar?: string } }>;
   face_match?: { score: number | null; match: boolean | null; threshold?: number; source?: string; detail?: string } | null;
   face_threshold?: number;
+  authenticity?: Array<{
+    document_id: string;
+    document_type: string;
+    technology: string;
+    manual_review: boolean;
+    reasons: string[];
+    document_number?: string;
+    checks: Array<{ key: string; status: string; detail?: string }>;
+  }>;
   steps?: Array<{ key: string; label: string; status: "done" | "current" | "upcoming" }>;
   notes?: Array<{ id: string; comment: string; actor?: string; created_at?: string; action?: string | null }>;
 };
@@ -139,6 +148,7 @@ function TopicChips({ topics }: { topics: TopicDetail[] }) {
 const TAB_ALERT_REASONS: Record<string, string[]> = {
   documentData: ["correspondence"],
   documents: ["document"],
+  authenticity: ["document"],
   face: ["face"],
   screening: ["screening"],
 };
@@ -177,6 +187,12 @@ function tabToneClass(tab: TabKey, detail: Detail | null | undefined): string {
   if (tab === "face" && !funding) {
     return detail.face_match == null ? " tab-warn" : "";
   }
+  if (tab === "authenticity" && !funding) {
+    const needsReview = (detail.authenticity || []).some(
+      (row) => row.manual_review || row.checks.some((check) => check.status === "failed" || check.status === "incomplete"),
+    );
+    return needsReview || tabHasAlert(tab, detail.alert_reasons) ? " tab-warn" : "";
+  }
   if (tab === "screening") {
     const matches = (detail.customer?.screening || []).flatMap((item) => item.matches || []);
     if (matches.some((match) => match.status === "confirmed_hit")) return " tab-danger";
@@ -194,12 +210,53 @@ function caseToneFromDetail(detail: Detail | null | undefined): "warn" | "danger
   return null;
 }
 
-function AuthenticityPlaceholder() {
+function authenticityStatusClass(status: string) {
+  if (status === "passed") return "check-ok";
+  if (status === "failed") return "check-bad";
+  if (status === "not_applicable") return "check-wait";
+  return "check-wait";
+}
+
+function AuthenticityPanel({ detail }: { detail: Detail }) {
   const { t } = useI18n();
+  const rows = detail.authenticity || [];
+  if (!rows.length) {
+    return (
+      <article className="card">
+        <p className="label">{t("verify.authenticityEmpty")}</p>
+      </article>
+    );
+  }
   return (
-    <article className="card">
-      <p className="label">{t("verify.authenticitySoon")}</p>
-    </article>
+    <div className="stack">
+      {rows.map((row) => (
+        <article className="card" key={row.document_id}>
+          <p className="label">{t("verify.authenticityType")}</p>
+          <p>{t(`verify.docType.${row.document_type}`)}</p>
+          <p className="label">{t("verify.authenticityTechnology")}</p>
+          <p>{t(`verify.technology.${row.technology}`)}</p>
+          {row.document_number ? <p className="label">{t("verify.authenticityNumber")} {row.document_number}</p> : null}
+          {row.manual_review ? <p className="factor">{t("verify.authenticityManual")}</p> : null}
+          <div className="check-list">
+            {row.checks.map((check) => (
+              <div className="check-row" key={check.key}>
+                <span>{t(`verify.check.${check.key}`)}</span>
+                <strong className={authenticityStatusClass(check.status)}>
+                  {t(`verify.checkStatus.${check.status}`)}
+                </strong>
+              </div>
+            ))}
+          </div>
+          {row.checks.some((check) => check.detail) ? (
+            <ul className="factors">
+              {row.checks.filter((check) => check.detail).map((check) => (
+                <li key={`${check.key}-detail`}>{check.detail}</li>
+              ))}
+            </ul>
+          ) : null}
+        </article>
+      ))}
+    </div>
   );
 }
 
@@ -1192,7 +1249,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                 ) : <p className="label">{t("verify.noIdentity")}</p>}
               </article>
             ) : null}
-            {tab === "authenticity" ? <AuthenticityPlaceholder /> : null}
+            {tab === "authenticity" ? <AuthenticityPanel detail={detail} /> : null}
             {tab === "face" ? (
               <article className="card">
                 <FaceScale score={detail.face_match?.score} threshold={detail.face_threshold ?? detail.face_match?.threshold ?? 40} />
@@ -1523,7 +1580,7 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
             ) : <p className="label">{t("verify.noIdentity")}</p>}
           </article>
         ) : null}
-        {tab === "authenticity" ? <AuthenticityPlaceholder /> : null}
+        {tab === "authenticity" ? <AuthenticityPanel detail={detail} /> : null}
         {tab === "face" ? (
           <article className="card">
             <FaceScale score={detail.face_match?.score} threshold={detail.face_threshold ?? detail.face_match?.threshold ?? 40} />
