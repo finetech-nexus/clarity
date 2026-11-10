@@ -11,7 +11,9 @@ Moteur indépendant d'OpenSanctions. Le référentiel reste `Customer` et `Party
 5. Une alerte exige un score d'identité et un score médiatique au-dessus des seuils. Une donnée absente n'ajoute pas de point. Une date de naissance contradictoire écarte le rapprochement.
 6. Le score client `clarity-risk-3.4` n'ajoute le facteur `media` qu'après une décision humaine `confirmed_relevant` : 8 pour allégation, enquête ou poursuites, 16 pour une condamnation rapportée, plafond 24.
 
-Le moteur ne produit pas de conclusion de culpabilité.
+Le moteur ne produit pas de conclusion de culpabilité. Une recherche sans article pertinent a le statut `NoRelevantMediaFound` : ce n'est pas la preuve qu'il n'existe aucun média défavorable. Un nom seul donne `ManualReviewRequired` et ne confirme jamais l'identité. `ConfirmedMatch` n'existe qu'après une décision humaine. Les autres statuts sont `PotentialMatch`, `InsufficientInformation` et `ScreeningFailed`.
+
+Le rôle extrait est l'un de : convicted, charged, arrested, investigated, suspected, accused, witness, victim, mentioned, acquitted, unknown. Témoin et victime ne créent pas d'alerte. Le classifieur actif est le lexique `lexicon-1.0` : il ne retient qu'un passage présent dans le texte. Aucun modèle de langage n'est branché.
 
 ## Connecteurs
 

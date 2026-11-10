@@ -121,6 +121,9 @@ type Detail = {
     last_screening?: { at?: string | null; status?: string; trigger?: string; matches?: number; alerts?: number; engine?: string | null } | null;
     open_count?: number;
     guilt_conclusion?: boolean;
+    screening_status?: string;
+    screening_meaning?: string;
+    suggested_action?: string;
     articles?: Array<{ id: string; title: string; url: string; status: string; analyzed_at?: string | null; engine?: string | null; identity_score?: number; media_score?: number; stance?: string | null }>;
     alerts?: Array<{
       id: string;
@@ -277,6 +280,9 @@ function AdverseMediaPanel({
   return (
     <article className="card">
       <p className="label">{t("verify.adverse.noGuilt")}</p>
+      {media?.screening_status ? <p>{media.screening_status}</p> : null}
+      {media?.screening_meaning ? <p className="label">{media.screening_meaning}</p> : null}
+      {media?.suggested_action ? <p className="label">{media.suggested_action}</p> : null}
       <p>
         {t("verify.adverse.last")}: {media?.last_screening?.at ? new Date(media.last_screening.at).toLocaleString() : "—"}
         {" · "}

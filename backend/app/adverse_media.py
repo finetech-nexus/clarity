@@ -62,6 +62,25 @@ ALERT_STATUSES = (
 )
 DECISION_OUTCOMES = ("false_positive", "confirmed_relevant", "closed")
 ALERTING_STANCES = ("allegation", "investigation", "prosecution", "conviction")
+SCREENING_STATUSES = (
+    "NoRelevantMediaFound",
+    "PotentialMatch",
+    "ConfirmedMatch",
+    "ManualReviewRequired",
+    "InsufficientInformation",
+    "ScreeningFailed",
+)
+SUBJECT_ROLES = ("convicted", "charged", "arrested", "investigated", "suspected", "accused", "witness", "victim", "mentioned", "acquitted", "unknown")
+NON_ADVERSE_ROLES = {"witness", "victim", "mentioned", "acquitted", "unknown"}
+_ROLE_OF_STANCE = {
+    "conviction": "convicted",
+    "prosecution": "charged",
+    "investigation": "investigated",
+    "allegation": "accused",
+    "acquittal": "acquitted",
+    "denial": "unknown",
+    "mention": "mentioned",
+}
 STANCE_RANK = {
     "denial": 0,
     "acquittal": 0,
@@ -109,7 +128,22 @@ _CATEGORY_TERMS = {
     "smuggling": ("contrebande", "smuggling", "تهريب"),
     "regulatory": ("violation réglementaire", "violation reglementaire", "regulatory breach", "مخالفة تنظيمية"),
     "reputation": ("atteinte à la réputation", "atteinte a la reputation", "reputational", "تشويه السمعة"),
+    "bribery": ("bribery", "versement de pot-de-vin", "رشوة مالية"),
+    "insider_trading": ("délit d'initié", "delit d initie", "insider trading"),
+    "market_manipulation": ("manipulation de marché", "manipulation de marche", "market manipulation"),
+    "human_trafficking": ("traite des êtres humains", "traite des etres humains", "human trafficking"),
+    "arms_trafficking": ("trafic d'armes", "trafic d armes", "arms trafficking"),
+    "extortion": ("extorsion", "extortion", "chantage"),
+    "terrorism": ("terrorisme", "terrorism", "إرهاب"),
+    "environmental_crime": ("crime environnemental", "environmental crime"),
+    "sanctions_evasion": ("contournement des sanctions", "sanctions evasion"),
 }
+_ROLE_TERMS = (
+    ("victim", ("victime", "victim", "ضحية")),
+    ("witness", ("témoin", "temoin", "witness", "شاهد")),
+    ("arrested", ("arrêté", "arrete", "arrested", "موقوف")),
+    ("suspected", ("soupçonné", "soupconne", "suspected", "يشتبه")),
+)
 _STANCE_TERMS = (
     ("acquittal", ("acquitté", "acquitte", "acquitted", "relaxé", "relaxe", "براءة")),
     ("denial", ("dément", "dement", "dénégation", "denies", "denied", "denial", "ينفي", "نفي")),
@@ -990,33 +1024,57 @@ def _entities(text: str) -> list[dict]:
     return unique
 
 
+def _subject_role(text: str, stance: str) -> str:
+    folded = fold(text)
+    for role, terms in _ROLE_TERMS:
+        for term in terms:
+            needle = fold(term) if re.search(r"[A-Za-zÀ-ÿ]", term) else term
+            haystack = folded if needle.isascii() else text
+            if needle and needle in haystack:
+                if role in {"victim", "witness"} or stance in {"allegation", "investigation", "prosecution", "conviction"}:
+                    return role
+    return _ROLE_OF_STANCE.get(stance, "unknown")
+
+
 def analyze_text(title: str, body: str) -> dict:
     text = plain_text(f"{title}. {body}")
     stance, stance_negated = _stance(text)
+    role = _subject_role(text, stance)
     categories = _categories(text)
+    if role in {"victim", "witness"} and stance not in {"conviction", "prosecution"}:
+        stance = "mention"
     if not categories:
         stance = "mention"
+        role = role if role in {"victim", "witness"} else "mentioned"
     entities = _entities(text)
     events = []
     for category, excerpt, negated in categories:
-        event_stance = "mention" if negated or stance_negated else stance
+        event_stance = "mention" if negated or stance_negated or role in {"victim", "witness"} else stance
+        event_role = role if role in {"victim", "witness", "acquitted"} or event_stance != "mention" else "mentioned"
+        if event_role not in SUBJECT_ROLES:
+            event_role = "unknown"
         events.append(
             {
                 "category": category,
                 "stance": event_stance,
+                "subject_role": event_role,
                 "negated": bool(negated or stance_negated),
                 "confidence": 40 if negated else min(90, 50 + 10 * len(categories)),
                 "excerpt": excerpt,
+                "evidence_in_text": bool(excerpt),
                 "guilt_conclusion": False,
             }
         )
     return {
         "engine": NLP_ENGINE,
+        "classifier": "lexicon-1.0",
         "guilt_conclusion": False,
         "stance": stance if categories and not stance_negated else "mention",
+        "subject_role": role if role in SUBJECT_ROLES else "unknown",
         "negated": bool(stance_negated or any(item["negated"] for item in events)),
         "entities": [{"kind": item["kind"], "name": item["name"], "role": item.get("role"), "organization": item.get("organization")} for item in entities],
         "events": events,
+        "original_text_retained": True,
     }
 
 
@@ -1222,7 +1280,7 @@ def identity_assessment(entity_name: str, entity: dict, subject: Subject) -> tup
         points = 86
     else:
         points = 72
-    notes = [f"Similarité de nom {best:.2f}. La donnée absente n'est pas comptée comme une correspondance."]
+    notes = [f"Similarité de nom {best:.2f}. La donnée absente n'est pas comptée comme une correspondance. Le nom seul ne confirme pas l'identité."]
     entity_dob = str(entity.get("dob") or "").strip()
     subject_dob = str(subject.dob or "").strip()
     if entity_dob and subject_dob:
@@ -1861,6 +1919,67 @@ def retry_failed(db: Session, version: AdverseMediaArticleVersion) -> str:
     return outcome
 
 
+_SCREENING_COPY = {
+    "NoRelevantMediaFound": (
+        "Aucun article pertinent dans les sources consultées. Cela ne signifie pas que la personne n'a pas de médias défavorables.",
+        "Aucune décision automatique. Conserver la recherche dans l'historique.",
+    ),
+    "PotentialMatch": (
+        "Correspondance potentielle. L'identité n'est pas confirmée.",
+        "Revue humaine avant toute conséquence. Ne pas rejeter le client sur le seul article.",
+    ),
+    "ConfirmedMatch": (
+        "Correspondance retenue par un analyste. Ce n'est pas une conclusion de culpabilité.",
+        "Documenter la décision. Le rejet automatique reste interdit.",
+    ),
+    "ManualReviewRequired": (
+        "Le nom seul ne suffit pas à confirmer l'identité.",
+        "Compléter la date de naissance ou la nationalité, ou écarter le résultat.",
+    ),
+    "InsufficientInformation": (
+        "L'identité transmise est trop incomplète pour conclure.",
+        "Fournir le nom complet avant une nouvelle recherche.",
+    ),
+    "ScreeningFailed": (
+        "La recherche n'a pas abouti.",
+        "Relancer le criblage. Ce n'est pas une absence de médias défavorables.",
+    ),
+}
+
+
+def screening_contract(name: str, *, screened: bool, failed: bool, alerts: list, corroborated: bool) -> dict:
+    confirmed = any(getattr(alert, "status", None) == "confirmed_relevant" or (isinstance(alert, dict) and alert.get("status") == "confirmed_relevant") for alert in alerts)
+    open_alerts = [
+        alert
+        for alert in alerts
+        if (getattr(alert, "status", None) or (alert.get("status") if isinstance(alert, dict) else "")) in {"new", "in_review", "waiting_info", "escalated"}
+    ]
+    if failed:
+        code = "ScreeningFailed"
+    elif len(fold(name)) < 4:
+        code = "InsufficientInformation"
+    elif confirmed:
+        code = "ConfirmedMatch"
+    elif open_alerts and corroborated:
+        code = "PotentialMatch"
+    elif open_alerts:
+        code = "ManualReviewRequired"
+    elif not screened:
+        code = "NoRelevantMediaFound"
+    else:
+        code = "NoRelevantMediaFound"
+    meaning, action = _SCREENING_COPY[code]
+    if not screened and not failed and not open_alerts and len(fold(name)) >= 4:
+        meaning = "Aucune recherche n'a été lancée sur les sources consultées. Cela ne signifie pas que la personne n'a pas de médias défavorables."
+    return {
+        "screening_status": code,
+        "screening_meaning": meaning,
+        "suggested_action": action,
+        "identity_confirmed_by_name_alone": False,
+        "guilt_conclusion": False,
+    }
+
+
 def desk_summary(db: Session, customer: Customer) -> dict:
     last = db.scalar(
         select(AdverseMediaProcessingLog)
@@ -1928,6 +2047,9 @@ def desk_summary(db: Session, customer: Customer) -> dict:
                 "identity_score": match.identity_score,
                 "media_score": match.media_score,
                 "stance": (version.analysis or {}).get("stance"),
+                "subject_role": (version.analysis or {}).get("subject_role"),
+                "publisher": (db.get(AdverseMediaSource, article.source_id).name if db.get(AdverseMediaSource, article.source_id) else ""),
+                "retrieved_at": article.created_at.isoformat() if article.created_at else None,
                 "guilt_conclusion": False,
             }
         )
@@ -1948,6 +2070,13 @@ def desk_summary(db: Session, customer: Customer) -> dict:
         "articles": articles,
         "open_count": open_count,
         "guilt_conclusion": False,
+        **screening_contract(
+            customer.display_name or "",
+            screened=last is not None,
+            failed=bool(last and last.status == "error"),
+            alerts=alerts,
+            corroborated=any("Date de naissance identique" in " ".join(payload.get("explanation") or []) for payload in (alert.payload or {} for alert in alerts)),
+        ),
     }
 
 
@@ -1980,6 +2109,13 @@ def search_name(db: Session, tenant_id: str, name: str, dob: str | None = None, 
         )
     results.sort(key=lambda item: item["identity_score"], reverse=True)
     return results[:50]
+
+
+def search_report(db: Session, tenant_id: str, name: str, dob: str | None = None, country: str | None = None) -> dict:
+    hits = search_name(db, tenant_id, name, dob, country)
+    corroborated = any("Date de naissance identique" in " ".join(hit.get("explanation") or []) for hit in hits)
+    contract = screening_contract(name, screened=True, failed=False, alerts=[{"status": "new"}] if hits else [], corroborated=corroborated)
+    return {**contract, "results": hits}
 
 
 def source_view(source: AdverseMediaSource) -> dict:

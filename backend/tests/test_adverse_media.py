@@ -14,6 +14,7 @@ from app.adverse_media import (
     NLP_ENGINE,
     AdverseMediaError,
     analyze_text,
+    screening_contract,
     analyze_version,
     collect_source,
     content_hash,
@@ -87,6 +88,28 @@ def test_lexicon_distinguishes_stance_and_does_not_conclude_guilt():
 
     cleared = analyze_text("Zoubeida Mentest", "Zoubeida Mentest a été condamnée pour fraude puis acquittée.")
     assert cleared["events"][0]["stance"] == "acquittal"
+    assert cleared["events"][0]["subject_role"] == "acquitted"
+
+    victim = analyze_text("Zoubeida Mentest", "Zoubeida Mentest est victime d'une fraude.")
+    assert victim["subject_role"] == "victim"
+    assert victim["events"][0]["stance"] == "mention"
+    assert victim["guilt_conclusion"] is False
+
+    bribery = analyze_text("Dossier", "The director is charged with bribery.")
+    assert any(event["category"] == "bribery" and event["subject_role"] == "charged" for event in bribery["events"])
+
+    quiet = analyze_text("Météo", "Le temps est beau à Tunis.")
+    assert quiet["events"] == []
+    assert quiet["stance"] == "mention"
+
+    absent = screening_contract("Zoubeida Mentest", screened=True, failed=False, alerts=[], corroborated=False)
+    assert absent["screening_status"] == "NoRelevantMediaFound"
+    assert "ne signifie pas" in absent["screening_meaning"]
+    assert absent["identity_confirmed_by_name_alone"] is False
+    review = screening_contract("Zoubeida Mentest", screened=True, failed=False, alerts=[type("Alert", (), {"status": "new"})()], corroborated=False)
+    assert review["screening_status"] == "ManualReviewRequired"
+    confirmed = screening_contract("Zoubeida Mentest", screened=True, failed=False, alerts=[type("Alert", (), {"status": "confirmed_relevant"})()], corroborated=False)
+    assert confirmed["screening_status"] == "ConfirmedMatch"
 
 
 def test_identity_uses_transliteration_and_ignores_missing_fields():

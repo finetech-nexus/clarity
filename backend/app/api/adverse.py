@@ -25,7 +25,7 @@ from app.adverse_media import (
     run_due,
     save_policy,
     screen_customer,
-    search_name,
+    search_report,
     source_history,
     update_alert,
     update_source,
@@ -339,7 +339,7 @@ def search(body: dict, principal: Principal = Depends(clarity_principal), db: Se
     name = str(body.get("name") or "").strip()
     if len(name) < 3:
         raise clarity_error(400, "invalid", "Le nom recherché est trop court.")
-    return {"results": search_name(db, principal.tenant_id, name, body.get("dob"), body.get("country")), "guilt_conclusion": False}
+    return search_report(db, principal.tenant_id, name, body.get("dob"), body.get("country"))
 
 
 @router.post("/cycle")
