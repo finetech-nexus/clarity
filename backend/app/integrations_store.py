@@ -11,7 +11,7 @@ CATALOG = {
     "opensanctions": {
         "purpose": "sanctions",
         "name": "OpenSanctions",
-        "hint": "Le criblage interroge OpenSanctions dès qu'une clé est acceptée. Les correspondances restent des candidats.",
+        "hint": "Le criblage interroge OpenSanctions dès qu'une clé est acceptée. Chaque liste ci-dessous est un contrôle vrai/faux : une correspondance n'est retenue que si sa source est activée. Les listes sans jeu OpenSanctions publié restent enregistrées, sans correspondance inventée.",
         "fields": [{"key": "api_key", "label": "Clé API", "secret": True}],
     },
     "veriff": {
@@ -60,7 +60,7 @@ def public_integration(row: ProviderConnection) -> dict:
     detail = row.detail or {}
     provider = provider_of(row)
     secret = bool(detail.get("api_key") or detail.get("shared_secret"))
-    return {
+    payload = {
         "id": row.id,
         "kind": row.kind,
         "provider": provider,
@@ -72,6 +72,11 @@ def public_integration(row: ProviderConnection) -> dict:
         "has_secret": secret,
         "base_url": detail.get("base_url") or "",
     }
+    if row.kind == "sanctions":
+        from app.screening_sources import source_catalog
+
+        payload["sources"] = source_catalog(detail.get("sources"), master=bool(detail.get("enabled", True)))
+    return payload
 
 
 def save_integration(db: Session, row: ProviderConnection, body: dict) -> ProviderConnection:
@@ -94,6 +99,13 @@ def save_integration(db: Session, row: ProviderConnection, body: dict) -> Provid
     for key in allowed:
         if key in body and body[key] not in (None, ""):
             detail[key] = str(body[key])
+    if provider == "opensanctions":
+        from app.screening_sources import store_sources
+
+        if isinstance(body.get("sources"), dict):
+            store_sources(detail, body["sources"])
+        if "enabled" in body:
+            detail["enabled"] = bool(body["enabled"])
     row.detail = detail
     row.name = spec["name"]
     row.configured = bool(detail.get("api_key") or detail.get("shared_secret"))

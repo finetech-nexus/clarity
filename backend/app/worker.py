@@ -21,3 +21,10 @@ def rescreen_tenant(db, tenant_id: str) -> int:
         assess_customer(db, tenant, customer)
         count += 1
     return count
+
+
+def run_adverse_media(db, tenant_id: str | None = None) -> dict:
+    """Collect due sources, analyze new articles once, then rescreen the portfolio."""
+    from app.adverse_media import run_due
+
+    return run_due(db, tenant_id)

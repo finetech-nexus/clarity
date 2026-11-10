@@ -18,6 +18,7 @@ from app.services import (
     document_record,
     evaluate_transaction,
     finish_document_request_if_ready,
+    open_business_workflow,
     store_liveness_video,
     nest_error,
     resolve_customer_by_reference,
@@ -709,6 +710,40 @@ def set_client_reference(entity_id: str, body: dict, principal: Principal = Depe
         "client_reference": extension.get("client_reference"),
         "fineract_client_id": extension.get("fineract_client_id"),
         "kyc_entity_id": extension.get("kyc_entity_id"),
+    }
+
+
+@router.get("/kyb/registry/{identifiant}")
+def kyb_registry(identifiant: str, principal: Principal = Depends(ballerine_principal)):
+    from app.rne import IDENTIFIANT_RE, check_company, normalize_identifiant
+
+    report = check_company(identifiant)
+    if not IDENTIFIANT_RE.fullmatch(normalize_identifiant(identifiant)):
+        raise nest_error(400, report["message"])
+    del principal
+    return report
+
+
+@router.post("/kyb/businesses")
+def kyb_business(body: dict, request: Request, principal: Principal = Depends(ballerine_principal), db: Session = Depends(db_session)):
+    legal_name = str(body.get("legal_name") or body.get("companyName") or "").strip()
+    registration = str(body.get("registration_number") or body.get("identifiant_unique") or "").strip()
+    if not legal_name or not registration:
+        raise nest_error(400, "legal_name and identifiant_unique are required")
+    customer, workflow = open_business_workflow(
+        db,
+        request.app.state.engine,
+        _tenant(db, principal),
+        principal,
+        body,
+        str(body.get("external_ref") or "").strip() or None,
+        synthetic=False,
+    )
+    return {
+        "customer": customer_view(db, customer),
+        "workflow_id": workflow.id,
+        "state": workflow.state,
+        "registry": (workflow.context or {}).get("registry"),
     }
 
 

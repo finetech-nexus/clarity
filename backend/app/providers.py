@@ -37,9 +37,20 @@ def ai_configured() -> bool:
     return bool(_settings().ai_api_key)
 
 
-def match_opensanctions(name: str, schema: str, birth_date: str | None, country: str | None) -> list[dict]:
+def match_opensanctions(
+    name: str,
+    schema: str,
+    birth_date: str | None,
+    country: str | None,
+    sources: list[dict] | None = None,
+) -> list[dict]:
     settings = _settings()
     if not settings.opensanctions_api_key or not name:
+        return []
+    from app.screening_sources import sources_for_hit
+
+    covered = [source for source in (sources or []) if source.get("dataset")]
+    if sources is not None and not covered:
         return []
     properties: dict = {"name": [name]}
     if birth_date:
@@ -60,18 +71,26 @@ def match_opensanctions(name: str, schema: str, birth_date: str | None, country:
     results = ((body.get("responses") or {}).get("q") or {}).get("results") or []
     rows = []
     for item in results:
+        matched = sources_for_hit(item, covered) if sources is not None else []
+        if sources is not None and not matched:
+            continue
         score = int(round(float(item.get("score") or 0) * 100))
+        source_names = ", ".join(source["name"] for source in matched)
+        note = f"OpenSanctions score {score} on {item.get('caption') or name}."
+        if source_names:
+            note = f"{note} Source: {source_names}."
         rows.append(
             {
                 "entity_id": str(item.get("id") or ""),
                 "score": score,
-                "explanation": [f"OpenSanctions score {score} on {item.get('caption') or name}. Candidate only."],
+                "explanation": [f"{note} Candidate only."],
                 "production": True,
                 "payload": {
                     "id": item.get("id"),
                     "caption": item.get("caption") or name,
                     "schema": item.get("schema") or schema,
                     "datasets": item.get("datasets") or [],
+                    "sources": [source["id"] for source in matched],
                     "score": item.get("score"),
                     "topics": (item.get("properties") or {}).get("topics") or item.get("topics") or [],
                     "properties": item.get("properties") or {},

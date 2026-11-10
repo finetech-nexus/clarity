@@ -24,12 +24,15 @@ const PROCESS_FLOW: Record<string, Record<string, Record<string, string>>> = {
     remediate: { NEXT: "collect" },
   },
   clarityKybBusiness: {
-    collect: { NEXT: "verify" },
+    collect: { NEXT: "registry" },
+    registry: { NEXT: "ubo" },
+    ubo: { NEXT: "verify" },
     verify: { NEXT: "screen" },
     screen: { NEXT: "score" },
     score: { NEXT: "analystReview" },
-    analystReview: { approve: "checkerReview", reject: "rejected", remediate: "remediate" },
-    checkerReview: { approve: "approved", reject: "rejected", return: "analystReview" },
+    analystReview: { approve: "checkerReview", reject: "rejected", remediate: "remediate", requestDocuments: "documentsRequested" },
+    checkerReview: { approve: "approved", reject: "rejected", return: "analystReview", requestDocuments: "documentsRequested" },
+    documentsRequested: { submit: "analystReview" },
     remediate: { NEXT: "collect" },
   },
   clarityAlertInvestigation: {

@@ -57,6 +57,7 @@ type Detail = {
     external_ref?: string | null;
     individual: Record<string, string | null> | null;
     business: Record<string, string | null> | null;
+    parties?: Array<{ full_name?: string; role?: string; nationality?: string | null; ownership_pct?: number | null }>;
     screening: Array<{ id: string; status: string; production: boolean; matches: ScreeningMatch[] }>;
     verification_checks: Array<Record<string, unknown>>;
     risk?: {
@@ -68,6 +69,17 @@ type Detail = {
     } | null;
   } | null;
   submitted: Field[];
+  registry?: {
+    status?: string;
+    message?: string;
+    identifiant_unique?: string;
+    active?: boolean | null;
+    ubo_declared?: boolean | null;
+    name_mismatch?: boolean;
+    fiche?: Record<string, string | number | boolean | null>;
+    directors?: Array<{ full_name?: string; role?: string; quality?: string }>;
+    beneficial_owners?: Array<{ full_name?: string; control?: string | null; nationality?: string | null; ownership_pct?: number | null }>;
+  } | null;
   transfer?: {
     id?: string | null;
     amount?: number | string | null;
@@ -105,13 +117,35 @@ type Detail = {
   }>;
   steps?: Array<{ key: string; label: string; status: "done" | "current" | "upcoming" }>;
   notes?: Array<{ id: string; comment: string; actor?: string; created_at?: string; action?: string | null }>;
+  adverse_media?: {
+    last_screening?: { at?: string | null; status?: string; trigger?: string; matches?: number; alerts?: number; engine?: string | null } | null;
+    open_count?: number;
+    guilt_conclusion?: boolean;
+    articles?: Array<{ id: string; title: string; url: string; status: string; analyzed_at?: string | null; engine?: string | null; identity_score?: number; media_score?: number; stance?: string | null }>;
+    alerts?: Array<{
+      id: string;
+      title: string;
+      status: string;
+      priority?: string;
+      identity_score?: number | null;
+      media_score?: number | null;
+      stance?: string | null;
+      category?: string | null;
+      excerpt?: string | null;
+      article_title?: string | null;
+      explanation?: string[];
+      comments?: Array<{ at?: string; actor?: string; text?: string }>;
+      decisions?: Array<{ id: string; outcome: string; rationale: string; actor: string; created_at?: string }>;
+    }>;
+  } | null;
 };
 
 const DEFAULT_FORMULA_NOTE =
-  "Score = somme des points AML + visage + authenticité des pièces + historique d'opérations + pays/structure. "
-  + "AML : chaque topic a une pondération distincte (Sanctioned / Wanted / Export controlled élevés ; "
-  + "Debarred / Disqualified / PEP moyens ; Person of interest / Politician informatifs). "
-  + "Plusieurs topics se cumulent. Un hit sanctions reste élevé même en candidat. "
+  "Score = somme des points AML + médias défavorables + visage + authenticité des pièces + historique d'opérations + pays/structure. "
+  + "AML : chaque topic OpenSanctions a une pondération distincte. "
+  + "Médias : 0 sans décision humaine ; 8 pour une allégation, une enquête ou des poursuites confirmées ; "
+  + "16 pour une condamnation rapportée confirmée ; plafond 24. "
+  + "Mention, démenti, acquittement et faux positif n'ajoutent rien. Le moteur ne conclut pas à la culpabilité. "
   + "Seuils : <30 faible, 30–59 moyen, ≥60 élevé.";
 
 const TOPIC_TIER_FALLBACK: Record<string, TopicDetail["tier"]> = {
@@ -167,6 +201,7 @@ const TAB_KEYS = [
   "authenticity",
   "face",
   "screening",
+  "adverseMedia",
   "notes",
   "action",
 ] as const;
@@ -201,7 +236,108 @@ function tabToneClass(tab: TabKey, detail: Detail | null | undefined): string {
     if (matches.some((match) => match.status === "pending")) return " tab-warn";
     return "";
   }
+  if (tab === "adverseMedia") {
+    const alerts = detail.adverse_media?.alerts || [];
+    if (alerts.some((alert) => alert.status === "confirmed_relevant")) return " tab-danger";
+    if ((detail.adverse_media?.open_count || 0) > 0) return " tab-warn";
+    return "";
+  }
   return "";
+}
+
+function AdverseMediaPanel({
+  runtimeId,
+  detail,
+  onChange,
+}: {
+  runtimeId: string;
+  detail: Detail;
+  onChange: (detail: Detail) => void;
+}) {
+  const { t } = useI18n();
+  const [busy, setBusy] = useState(false);
+  const [rationale, setRationale] = useState("");
+  const [comment, setComment] = useState("");
+  const [error, setError] = useState("");
+  const media = detail.adverse_media;
+
+  async function call(path: string, body: Record<string, unknown>) {
+    setBusy(true);
+    setError("");
+    try {
+      const refreshed = await api<Detail>(path, { method: "POST", body: JSON.stringify(body) });
+      onChange(refreshed);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("verify.adverse.launch"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <article className="card">
+      <p className="label">{t("verify.adverse.noGuilt")}</p>
+      <p>
+        {t("verify.adverse.last")}: {media?.last_screening?.at ? new Date(media.last_screening.at).toLocaleString() : "—"}
+        {" · "}
+        {media?.last_screening?.status || t("verify.adverse.none")}
+      </p>
+      <p className="label">{detail.customer?.risk_tier || "—"} · {detail.customer?.risk?.score ?? "—"}</p>
+      <button type="button" disabled={busy} onClick={() => void call(`/api/clarity/v1/desks/kyc/${runtimeId}/adverse-media`, {})}>
+        {busy ? t("verify.adverse.running") : t("verify.adverse.launch")}
+      </button>
+      {error ? <p className="error">{error}</p> : null}
+      <h3>{t("verify.adverse.articles")}</h3>
+      {(media?.articles || []).length ? (media?.articles || []).map((article) => (
+        <p key={article.id}>
+          {article.title} — {t("verify.adverse.identity")} {article.identity_score ?? "—"} / {t("verify.adverse.media")} {article.media_score ?? "—"} · {article.stance || "mention"}
+        </p>
+      )) : <p className="label">{t("verify.adverse.none")}</p>}
+      <h3>{t("verify.adverse.alerts")}</h3>
+      {(media?.alerts || []).map((alert) => (
+        <div key={alert.id} className="factor">
+          <p>{alert.title} · {alert.status}</p>
+          <p className="label">{t("verify.adverse.identity")} {alert.identity_score ?? "—"} · {t("verify.adverse.media")} {alert.media_score ?? "—"} · {alert.stance} · {alert.category}</p>
+          {alert.excerpt ? <p>{alert.excerpt}</p> : null}
+          {(alert.explanation || []).map((line) => <p className="label" key={line}>{line}</p>)}
+          {(alert.decisions || []).map((decision) => (
+            <p key={decision.id}>{decision.outcome} — {decision.rationale}</p>
+          ))}
+          {(alert.comments || []).map((note, index) => <p className="label" key={`${alert.id}-c-${index}`}>{note.actor}: {note.text}</p>)}
+        </div>
+      ))}
+      {(media?.alerts || []).some((alert) => !["false_positive", "confirmed_relevant", "closed"].includes(alert.status)) ? (
+        <div className="stack">
+          <label>
+            {t("verify.adverse.rationale")}
+            <textarea value={rationale} onChange={(event) => setRationale(event.target.value)} />
+          </label>
+          <label>
+            {t("verify.adverse.comment")}
+            <textarea value={comment} onChange={(event) => setComment(event.target.value)} />
+          </label>
+          <div className="actions">
+            {(media?.alerts || []).filter((alert) => !["false_positive", "confirmed_relevant", "closed"].includes(alert.status)).map((alert) => (
+              <span key={alert.id} className="actions">
+                <button type="button" className="ghost" disabled={busy} onClick={() => void call(`/api/clarity/v1/desks/kyc/${runtimeId}/adverse-media/alerts/${alert.id}`, { status: "in_review", comment })}>
+                  {t("verify.adverse.take")}
+                </button>
+                <button type="button" disabled={busy} onClick={() => void call(`/api/clarity/v1/desks/kyc/${runtimeId}/adverse-media/alerts/${alert.id}/decision`, { outcome: "confirmed_relevant", rationale })}>
+                  {t("verify.adverse.confirm")}
+                </button>
+                <button type="button" className="ghost" disabled={busy} onClick={() => void call(`/api/clarity/v1/desks/kyc/${runtimeId}/adverse-media/alerts/${alert.id}/decision`, { outcome: "false_positive", rationale })}>
+                  {t("verify.adverse.falsePositive")}
+                </button>
+                <button type="button" className="ghost" disabled={busy} onClick={() => void call(`/api/clarity/v1/desks/kyc/${runtimeId}/adverse-media/alerts/${alert.id}/decision`, { outcome: "closed", rationale })}>
+                  {t("verify.adverse.closed")}
+                </button>
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </article>
+  );
 }
 
 function caseToneFromDetail(detail: Detail | null | undefined): "warn" | "danger" | null {
@@ -505,6 +641,58 @@ function taskActionLabel(t: (key: string) => string, fundingReview: boolean, rev
   if (reviewState === "checkerReview") return t("verify.approve");
   if (reviewState === "investigate") return t("verify.closeInstruction");
   return "";
+}
+
+function RegistryDetail({ registry }: { registry?: Detail["registry"] }) {
+  const { t } = useI18n();
+  if (!registry || registry.status === "invalid" || registry.status === "skipped") return null;
+  const fiche = registry.fiche || {};
+  const rows = [
+    ["Identifiant", registry.identifiant_unique],
+    ["Statut", fiche.status],
+    ["Dénomination", fiche.legal_name],
+    ["Forme", fiche.legal_form],
+    ["Siège", fiche.address],
+    ["Activité", fiche.activity],
+    ["Déclaration BE", registry.ubo_declared == null ? "" : registry.ubo_declared ? "Oui" : "Non"],
+  ].filter(([, value]) => value !== null && value !== undefined && value !== "");
+  return (
+    <article className="card">
+      <h3>{t("verify.registry")}</h3>
+      {registry.message ? <p className="label">{registry.message}</p> : null}
+      {rows.length ? (
+        <dl className="kv">
+          {rows.map(([key, value]) => (
+            <span key={String(key)}><dt>{key}</dt><dd>{String(value)}</dd></span>
+          ))}
+        </dl>
+      ) : null}
+      {registry.directors?.length ? (
+        <>
+          <h3>{t("verify.directors")}</h3>
+          <ul>
+            {registry.directors.map((person) => (
+              <li key={`${person.role}-${person.full_name}`}>{person.full_name}{person.quality ? ` — ${person.quality}` : ""}</li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+      <h3>{t("verify.ubos")}</h3>
+      {registry.beneficial_owners?.length ? (
+        <ul>
+          {registry.beneficial_owners.map((person) => (
+            <li key={person.full_name}>
+              {person.full_name}
+              {person.control ? ` — ${person.control}` : ""}
+              {person.ownership_pct != null ? ` — ${person.ownership_pct}%` : ""}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="label">{registry.ubo_declared === false ? "Aucune déclaration de bénéficiaire effectif au RNE." : "—"}</p>
+      )}
+    </article>
+  );
 }
 
 function TransferDetail({ transfer, submitted }: { transfer?: Detail["transfer"]; submitted: Field[] }) {
@@ -1235,6 +1423,7 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                 <TransferDetail transfer={detail.transfer} submitted={detail.submitted || []} />
               ) : (
                 <article className="card">
+                  <RegistryDetail registry={detail.registry} />
                   {detail.submitted?.length ? (
                     <dl className="kv">
                       {detail.submitted.map((field) => (
@@ -1327,6 +1516,16 @@ export default function KycDesk({ kind }: { kind?: "business" }) {
                   </p>
                 )}
               </article>
+            ) : null}
+            {tab === "adverseMedia" && detail ? (
+              <AdverseMediaPanel
+                runtimeId={selected}
+                detail={detail}
+                onChange={(refreshed) => {
+                  setDetail(refreshed);
+                  if (selected) applyCaseColors(selected, refreshed);
+                }}
+              />
             ) : null}
             {tab === "notes" ? (
               <NotesHistory
@@ -1605,6 +1804,7 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
             <TransferDetail transfer={detail.transfer} submitted={detail.submitted || []} />
           ) : (
             <article className="card">
+              <RegistryDetail registry={detail.registry} />
               {detail.submitted?.length ? (
                 <dl className="kv">
                   {detail.submitted.map((field) => (
@@ -1680,6 +1880,9 @@ export function VerificationPreview({ runtimeId, onChanged }: { runtimeId: strin
               />
             )) : <p className="label">{t("verify.screeningNone")}</p>}
           </article>
+        ) : null}
+        {tab === "adverseMedia" ? (
+          <AdverseMediaPanel runtimeId={runtimeId} detail={detail} onChange={setDetail} />
         ) : null}
         {tab === "notes" ? (
           <NotesHistory

@@ -23,6 +23,8 @@ PROCESS_CATALOG = {
         "start": "collect",
         "tasks": {
             "collect": "Collecte des informations société",
+            "registry": "Contrôle du registre (RNE)",
+            "ubo": "Bénéficiaires effectifs",
             "verify": "Contrôles documentaires",
             "screen": "Criblage des parties",
             "score": "Évaluation du risque",
@@ -74,7 +76,9 @@ ADVANCE = {
         "remediate": {"_": "collect"},
     },
     "clarityKybBusiness": {
-        "collect": {"_": "verify"},
+        "collect": {"_": "registry"},
+        "registry": {"_": "ubo"},
+        "ubo": {"_": "verify"},
         "verify": {"_": "screen"},
         "screen": {"_": "score"},
         "score": {"_": "analystReview"},

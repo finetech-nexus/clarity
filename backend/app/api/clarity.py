@@ -45,6 +45,7 @@ from app.services import (
     customer_view,
     disposition_match,
     evaluate_transaction,
+    open_business_workflow,
     start_customer_workflow,
     store_bytes,
 )
@@ -85,6 +86,7 @@ class BusinessBody(BaseModel):
     legal_name: str
     trading_name: str | None = None
     registration_number: str
+    identifiant_unique: str | None = None
     jurisdiction: str
     legal_form: str
     registered_address: str
@@ -93,6 +95,8 @@ class BusinessBody(BaseModel):
     purpose: str
     expected_activity: str
     source_of_funds: str
+    representative_name: str | None = None
+    representative_id_number: str | None = None
     directors: list[PartyBody] = Field(default_factory=list)
     beneficial_owners: list[PartyBody] = Field(default_factory=list)
     external_ref: str | None = None
@@ -445,6 +449,20 @@ def onboard_individual(
     return _onboard(db, request, principal, "individual", data, body.external_ref)
 
 
+@router.get("/registry/tn/{identifiant}")
+def lookup_tunisian_company(
+    identifiant: str,
+    principal: Principal = Depends(clarity_principal),
+):
+    from app.rne import IDENTIFIANT_RE, check_company, normalize_identifiant
+
+    report = check_company(identifiant)
+    if not IDENTIFIANT_RE.fullmatch(normalize_identifiant(identifiant)):
+        raise clarity_error(400, "invalid_identifiant", report["message"])
+    del principal
+    return report
+
+
 @router.post("/onboarding/businesses")
 def onboard_business(
     body: BusinessBody,
@@ -453,10 +471,23 @@ def onboard_business(
     db: Session = Depends(db_session),
 ):
     data = body.model_dump()
-    data["companyName"] = body.legal_name
     data["directors"] = [item.model_dump() for item in body.directors]
     data["beneficial_owners"] = [item.model_dump() for item in body.beneficial_owners]
-    return _onboard(db, request, principal, "business", data, body.external_ref)
+    customer, workflow = open_business_workflow(
+        db,
+        _engine(request),
+        _tenant(db, principal),
+        principal,
+        data,
+        body.external_ref,
+    )
+    return {
+        "customer": customer_view(db, customer),
+        "workflow_id": workflow.id,
+        "state": workflow.state,
+        "engine": workflow.engine,
+        "registry": (workflow.context or {}).get("registry"),
+    }
 
 
 @router.get("/workflows")
@@ -967,6 +998,8 @@ class IntegrationUpdate(BaseModel):
     api_key: str | None = None
     shared_secret: str | None = None
     base_url: str | None = None
+    enabled: bool | None = None
+    sources: dict[str, bool] | None = None
 
 
 class ConfigImport(BaseModel):

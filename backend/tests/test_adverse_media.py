@@ -1,0 +1,266 @@
+"""Adverse media: lexicon analysis, matching, collection and score. Fictional data only."""
+
+from datetime import timedelta
+
+from fastapi.testclient import TestClient
+from sqlalchemy import func, select
+
+from app.adverse_media import (
+    NLP_ENGINE,
+    AdverseMediaError,
+    analyze_text,
+    analyze_version,
+    collect_source,
+    content_hash,
+    ensure_sources,
+    identity_assessment,
+    ingest_article,
+    name_similarity,
+    process_queue,
+    reanalyze,
+    record_decision,
+    retry_failed,
+    screen_customer,
+)
+from app.ids import ADMIN_EMAIL, ANALYST_EMAIL, DEMO_PASSWORD, TENANT_ID
+from app.models import (
+    AdverseMediaAlert,
+    AdverseMediaArticle,
+    AdverseMediaArticleVersion,
+    AdverseMediaSource,
+    BusinessProfile,
+    Customer,
+    IndividualProfile,
+    Party,
+    Tenant,
+)
+from app.services import RISK_METHODOLOGY, assess_customer
+from app.timeutil import utcnow
+from tests.test_platform import _client
+
+RSS = b"""<?xml version="1.0"?>
+<rss><channel>
+<item>
+  <title>Zoubeida Mentest fait l'objet de poursuites pour fraude</title>
+  <link>https://exemple.media/zoubeida-fraude</link>
+  <description>Zoubeida Mentest fait l'objet de poursuites pour fraude fiscale a Tunis.</description>
+</item>
+</channel></rss>"""
+
+
+def _session(client: TestClient):
+    return client.app.state.database.session_factory()
+
+
+def _person(db, name: str, dob: str | None = "1981-04-12") -> Customer:
+    customer = Customer(tenant_id=TENANT_ID, kind="individual", display_name=name, external_ref=f"adv-{name}", canonical_status="approved")
+    db.add(customer)
+    db.flush()
+    db.add(IndividualProfile(customer_id=customer.id, legal_name=name, given_name=name.split()[0], family_name=name.split()[-1], date_of_birth=dob, nationality="TN", residence_country="TN"))
+    db.flush()
+    return customer
+
+
+def test_lexicon_distinguishes_stance_and_does_not_conclude_guilt():
+    fraud = analyze_text("Zoubeida Mentest", "Zoubeida Mentest fait l'objet de poursuites pour fraude.")
+    assert fraud["guilt_conclusion"] is False
+    assert fraud["events"][0]["category"] == "fraud"
+    assert fraud["events"][0]["stance"] == "prosecution"
+    assert any(entity["name"] == "Zoubeida Mentest" for entity in fraud["entities"])
+
+    english = analyze_text("Case", "Karim Haddad is under investigation for money laundering.")
+    assert english["events"][0]["category"] == "money_laundering"
+    assert english["events"][0]["stance"] == "investigation"
+
+    arabic = analyze_text("ملف", "سامي بن صالح متابع في قضية رشوة.")
+    assert any(event["category"] == "corruption" for event in arabic["events"])
+
+    denied = analyze_text("Zoubeida Mentest", "Zoubeida Mentest n'est pas poursuivie pour fraude.")
+    assert denied["events"][0]["negated"] is True
+
+    cleared = analyze_text("Zoubeida Mentest", "Zoubeida Mentest a été condamnée pour fraude puis acquittée.")
+    assert cleared["events"][0]["stance"] == "acquittal"
+
+
+def test_identity_uses_transliteration_and_ignores_missing_fields():
+    assert name_similarity("سامي بن صالح", "Sami Ben Salah") >= 0.92
+    from app.adverse_media import Subject
+
+    subject = Subject(customer_id="c", party_id=None, kind="person", names=["Sami Ben Salah"], dob="1979-01-02", nationality="TN", country="TN")
+    same = identity_assessment("سامي بن صالح", {}, subject)
+    assert same is not None
+    assert same[0] >= 82
+    assert any("aucun point" in note for note in same[1])
+
+    conflict = identity_assessment("Sami Ben Salah", {"dob": "1990-01-01"}, subject)
+    assert conflict is None
+
+    missing_name = identity_assessment("", {}, subject)
+    assert missing_name is None
+
+
+def test_collection_dedup_retry_and_no_fabricated_article(tmp_path):
+    with _client(tmp_path) as client:
+        db = _session(client)
+        source = AdverseMediaSource(
+            tenant_id=TENANT_ID,
+            name="RSS test",
+            kind="rss",
+            url="https://exemple.media/rss.xml",
+            language="fr",
+            frequency_minutes=60,
+            active=True,
+            config={"format": "rss", "timeout_seconds": 5, "quota_per_hour": 1},
+        )
+        db.add(source)
+        db.commit()
+        calls = {"n": 0}
+
+        def fetch(url, timeout):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise AdverseMediaError("delai depasse")
+            assert url.startswith("https://exemple.media/rss.xml")
+            assert timeout == 5
+            return RSS
+
+        first = collect_source(db, source, fetch=fetch)
+        db.commit()
+        assert first["status"] == "error"
+        assert db.scalar(select(func.count()).select_from(AdverseMediaArticle).where(AdverseMediaArticle.tenant_id == TENANT_ID)) == 0
+        assert source.availability == "down"
+
+        second = collect_source(db, source, fetch=fetch)
+        db.commit()
+        assert second == {"status": "success", "fetched": 1, "stored": 1}
+        third = collect_source(db, source, fetch=fetch)
+        db.commit()
+        assert third["status"] == "quota"
+        assert calls["n"] == 2
+
+        inactive = next(row for row in ensure_sources(db, TENANT_ID) if row.kind == "gdelt")
+        assert inactive.active is False
+        skipped = collect_source(db, inactive, fetch=lambda url, timeout: (_ for _ in ()).throw(AssertionError("reseau")))
+        assert skipped["status"] == "skipped"
+
+
+def test_pipeline_matches_customer_once_and_score_waits_for_a_human(tmp_path):
+    with _client(tmp_path) as client:
+        db = _session(client)
+        customer = _person(db, "Zoubeida Mentest")
+        business = Customer(tenant_id=TENANT_ID, kind="business", display_name="Atelier Fictif", external_ref="adv-atelier", canonical_status="approved", risk_tier="high")
+        db.add(business)
+        db.flush()
+        db.add(BusinessProfile(customer_id=business.id, legal_name="Atelier Fictif", jurisdiction="TN"))
+        db.add(Party(tenant_id=TENANT_ID, business_customer_id=business.id, role="shareholder", full_name="Zoubeida Mentest", nationality="TN"))
+        source = AdverseMediaSource(tenant_id=TENANT_ID, name="Depot test", kind="rss", url="https://exemple.media/rss.xml", language="fr", active=False, config={})
+        db.add(source)
+        db.flush()
+        text = "Zoubeida Mentest, actionnaire de Atelier Fictif, fait l'objet de poursuites pour fraude."
+        assert ingest_article(db, source, url="https://exemple.media/zoubeida-fraude", title="Poursuites", body=text) == "stored"
+        assert ingest_article(db, source, url="https://exemple.media/zoubeida-fraude", title="Poursuites", body=text) == "duplicate"
+        db.commit()
+
+        first = process_queue(db, TENANT_ID)
+        second = process_queue(db, TENANT_ID)
+        db.commit()
+        assert first["analyzed"] == 1
+        assert second["analyzed"] == 0
+        version = db.scalar(select(AdverseMediaArticleVersion))
+        assert version.nlp_engine_version == NLP_ENGINE
+        assert version.analysis["guilt_conclusion"] is False
+        alerts = db.scalars(select(AdverseMediaAlert).where(AdverseMediaAlert.customer_id == customer.id)).all()
+        assert len(alerts) == 1
+        assert alerts[0].status == "new"
+        assert alerts[0].payload["guilt_conclusion"] is False
+
+        tenant = db.get(Tenant, TENANT_ID)
+        before = assess_customer(db, tenant, customer)
+        assert all(factor["code"] != "media" for factor in before.factors)
+
+        record_decision(db, alerts[0], "confirmed_relevant", "Le nom et le contexte correspondent au client. Ce n'est pas une declaration de culpabilite.", "Camille Morel")
+        db.commit()
+        after = db.scalar(select(type(before)).where(type(before).customer_id == customer.id, type(before).current.is_(True)))
+        media = next(factor for factor in after.factors if factor["code"] == "media")
+        assert media["points"] == 8
+        assert after.methodology_version == RISK_METHODOLOGY == "clarity-risk-3.4"
+
+        article = db.scalar(select(AdverseMediaArticle))
+        assert reanalyze(db, article, force=False) == "unchanged"
+        try:
+            reanalyze(db, article, force=True)
+            raise AssertionError("reanalyse autorisee apres confirmation")
+        except AdverseMediaError:
+            pass
+
+        screened = screen_customer(db, TENANT_ID, customer.id, trigger="manual")
+        assert screened["status"] == "completed"
+
+
+def test_failed_analysis_can_be_retried_without_replaying_history(tmp_path, monkeypatch):
+    with _client(tmp_path) as client:
+        db = _session(client)
+        source = AdverseMediaSource(tenant_id=TENANT_ID, name="Echec", kind="rss", url="https://exemple.media/rss.xml", language="fr", active=False, config={})
+        db.add(source)
+        db.flush()
+        ingest_article(db, source, url="https://exemple.media/echec", title="Nour El Fictif", body="Nour El Fictif est soupçonné de corruption.")
+        db.commit()
+        version = db.scalar(select(AdverseMediaArticleVersion))
+
+        def boom(*_args, **_kwargs):
+            raise RuntimeError("moteur indisponible")
+
+        monkeypatch.setattr("app.adverse_media.analyze_text", boom)
+        assert analyze_version(db, version) == "failed"
+        db.commit()
+        monkeypatch.undo()
+        assert retry_failed(db, version) == "analyzed"
+        assert analyze_version(db, version) == "unchanged"
+
+
+def test_desk_exposes_adverse_media_and_keeps_opensanctions_path(tmp_path):
+    with _client(tmp_path) as client:
+        token = client.post("/api/clarity/v1/auth/login", json={"email": ANALYST_EMAIL, "password": DEMO_PASSWORD}).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        listing = client.get("/api/clarity/v1/desks/kyc?limit=1", headers=headers)
+        assert listing.status_code == 200
+        case_id = listing.json()["items"][0]["id"]
+        detail = client.get(f"/api/clarity/v1/desks/kyc/{case_id}", headers=headers)
+        assert detail.status_code == 200
+        body = detail.json()
+        assert body["adverse_media"]["guilt_conclusion"] is False
+        name = body["customer"]["display_name"]
+        db = _session(client)
+        source = AdverseMediaSource(tenant_id=TENANT_ID, name="Fiche", kind="rss", url="https://exemple.media/rss.xml", language="fr", active=False, config={})
+        db.add(source)
+        db.flush()
+        ingest_article(db, source, url="https://exemple.media/fiche", title=name, body=f"{name} fait l'objet de poursuites pour fraude.")
+        db.commit()
+        process_queue(db, TENANT_ID)
+        db.commit()
+        screened = client.post(f"/api/clarity/v1/desks/kyc/{case_id}/adverse-media", headers=headers)
+        assert screened.status_code == 200, screened.text
+        media = screened.json()["adverse_media"]
+        assert media["last_screening"]["status"] == "completed"
+        assert media["alerts"]
+        assert media["alerts"][0]["identity_score"] >= 82
+        assert media["alerts"][0]["media_score"] >= 40
+        sources = client.get("/api/clarity/v1/adverse-media/sources", headers=headers)
+        assert sources.status_code == 200
+        assert any(row["kind"] == "gdelt" and row["active"] is False for row in sources.json())
+        admin = client.post("/api/clarity/v1/auth/login", json={"email": ADMIN_EMAIL, "password": DEMO_PASSWORD}).json()["access_token"]
+        policy = client.put(
+            "/api/clarity/v1/adverse-media/policy",
+            headers={"Authorization": f"Bearer {admin}"},
+            json={"frequencies_hours": {"high": 24, "medium": 168, "low": 720}},
+        )
+        assert policy.status_code == 200
+        assert policy.json()["frequencies_hours"]["low"] == 720
+        denied = client.patch(f"/api/clarity/v1/adverse-media/sources/{sources.json()[0]['id']}", headers=headers, json={"active": True})
+        assert denied.status_code == 403
+
+
+def test_content_hash_is_stable_for_the_same_words():
+    assert content_hash("Titre", "Corps") == content_hash("Titre", "  Corps  ")
+    old = utcnow() - timedelta(days=1)
+    assert old < utcnow()

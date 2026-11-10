@@ -37,6 +37,17 @@ class Settings(BaseSettings):
     core_banking_hook_url: str = ""
     admin_username: str = "admin"
     admin_password: str = "password"
+    # Registre National des Entreprises (WS-KYC / WS-BE). Token and subscription ids
+    # are issued by the RNE and are not part of the public website.
+    rne_base_url: str = "https://api.registre-entreprises.tn:8243"
+    rne_token: str = ""
+    rne_kyc_subscription_id: str = ""
+    rne_kyc_subscriber_id: str = ""
+    rne_ubo_subscription_id: str = ""
+    rne_ubo_subscriber_id: str = ""
+    rne_ubo_motif: str = "1"
+    rne_kyc_path: str = "/WS-KYC/1"
+    rne_ubo_path: str = "/WS-BE/1"
     auth_mode: str = "oidc"
     oidc_issuer: str = ""
     oidc_client_id: str = "web-app"

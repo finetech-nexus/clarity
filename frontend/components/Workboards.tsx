@@ -457,12 +457,21 @@ const PURPOSES = [
 
 type ProviderField = { key: string; label: string; secret: boolean };
 type ProviderSpec = { id: string; purpose: string; name: string; hint: string; fields: ProviderField[] };
+type ScreeningSource = {
+  id: string;
+  name: string;
+  level: string;
+  detail: string;
+  covered: boolean;
+  enabled: boolean;
+};
 
 export function IntegrationBoard() {
   const [rows, setRows] = useState<Row[]>([]);
   const [catalog, setCatalog] = useState<ProviderSpec[]>([]);
   const [chosen, setChosen] = useState<Record<string, string>>({});
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [sources, setSources] = useState<ScreeningSource[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -473,6 +482,9 @@ export function IntegrationBoard() {
     ]);
     setRows(connections);
     setCatalog(providers);
+    const sanctions = connections.find((item) => item.kind === "sanctions");
+    const listed = Array.isArray(sanctions?.sources) ? (sanctions.sources as ScreeningSource[]) : [];
+    setSources(listed);
   }
 
   useEffect(() => {
@@ -495,9 +507,16 @@ export function IntegrationBoard() {
     setError("");
     const { provider } = providerFor(kind);
     if (!provider) return;
-    const body: Record<string, string> = { provider: provider.id };
+    const body: Record<string, unknown> = { provider: provider.id };
     for (const [key, item] of Object.entries(drafts)) {
       if (key.startsWith(`${kind}.`) && item) body[key.slice(kind.length + 1)] = item;
+    }
+    if (kind === "sanctions") {
+      const master = sources.find((source) => source.id === "opensanctions");
+      body.enabled = master ? master.enabled : true;
+      body.sources = Object.fromEntries(
+        sources.filter((source) => source.id !== "opensanctions").map((source) => [source.id, source.enabled])
+      );
     }
     try {
       await api(`/api/clarity/v1/integrations/${kind}`, { method: "PATCH", body: JSON.stringify(body) });
@@ -563,6 +582,31 @@ export function IntegrationBoard() {
                 </label>
               ))}
               <p>{provider.hint}</p>
+              {kind === "sanctions" && provider.id === "opensanctions" && sources.length ? (
+                <fieldset className="stack">
+                  <legend>Contrôles vrai / faux</legend>
+                  {sources.map((source) => (
+                    <label key={source.id}>
+                      <input
+                        type="checkbox"
+                        checked={source.enabled}
+                        onChange={(event) =>
+                          setSources((current) =>
+                            current.map((item) => (item.id === source.id ? { ...item, enabled: event.target.checked } : item))
+                          )
+                        }
+                      />
+                      {source.name}
+                      <span className="label">
+                        {" "}
+                        · {source.level}
+                        {source.id !== "opensanctions" && !source.covered ? " · pas de liste OpenSanctions publiée" : ""}
+                      </span>
+                      <div className="label">{source.detail}</div>
+                    </label>
+                  ))}
+                </fieldset>
+              ) : null}
               {row?.connection_message ? <p>{String(row.connection_message)}</p> : null}
               <div className="actions">
                 <button type="submit">Enregistrer</button>

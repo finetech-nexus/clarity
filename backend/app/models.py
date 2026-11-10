@@ -588,3 +588,198 @@ class BatchExecution(Base):
     decisions_created: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AdverseMediaSource(Base):
+    __tablename__ = "adverse_media_sources"
+    __table_args__ = (UniqueConstraint("tenant_id", "name"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    name: Mapped[str] = mapped_column(String(160))
+    kind: Mapped[str] = mapped_column(String(40))
+    url: Mapped[str] = mapped_column(String(500), default="")
+    language: Mapped[str] = mapped_column(String(16), default="multi")
+    frequency_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    active: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_collected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    availability: Mapped[str] = mapped_column(String(20), default="unknown")
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    config: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AdverseMediaArticle(Base):
+    __tablename__ = "adverse_media_articles"
+    __table_args__ = (UniqueConstraint("tenant_id", "url"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    source_id: Mapped[str] = mapped_column(ForeignKey("adverse_media_sources.id"), index=True)
+    external_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    url: Mapped[str] = mapped_column(String(500))
+    title: Mapped[str] = mapped_column(String(500), default="")
+    language: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    content_hash: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="queued")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AdverseMediaArticleVersion(Base):
+    __tablename__ = "adverse_media_article_versions"
+    __table_args__ = (UniqueConstraint("article_id", "content_hash"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    article_id: Mapped[str] = mapped_column(ForeignKey("adverse_media_articles.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    content_hash: Mapped[str] = mapped_column(String(64), index=True)
+    title: Mapped[str] = mapped_column(String(500), default="")
+    body: Mapped[str] = mapped_column(Text, default="")
+    nlp_status: Mapped[str] = mapped_column(String(32), default="pending")
+    analyzed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    nlp_engine_version: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    analysis: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AdverseMediaEntity(Base):
+    __tablename__ = "adverse_media_entities"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    article_version_id: Mapped[str] = mapped_column(ForeignKey("adverse_media_article_versions.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(32))
+    name: Mapped[str] = mapped_column(String(240))
+    normalized_name: Mapped[str] = mapped_column(String(240), index=True)
+    attributes: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class AdverseMediaEntityMention(Base):
+    __tablename__ = "adverse_media_entity_mentions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    entity_id: Mapped[str] = mapped_column(ForeignKey("adverse_media_entities.id"), index=True)
+    article_version_id: Mapped[str] = mapped_column(ForeignKey("adverse_media_article_versions.id"), index=True)
+    excerpt: Mapped[str] = mapped_column(Text, default="")
+    stance: Mapped[str] = mapped_column(String(32), default="mention")
+    negated: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class AdverseMediaEvent(Base):
+    __tablename__ = "adverse_media_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    article_version_id: Mapped[str] = mapped_column(ForeignKey("adverse_media_article_versions.id"), index=True)
+    entity_id: Mapped[str | None] = mapped_column(ForeignKey("adverse_media_entities.id"), nullable=True, index=True)
+    category: Mapped[str] = mapped_column(String(40))
+    stance: Mapped[str] = mapped_column(String(32))
+    negated: Mapped[bool] = mapped_column(Boolean, default=False)
+    confidence: Mapped[int] = mapped_column(Integer, default=0)
+    excerpt: Mapped[str] = mapped_column(Text, default="")
+
+
+class AdverseMediaMatch(Base):
+    __tablename__ = "adverse_media_matches"
+    __table_args__ = (UniqueConstraint("entity_id", "subject_key"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    entity_id: Mapped[str] = mapped_column(ForeignKey("adverse_media_entities.id"), index=True)
+    customer_id: Mapped[str | None] = mapped_column(ForeignKey("customers.id"), nullable=True, index=True)
+    party_id: Mapped[str | None] = mapped_column(ForeignKey("parties.id"), nullable=True, index=True)
+    subject_key: Mapped[str] = mapped_column(String(80))
+    identity_score: Mapped[int] = mapped_column(Integer, default=0)
+    media_score: Mapped[int] = mapped_column(Integer, default=0)
+    explanation: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AdverseMediaAlert(Base):
+    __tablename__ = "adverse_media_alerts"
+    __table_args__ = (UniqueConstraint("tenant_id", "dedup_key"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    customer_id: Mapped[str | None] = mapped_column(ForeignKey("customers.id"), nullable=True, index=True)
+    match_id: Mapped[str | None] = mapped_column(ForeignKey("adverse_media_matches.id"), nullable=True)
+    event_id: Mapped[str | None] = mapped_column(ForeignKey("adverse_media_events.id"), nullable=True)
+    assignee_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    title: Mapped[str] = mapped_column(String(240))
+    status: Mapped[str] = mapped_column(String(40), default="new")
+    priority: Mapped[str] = mapped_column(String(20), default="medium")
+    dedup_key: Mapped[str] = mapped_column(String(64))
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AdverseMediaInvestigation(Base):
+    __tablename__ = "adverse_media_investigations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    alert_id: Mapped[str] = mapped_column(ForeignKey("adverse_media_alerts.id"), unique=True)
+    assignee_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    status: Mapped[str] = mapped_column(String(40), default="new")
+    comments: Mapped[list] = mapped_column(JSON, default=list)
+    attachments: Mapped[list] = mapped_column(JSON, default=list)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AdverseMediaDecision(Base):
+    __tablename__ = "adverse_media_decisions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    alert_id: Mapped[str] = mapped_column(ForeignKey("adverse_media_alerts.id"), index=True)
+    outcome: Mapped[str] = mapped_column(String(40))
+    rationale: Mapped[str] = mapped_column(Text)
+    actor: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AdverseMediaCollectionLog(Base):
+    __tablename__ = "adverse_media_collection_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    source_id: Mapped[str] = mapped_column(ForeignKey("adverse_media_sources.id"), index=True)
+    status: Mapped[str] = mapped_column(String(32))
+    fetched_count: Mapped[int] = mapped_column(Integer, default=0)
+    stored_count: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AdverseMediaProcessingLog(Base):
+    __tablename__ = "adverse_media_processing_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    article_version_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    customer_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    stage: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(32))
+    attempt: Mapped[int] = mapped_column(Integer, default=1)
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AdverseMediaAuditLog(Base):
+    __tablename__ = "adverse_media_audit_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    actor: Mapped[str] = mapped_column(String(200))
+    action: Mapped[str] = mapped_column(String(80))
+    entity_type: Mapped[str] = mapped_column(String(40))
+    entity_id: Mapped[str] = mapped_column(String(36))
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

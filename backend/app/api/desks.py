@@ -419,6 +419,14 @@ def _review_flags(db: Session, workflow: WorkflowInstance, customer: Customer | 
         reasons.append("face")
     if _document_authenticity_factors(identity):
         reasons.append("document")
+    registry = (workflow.context or {}).get("registry") if isinstance((workflow.context or {}).get("registry"), dict) else {}
+    if workflow.definition_key == "clarityKybBusiness" and registry:
+        if registry.get("status") not in {None, "", "found", "skipped", "invalid"} or registry.get("active") is False:
+            reasons.append("registry")
+        if registry.get("name_mismatch"):
+            reasons.append("registry_name")
+        if registry.get("ubo_declared") is False and not registry.get("beneficial_owners"):
+            reasons.append("ubo")
     return {"alert": bool(reasons), "alert_reasons": reasons, "mismatched": mismatched}
 
 
@@ -589,6 +597,7 @@ def kyc_queue(q: str = "", kind: str = "", limit: int | None = None, offset: int
 
 @router.get("/kyc/{runtime_id}")
 def kyc_case(runtime_id: str, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    from app.adverse_media import desk_summary
     from app.models import RiskAssessment
     from app.services import RISK_METHODOLOGY, assess_customer, authenticity_for_desk
 
@@ -622,12 +631,67 @@ def kyc_case(runtime_id: str, principal: Principal = Depends(clarity_principal),
         "alert": flags["alert"],
         "alert_reasons": flags["alert_reasons"],
         "steps": process_steps(workflow.definition_key, workflow.state),
+        "registry": (workflow.context or {}).get("registry"),
         "requested_documents": list((workflow.context or {}).get("documentsRequested") or []),
         "notes": list((workflow.context or {}).get("notes") or []),
         "face_match": stored_face_match(db, workflow),
         "face_threshold": face_threshold(db, principal.tenant_id),
         "authenticity": authenticity_for_desk(documents, stored_face_match(db, workflow)),
+        "adverse_media": None if customer is None else desk_summary(db, customer),
     }
+
+
+@router.post("/kyc/{runtime_id}/adverse-media")
+def screen_kyc_adverse(runtime_id: str, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    from app.adverse_media import AdverseMediaError, screen_customer
+
+    if not principal.allows("analyst", "investigator", "checker"):
+        raise clarity_error(403, "forbidden", "Criblage médias réservé à la conformité.")
+    workflow = _workflow(db, principal, runtime_id)
+    if not workflow.customer_id:
+        raise clarity_error(400, "invalid", "Ce dossier n'a pas de client.")
+    try:
+        screen_customer(db, principal.tenant_id, workflow.customer_id, trigger="manual")
+    except AdverseMediaError as exc:
+        raise clarity_error(400, "invalid", exc.message) from exc
+    audit(db, principal.tenant_id, actor_label(principal), "adverse_media.screen", "customer", workflow.customer_id, {"workflow_id": workflow.id})
+    return kyc_case(runtime_id, principal, db)
+
+
+@router.post("/kyc/{runtime_id}/adverse-media/alerts/{alert_id}")
+def update_kyc_adverse_alert(runtime_id: str, alert_id: str, body: dict, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    from app.adverse_media import AdverseMediaError, update_alert
+    from app.models import AdverseMediaAlert
+
+    if not principal.allows("analyst", "investigator", "checker"):
+        raise clarity_error(403, "forbidden", "Mise à jour réservée à la conformité.")
+    workflow = _workflow(db, principal, runtime_id)
+    alert = db.get(AdverseMediaAlert, alert_id)
+    if not alert or alert.tenant_id != principal.tenant_id or alert.customer_id != workflow.customer_id:
+        raise clarity_error(404, "not_found", "Alerte introuvable.")
+    try:
+        update_alert(db, alert, body, actor_label(principal))
+    except AdverseMediaError as exc:
+        raise clarity_error(400, "invalid", exc.message) from exc
+    return kyc_case(runtime_id, principal, db)
+
+
+@router.post("/kyc/{runtime_id}/adverse-media/alerts/{alert_id}/decision")
+def decide_kyc_adverse_alert(runtime_id: str, alert_id: str, body: dict, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    from app.adverse_media import AdverseMediaError, record_decision
+    from app.models import AdverseMediaAlert
+
+    if not principal.allows("analyst", "investigator", "checker"):
+        raise clarity_error(403, "forbidden", "Décision réservée à la conformité.")
+    workflow = _workflow(db, principal, runtime_id)
+    alert = db.get(AdverseMediaAlert, alert_id)
+    if not alert or alert.tenant_id != principal.tenant_id or alert.customer_id != workflow.customer_id:
+        raise clarity_error(404, "not_found", "Alerte introuvable.")
+    try:
+        record_decision(db, alert, str(body.get("outcome") or ""), str(body.get("rationale") or ""), actor_label(principal))
+    except AdverseMediaError as exc:
+        raise clarity_error(400, "invalid", exc.message) from exc
+    return kyc_case(runtime_id, principal, db)
 
 
 @router.post("/kyc/{runtime_id}/notes")

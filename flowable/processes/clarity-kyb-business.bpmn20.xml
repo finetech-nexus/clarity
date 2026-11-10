@@ -6,18 +6,23 @@
   <process id="clarityKybBusiness" name="Entrée en relation personne morale" isExecutable="true">
     <startEvent id="start"/>
     <userTask id="collect" name="Collecte des informations société"/>
+    <userTask id="registry" name="Contrôle du registre (RNE)"/>
+    <userTask id="ubo" name="Bénéficiaires effectifs"/>
     <userTask id="verify" name="Contrôles documentaires"/>
     <userTask id="screen" name="Criblage des parties"/>
     <userTask id="score" name="Évaluation du risque"/>
     <userTask id="analystReview" name="Revue analyste"/>
     <exclusiveGateway id="afterAnalyst"/>
-    <userTask id="checkerReview" name="Approbation checker"/>
+    <userTask id="checkerReview" name="Contrôle checker"/>
     <exclusiveGateway id="afterChecker"/>
+    <userTask id="documentsRequested" name="Pièces demandées"/>
     <userTask id="remediate" name="Demande de complément"/>
     <endEvent id="approvedEnd"/>
     <endEvent id="rejectedEnd"/>
     <sequenceFlow id="k1" sourceRef="start" targetRef="collect"/>
-    <sequenceFlow id="k2" sourceRef="collect" targetRef="verify"/>
+    <sequenceFlow id="k2" sourceRef="collect" targetRef="registry"/>
+    <sequenceFlow id="k2b" sourceRef="registry" targetRef="ubo"/>
+    <sequenceFlow id="k2c" sourceRef="ubo" targetRef="verify"/>
     <sequenceFlow id="k3" sourceRef="verify" targetRef="screen"/>
     <sequenceFlow id="k4" sourceRef="screen" targetRef="score"/>
     <sequenceFlow id="k5" sourceRef="score" targetRef="analystReview"/>
@@ -31,7 +36,11 @@
     <sequenceFlow id="k9" sourceRef="afterAnalyst" targetRef="remediate">
       <conditionExpression xsi:type="tFormalExpression"><![CDATA[${action == 'remediate'}]]></conditionExpression>
     </sequenceFlow>
+    <sequenceFlow id="k9b" sourceRef="afterAnalyst" targetRef="documentsRequested">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${action == 'requestDocuments'}]]></conditionExpression>
+    </sequenceFlow>
     <sequenceFlow id="k10" sourceRef="remediate" targetRef="collect"/>
+    <sequenceFlow id="k10b" sourceRef="documentsRequested" targetRef="analystReview"/>
     <sequenceFlow id="k11" sourceRef="checkerReview" targetRef="afterChecker"/>
     <sequenceFlow id="k12" sourceRef="afterChecker" targetRef="approvedEnd">
       <conditionExpression xsi:type="tFormalExpression"><![CDATA[${action == 'approve'}]]></conditionExpression>
@@ -41,6 +50,9 @@
     </sequenceFlow>
     <sequenceFlow id="k14" sourceRef="afterChecker" targetRef="analystReview">
       <conditionExpression xsi:type="tFormalExpression"><![CDATA[${action == 'return'}]]></conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="k15" sourceRef="afterChecker" targetRef="documentsRequested">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${action == 'requestDocuments'}]]></conditionExpression>
     </sequenceFlow>
   </process>
 </definitions>

@@ -535,8 +535,10 @@ KYC_DOCUMENTS = [
     {"id": "doc-address", "category": "proof_of_address", "type": "proof_of_address", "issuer": {"country": "FR"}, "version": 1, "propertiesSchema": {"type": "object", "properties": {}}, "required": True, "i18n": _doc_i18n("Justificatif de domicile", "Proof of address", "إثبات العنوان")},
 ]
 KYB_DOCUMENTS = [
-    {"id": "doc-registration", "category": "proof_of_registration", "type": "certificate_of_registration", "issuer": {"country": "ZZ"}, "version": 1, "propertiesSchema": {"type": "object", "properties": {}}, "required": True},
-    {"id": "doc-company-address", "category": "proof_of_address", "type": "general_document", "issuer": {"country": "ZZ"}, "version": 1, "propertiesSchema": {"type": "object", "properties": {}}, "required": True},
+    {"id": "doc-registration", "category": "proof_of_registration", "type": "certificate_of_registration", "issuer": {"country": "TN"}, "version": 1, "propertiesSchema": {"type": "object", "properties": {}}, "required": True, "i18n": _doc_i18n("Extrait RNE", "RNE extract", "مستخرج السجل")},
+    {"id": "doc-statutes", "category": "corporate", "type": "articles_of_association", "issuer": {"country": "TN"}, "version": 1, "propertiesSchema": {"type": "object", "properties": {}}, "required": True, "i18n": _doc_i18n("Statuts", "Articles of association", "القانون الأساسي")},
+    {"id": "doc-ubo", "category": "ownership", "type": "ubo_declaration", "issuer": {"country": "TN"}, "version": 1, "propertiesSchema": {"type": "object", "properties": {}}, "required": True, "i18n": _doc_i18n("Déclaration des bénéficiaires effectifs", "Beneficial owner declaration", "تصريح المنتفعين الفعليين")},
+    {"id": "doc-representative-id", "category": "identity", "type": "id_card", "issuer": {"country": "TN"}, "version": 1, "propertiesSchema": {"type": "object", "properties": {}}, "required": True, "i18n": _doc_i18n("Identité du représentant légal", "Legal representative identity", "هوية الممثل القانوني")},
 ]
 
 

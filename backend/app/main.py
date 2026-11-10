@@ -72,7 +72,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             load_overlay(session)
         finally:
             session.close()
+        stop_adverse = threading.Event()
+        app.state.stop_adverse = stop_adverse
+        if settings.env != "test":
+            from app.adverse_media import run_due
+
+            def _adverse_loop() -> None:
+                while not stop_adverse.wait(60):
+                    cycle = database.session_factory()
+                    try:
+                        run_due(cycle)
+                        cycle.commit()
+                    except Exception:
+                        cycle.rollback()
+                        _logger.exception("adverse media cycle failed")
+                    finally:
+                        cycle.close()
+
+            threading.Thread(target=_adverse_loop, name="adverse-media", daemon=True).start()
         yield
+        stop_adverse.set()
 
     app = FastAPI(
         title="Clarity",
@@ -93,8 +112,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(ballerine_router)
     app.include_router(ballerine_studio_router)
     app.include_router(clarity_router)
+    from app.api.adverse import router as adverse_router
     from app.api.desks import router as desks_router
 
+    app.include_router(adverse_router)
     app.include_router(desks_router)
     from app.api.console_coverage import mount
 

@@ -11,6 +11,7 @@
     <exclusiveGateway id="afterAnalyst"/>
     <userTask id="checkerReview" name="Contrôle checker"/>
     <exclusiveGateway id="afterChecker"/>
+    <userTask id="documentsRequested" name="Pièces demandées"/>
     <userTask id="remediate" name="Demande de complément"/>
     <endEvent id="approvedEnd"/>
     <endEvent id="rejectedEnd"/>
@@ -27,7 +28,11 @@
     <sequenceFlow id="f7" sourceRef="afterAnalyst" targetRef="remediate">
       <conditionExpression xsi:type="tFormalExpression"><![CDATA[${action == 'remediate'}]]></conditionExpression>
     </sequenceFlow>
+    <sequenceFlow id="f7b" sourceRef="afterAnalyst" targetRef="documentsRequested">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${action == 'requestDocuments'}]]></conditionExpression>
+    </sequenceFlow>
     <sequenceFlow id="f8" sourceRef="remediate" targetRef="screen"/>
+    <sequenceFlow id="f8b" sourceRef="documentsRequested" targetRef="analystReview"/>
     <sequenceFlow id="f9" sourceRef="checkerReview" targetRef="afterChecker"/>
     <sequenceFlow id="f10" sourceRef="afterChecker" targetRef="approvedEnd">
       <conditionExpression xsi:type="tFormalExpression"><![CDATA[${action == 'approve'}]]></conditionExpression>
@@ -37,6 +42,9 @@
     </sequenceFlow>
     <sequenceFlow id="f12" sourceRef="afterChecker" targetRef="analystReview">
       <conditionExpression xsi:type="tFormalExpression"><![CDATA[${action == 'return'}]]></conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="f13" sourceRef="afterChecker" targetRef="documentsRequested">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${action == 'requestDocuments'}]]></conditionExpression>
     </sequenceFlow>
   </process>
 </definitions>

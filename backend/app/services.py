@@ -473,8 +473,11 @@ def find_candidates(db: Session, tenant: Tenant, query_body: dict, counterparty:
     rich_synthetic = any(len(match_topics(item.get("payload"))) >= 4 for item in rows)
     if not rich_synthetic:
         from app.providers import match_opensanctions
+        from app.screening_sources import screening_scope
 
-        for candidate in match_opensanctions(query_name, kind or "Person", dob, country):
+        master, selected = screening_scope(db, tenant.id)
+        candidates = match_opensanctions(query_name, kind or "Person", dob, country, selected) if master else []
+        for candidate in candidates:
             if candidate["score"] < threshold:
                 continue
             if _whitelisted(db, tenant.id, counterparty, candidate["entity_id"]):
@@ -1563,7 +1566,32 @@ def delete_workflow(db: Session, principal: Principal, workflow: WorkflowInstanc
     return {"id": workflow_id, "runtime_id": runtime_id, "files": removed_files}
 
 
+def _walk_automatic(db: Session, engine, workflow: WorkflowInstance, *, stop: set[str] | None = None) -> None:
+    """Follow automatic transitions. Stop before a named state, or when a person must act."""
+    for _ in range(12):
+        task = db.scalar(select(WorkflowTask).where(WorkflowTask.workflow_id == workflow.id, WorkflowTask.status == "open"))
+        if task is None or (stop and task.task_key in stop):
+            return
+        if not _advance_if_ready(db, engine, workflow):
+            return
+
+
 def _progress_verification(db: Session, engine, tenant: Tenant, customer: Customer, workflow: WorkflowInstance) -> None:
+    # KYB inserts the register check and the beneficial-owner step before screening.
+    # Walking only those automatic links keeps the case on the analyst once screening is clear.
+    if workflow.definition_key == "clarityKybBusiness":
+        _walk_automatic(db, engine, workflow, stop={"screen"})
+        _screen_customer(db, tenant, customer)
+        pending = _customer_has_pending_screening(db, customer.id)
+        if not pending:
+            _walk_automatic(db, engine, workflow)
+            assess_customer(db, tenant, customer, source="ruleset")
+            if customer.canonical_status not in {"approved", "approved-partially", "rejected"}:
+                customer.canonical_status = "collecting"
+        else:
+            customer.canonical_status = "screening_pending"
+            assess_customer(db, tenant, customer, source="ruleset")
+        return
     _advance_if_ready(db, engine, workflow)
     _advance_if_ready(db, engine, workflow)
     _screen_customer(db, tenant, customer)
@@ -1705,6 +1733,19 @@ def start_customer_workflow(
     _sync_customer(db, customer, kind, data)
     if kind == "business" and customer.business is not None and not db.scalar(select(Party).where(Party.business_customer_id == customer.id)):
         _parties(db, tenant.id, customer.id, data)
+    registry = data.get("registry") if isinstance(data.get("registry"), dict) else None
+    if kind == "business" and registry:
+        db.add(
+            VerificationCheck(
+                tenant_id=tenant.id,
+                customer_id=customer.id,
+                provider="rne",
+                kind="kyb_registry",
+                status=str(registry.get("status") or "unknown"),
+                production=bool(registry.get("production")),
+                detail=registry,
+            )
+        )
     instance_id, task = engine.start(definition, customer.id, {})
     workflow = WorkflowInstance(
         tenant_id=tenant.id,
@@ -1776,28 +1817,71 @@ def _business(customer_id: str, data: dict) -> BusinessProfile:
 
 def _parties(db: Session, tenant_id: str, business_id: str, data: dict) -> None:
     for director in data.get("directors") or []:
+        name = director.get("name") or director.get("full_name") or ""
+        if not str(name).strip():
+            continue
+        role = str(director.get("role") or "director")
+        if role not in {"director", "representative"}:
+            role = "director"
         db.add(
             Party(
                 tenant_id=tenant_id,
                 business_customer_id=business_id,
-                role="director",
-                full_name=director.get("name") or director.get("full_name") or "",
+                role=role,
+                full_name=name,
                 date_of_birth=director.get("date_of_birth") or director.get("dateOfBirth"),
                 nationality=director.get("nationality"),
             )
         )
     for owner in data.get("beneficial_owners") or data.get("ubos") or []:
+        name = owner.get("name") or owner.get("full_name") or ""
+        if not str(name).strip():
+            continue
         db.add(
             Party(
                 tenant_id=tenant_id,
                 business_customer_id=business_id,
                 role="beneficial_owner",
-                full_name=owner.get("name") or owner.get("full_name") or "",
+                full_name=name,
                 date_of_birth=owner.get("date_of_birth") or owner.get("dateOfBirth"),
                 nationality=owner.get("nationality"),
                 ownership_pct=owner.get("ownership_pct") or owner.get("ownershipPercentage"),
             )
         )
+
+
+def open_business_workflow(
+    db: Session,
+    engine,
+    tenant: Tenant,
+    principal: Principal,
+    data: dict,
+    external_ref: str | None,
+    *,
+    synthetic: bool = True,
+):
+    """Open a KYB case and consult the Tunisian business register when the id matches."""
+    from app.rne import prepare_business
+
+    prepared = prepare_business(data)
+    prepared["companyName"] = prepared.get("legal_name") or prepared.get("companyName")
+    context = {
+        "entity": {"type": "business", "id": external_ref, "data": prepared},
+        "source": "clarity",
+        "registry": prepared.get("registry"),
+    }
+    return start_customer_workflow(
+        db,
+        engine,
+        tenant,
+        principal,
+        kind="business",
+        external_ref=external_ref,
+        data=prepared,
+        context=context,
+        config={},
+        synthetic=synthetic,
+    )
 
 
 def _latest_customer_screening(db: Session, customer: Customer) -> ScreeningCheck | None:
@@ -1910,12 +1994,15 @@ def _customer_has_pending_screening(db: Session, customer_id: str) -> bool:
     return pending is not None
 
 
-RISK_METHODOLOGY = "clarity-risk-3.3"
+RISK_METHODOLOGY = "clarity-risk-3.4"
 RISK_FORMULA_NOTE = (
-    "Score de la dernière vérification uniquement = AML + visage + authenticité + historique d'opérations + pays/structure. "
-    "AML : pondération par topic "
+    "Score de la dernière vérification uniquement = AML + médias défavorables + visage + authenticité + historique d'opérations + pays/structure. "
+    "AML : pondération par topic OpenSanctions "
     "(Sanctioned / Wanted / Export controlled élevés ; Debarred / Disqualified / PEP moyens ; "
     "Person of interest / Politician informatifs). "
+    "Médias : 0 sans décision humaine ; 8 si allégation, enquête ou poursuites confirmées ; "
+    "16 si une condamnation rapportée est confirmée ; plafond 24. Mention, démenti, acquittement et faux positif : 0. "
+    "Le moteur médias ne conclut pas à la culpabilité. "
     "Visage : échec ou score faible. "
     "Authenticité des pièces : toujours OK pour le moment (mécanisme à préciser). "
     "Absence de MRZ/code-barres sur pièce d'identité française ou à puce : normale. "
@@ -2473,9 +2560,15 @@ def assess_customer(db: Session, tenant: Tenant, customer: Customer, source: str
     for factor in _operation_history_factors(db, customer):
         score += int(factor["points"])
         factors.append(factor)
+    from app.adverse_media import media_risk_factor
+
+    media_factor = media_risk_factor(db, customer)
+    if media_factor:
+        score += int(media_factor["points"])
+        factors.append(media_factor)
     score = min(100, max(0, score))
     if not factors:
-        factors.append({"code": "baseline", "points": 0, "explanation": "Aucun facteur aggravant sur la dernière vérification (méthodologie clarity-risk-3.3)."})
+        factors.append({"code": "baseline", "points": 0, "explanation": "Aucun facteur aggravant sur la dernière vérification (méthodologie clarity-risk-3.4)."})
     tier = "low"
     level = 1
     if score >= 60:
