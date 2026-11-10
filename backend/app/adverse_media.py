@@ -442,15 +442,37 @@ def _read_http(url: str, timeout: int) -> bytes:
     return outcome.get("body") or b""
 
 
+def _wait_for(call, timeout: int):
+    """Run a blocking read off the batch thread so a stuck socket cannot freeze progress."""
+    outcome: dict = {}
+
+    def _load() -> None:
+        try:
+            outcome["value"] = call()
+        except Exception as exc:
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=_load, name="adverse-archive", daemon=True)
+    worker.start()
+    worker.join(max(1, int(timeout)))
+    if worker.is_alive():
+        raise AdverseMediaError("Source indisponible : délai dépassé.")
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome.get("value")
+
+
 def http_get(url: str, timeout: int) -> bytes:
     if "api.gdeltproject.org" not in url:
         return _read_http(url, timeout)
     global _GDELT_READY
-    with _GDELT_LOCK:
+    if not _GDELT_LOCK.acquire(timeout=max(1, min(int(timeout), 8))):
+        raise AdverseMediaError("GDELT est occupé.")
+    try:
         for attempt in range(3):
             wait = _GDELT_READY - time.monotonic()
             if wait > 0:
-                time.sleep(wait)
+                time.sleep(min(wait, 8))
             try:
                 body = _read_http(url, timeout)
             except AdverseMediaError as exc:
@@ -460,6 +482,8 @@ def http_get(url: str, timeout: int) -> bytes:
                 continue
             _GDELT_READY = time.monotonic() + _GDELT_GAP
             return body
+    finally:
+        _GDELT_LOCK.release()
     raise AdverseMediaError("GDELT limite les requêtes à une toutes les 5 secondes.")
 
 
@@ -1696,7 +1720,7 @@ def batch_status(db: Session, tenant_id: str) -> dict:
     }
 
 
-def release_stale_batch(db: Session, tenant_id: str, max_age_seconds: int = 180) -> None:
+def release_stale_batch(db: Session, tenant_id: str, max_age_seconds: int = 90) -> None:
     """A batch that stopped writing progress must not stay running forever."""
     row = _batch_row(db, tenant_id)
     payload = dict((row.payload if row else None) or {})
@@ -1828,17 +1852,18 @@ def run_due(db: Session, tenant_id: str | None = None) -> dict:
     now = utcnow()
     for current in tenant_ids:
         state = batch_status(db, current)
-        if state["status"] != "running":
-            due = False
-            for source in ensure_sources(db, current):
-                if not source.active or (source.config or {}).get("on_demand"):
-                    continue
-                if source.last_collected_at is None or now >= source.last_collected_at + timedelta(minutes=source.frequency_minutes):
-                    due = True
-                    break
-            if due:
-                result = run_batch(db, current, only_due=True)
-                summary["collected"] += int(result.get("stored") or 0)
+        if state["status"] == "running":
+            continue
+        due = False
+        for source in ensure_sources(db, current):
+            if not source.active or (source.config or {}).get("on_demand"):
+                continue
+            if source.last_collected_at is None or now >= source.last_collected_at + timedelta(minutes=source.frequency_minutes):
+                due = True
+                break
+        if due:
+            result = run_batch(db, current, only_due=True)
+            summary["collected"] += int(result.get("stored") or 0)
         processed = process_queue(db, current)
         summary["analyzed"] += int(processed["analyzed"])
         summary["rescreened"] += rescreen_due(db, current)
@@ -2228,6 +2253,7 @@ def collect_history(
     fetch=http_get,
     now: datetime | None = None,
     progress=None,
+    call_timeout: int = 15,
 ) -> dict:
     """Read five years of Google News and GDELT. Called by the batch, never by a name search."""
     span = _history_span(years)
@@ -2237,28 +2263,32 @@ def collect_history(
     retrieved = 0
     stored = 0
     errors: list[str] = []
+    labels = ("Google Actualités", "Google Actualités", "GDELT")
     for index, (start, end) in enumerate(windows, start=1):
-        if progress is not None:
-            progress(index - 1, stored, f"Archives {index}/{span} ans")
         targets = (
             (_archive_google_url(start, end, "fr"), google, parse_rss),
             (_archive_google_url(start, end, "en"), google, parse_rss),
             (_archive_gdelt_url(start, end), gdelt or google, parse_gdelt),
         )
-        for url, source, parser in targets:
+        for label, (url, source, parser) in zip(labels, targets, strict=True):
+            if progress is not None:
+                progress(index - 1, stored, f"Archives {index}/{span} · {label}")
             try:
-                items = parser(fetch(url, 12))
+                payload = _wait_for(lambda url=url: fetch(url, 12), call_timeout)
+                items = parser(payload)[:12]
             except AdverseMediaError as exc:
                 errors.append(exc.message)
                 continue
             except Exception as exc:
                 errors.append(getattr(exc, "message", None) or exc.__class__.__name__)
                 continue
-            kept, added = _store_items(db, source, items[:12])
+            kept, added = _store_items(db, source, items)
             retrieved += kept
             stored += added
         if progress is not None:
             progress(index, stored, f"Archives {index}/{span} ans")
+    if progress is not None:
+        progress(span, stored, "Analyse des articles")
     for _round in range(8):
         outcome = process_queue(db, tenant_id, limit=25)
         if not outcome["analyzed"] and not outcome["failed"]:

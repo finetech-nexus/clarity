@@ -38,7 +38,7 @@ export function AdverseMediaDesk() {
   useEffect(() => {
     if (batch.status !== "running") return;
     const timer = window.setInterval(() => {
-      void api<Batch>("/api/clarity/v1/adverse-media/batch").then(setBatch).catch(() => undefined);
+      void api<Batch>("/api/clarity/v1/adverse-media/batch").then(setBatch).catch((err: Error) => setError(err.message));
     }, 2000);
     return () => window.clearInterval(timer);
   }, [batch.status]);

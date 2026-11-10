@@ -10,7 +10,7 @@ class Base(DeclarativeBase):
 
 class Database:
     def __init__(self, url: str) -> None:
-        connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
+        connect_args = {"check_same_thread": False, "timeout": 20} if url.startswith("sqlite") else {}
         self.engine = create_engine(url, connect_args=connect_args, future=True)
         self.session_factory = sessionmaker(bind=self.engine, autoflush=True, autocommit=False, future=True)
 

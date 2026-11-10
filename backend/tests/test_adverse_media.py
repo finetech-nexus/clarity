@@ -506,6 +506,20 @@ def test_slow_source_cannot_hold_the_batch_and_a_silent_batch_is_released(tmp_pa
         assert "Relancez" in status["message"]
 
 
+def test_hanging_archive_call_is_abandoned(tmp_path):
+    def fetch(_url, _timeout):
+        time.sleep(30)
+        return b"<rss></rss>"
+
+    started = time.monotonic()
+    with _client(tmp_path) as client:
+        db = _session(client)
+        history = collect_history(db, TENANT_ID, years=1, fetch=fetch, now=datetime(2026, 1, 15, tzinfo=UTC), call_timeout=1)
+        assert history["errors"]
+        assert "délai" in history["errors"][0]
+    assert time.monotonic() - started < 8
+
+
 def test_five_year_archive_runs_in_the_batch_and_search_stays_local(tmp_path):
     calls = []
     moment = datetime(2026, 1, 15, tzinfo=UTC)
