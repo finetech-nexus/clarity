@@ -33,7 +33,7 @@ L'analyse `lexicon-1.0` classe des expressions. Elle ne produit pas une lecture 
 
 GDELT publie le titre. Le collecteur courant ouvre ensuite la page de l'article. Si le site ne répond pas, seul le titre est enregistré.
 
-Si l'appel HTTP échoue, la même URL est relue une fois avec Scrapy. Un refus GDELT « une requête toutes les 5 secondes » n'est pas relancé par Scrapy.
+Si une lecture HTTP est nécessaire, elle passe par Scrapy, y compris les flux RSS, Google Actualités et GDELT. GDELT reste limité à une requête toutes les 5 secondes.
 
 La recherche d'un nom, `POST /api/clarity/v1/adverse-media/search`, lit uniquement les articles déjà collectés. Elle ne contacte pas Google ni GDELT.
 

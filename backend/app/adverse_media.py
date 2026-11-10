@@ -15,9 +15,7 @@ import re
 import threading
 import time
 import unicodedata
-import urllib.error
 import urllib.parse
-import urllib.request
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from difflib import SequenceMatcher
@@ -402,36 +400,10 @@ def _quota(source: AdverseMediaSource) -> int:
     return max(1, min(int((source.config or {}).get("quota_per_hour") or 30), 500))
 
 
-def _urllib_get(url: str, timeout: int) -> bytes:
-    request = urllib.request.Request(url, headers={"User-Agent": "ClarityAdverseMedia/1.0", "Accept": "application/json, application/rss+xml, application/xml, text/xml, */*"})
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.read(750_001)[:750_000]
-    except urllib.error.HTTPError as exc:
-        detail = ""
-        try:
-            detail = exc.read(400).decode("utf-8", errors="replace")
-        except Exception:
-            detail = ""
-        if exc.code == 429 or "limit requests" in detail.lower():
-            raise AdverseMediaError("GDELT limite les requêtes à une toutes les 5 secondes.") from exc
-        raise AdverseMediaError(f"Source indisponible : HTTP {exc.code}.") from exc
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        raise AdverseMediaError(f"Source indisponible : {exc.__class__.__name__}") from exc
-
-
 def _read_http_once(url: str, timeout: int) -> bytes:
     from app.scrapy_fetch import scrapy_get
 
-    try:
-        return _urllib_get(url, timeout)
-    except AdverseMediaError as exc:
-        if "5 secondes" in exc.message:
-            raise
-        try:
-            return scrapy_get(url, timeout)
-        except AdverseMediaError:
-            raise exc from None
+    return scrapy_get(url, timeout)
 
 
 def _read_http(url: str, timeout: int) -> bytes:

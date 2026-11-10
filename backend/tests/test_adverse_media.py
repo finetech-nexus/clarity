@@ -419,59 +419,36 @@ def test_deep_search_walks_gdelt_history_and_keeps_only_returned_articles(tmp_pa
 def test_gdelt_rate_limit_waits_and_retries(monkeypatch):
     calls = {"n": 0}
 
-    class Response:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def read(self, _size):
-            return b'{"articles":[]}'
-
-    def urlopen(request, timeout):
+    def scrapy_get(_url, timeout):
         calls["n"] += 1
         assert timeout == 5
         if calls["n"] == 1:
-            raise urllib.error.HTTPError(request.full_url, 429, "Too Many Requests", {}, io.BytesIO(b"Please limit requests to one every 5 seconds"))
-        return Response()
+            raise AdverseMediaError("GDELT limite les requêtes à une toutes les 5 secondes.")
+        return b'{"articles":[]}'
 
-    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr("app.scrapy_fetch.scrapy_get", scrapy_get)
     monkeypatch.setattr("app.adverse_media.time.sleep", lambda *_args: None)
     body = http_get("https://api.gdeltproject.org/api/v2/doc/doc?query=Tunisie", 5)
     assert body == b'{"articles":[]}'
     assert calls["n"] == 2
 
 
-def test_scrapy_reads_the_url_when_the_http_call_fails(monkeypatch):
+def test_every_download_uses_scrapy(monkeypatch):
     seen = {}
-
-    def urlopen(request, timeout):
-        raise urllib.error.HTTPError(request.full_url, 503, "unavailable", {}, io.BytesIO(b"down"))
 
     def scrapy_get(url, timeout):
         seen["url"] = url
         seen["timeout"] = timeout
         return b"<rss><channel></channel></rss>"
 
-    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    def urlopen(*_args, **_kwargs):
+        raise AssertionError("urllib ne doit plus lire les sources")
+
     monkeypatch.setattr("app.scrapy_fetch.scrapy_get", scrapy_get)
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
     body = http_get("https://exemple.media/rss.xml", 8)
     assert body.startswith(b"<rss>")
-    assert seen["url"] == "https://exemple.media/rss.xml"
-    assert seen["timeout"] == 8
-
-    def blocked(request, timeout):
-        raise urllib.error.HTTPError(request.full_url, 429, "Too Many Requests", {}, io.BytesIO(b"Please limit requests to one every 5 seconds"))
-
-    monkeypatch.setattr(urllib.request, "urlopen", blocked)
-    monkeypatch.setattr("app.adverse_media.time.sleep", lambda *_args: None)
-    try:
-        http_get("https://api.gdeltproject.org/api/v2/doc/doc?query=Tunisie", 5)
-        raise AssertionError("le quota GDELT ne doit pas passer par Scrapy")
-    except AdverseMediaError as exc:
-        assert "5 secondes" in exc.message
-        assert seen["url"] == "https://exemple.media/rss.xml"
+    assert seen == {"url": "https://exemple.media/rss.xml", "timeout": 8}
 
 
 def test_batch_progress_stores_only_what_the_source_returns(tmp_path):
@@ -503,11 +480,11 @@ def test_batch_progress_stores_only_what_the_source_returns(tmp_path):
 
 
 def test_slow_source_cannot_hold_the_batch_and_a_silent_batch_is_released(tmp_path, monkeypatch):
-    def urlopen(_request, timeout=0):
+    def scrapy_get(_url, timeout):
         time.sleep(5)
         raise AssertionError(f"la lecture aurait dû être abandonnée ({timeout})")
 
-    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr("app.scrapy_fetch.scrapy_get", scrapy_get)
     started = time.monotonic()
     try:
         http_get("https://exemple.media/lent", 1)
