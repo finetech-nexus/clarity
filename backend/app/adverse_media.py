@@ -48,7 +48,7 @@ from app.models import (
     Party,
     Tenant,
 )
-from app.timeutil import utcnow
+from app.timeutil import as_utc, utcnow
 
 NLP_ENGINE = "lexicon-1.0"
 ALERT_STATUSES = (
@@ -402,9 +402,7 @@ def _quota(source: AdverseMediaSource) -> int:
     return max(1, min(int((source.config or {}).get("quota_per_hour") or 30), 500))
 
 
-def _read_http(url: str, timeout: int) -> bytes:
-    if not url.startswith(("https://", "http://")):
-        raise AdverseMediaError("URL refusée.")
+def _read_http_once(url: str, timeout: int) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": "ClarityAdverseMedia/1.0", "Accept": "application/json, application/rss+xml, application/xml, text/xml, */*"})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -420,6 +418,28 @@ def _read_http(url: str, timeout: int) -> bytes:
         raise AdverseMediaError(f"Source indisponible : HTTP {exc.code}.") from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise AdverseMediaError(f"Source indisponible : {exc.__class__.__name__}") from exc
+
+
+def _read_http(url: str, timeout: int) -> bytes:
+    if not url.startswith(("https://", "http://")):
+        raise AdverseMediaError("URL refusée.")
+    limit = max(1, int(timeout))
+    outcome: dict = {}
+
+    def _load() -> None:
+        try:
+            outcome["body"] = _read_http_once(url, limit)
+        except Exception as exc:
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=_load, name="adverse-http", daemon=True)
+    worker.start()
+    worker.join(limit + 1)
+    if worker.is_alive():
+        raise AdverseMediaError("Source indisponible : délai dépassé.")
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome.get("body") or b""
 
 
 def http_get(url: str, timeout: int) -> bytes:
@@ -1664,6 +1684,7 @@ def _batch_row(db: Session, tenant_id: str) -> ConfigDocument | None:
 
 
 def batch_status(db: Session, tenant_id: str) -> dict:
+    release_stale_batch(db, tenant_id)
     payload = dict((_batch_row(db, tenant_id).payload if _batch_row(db, tenant_id) else None) or {})
     return {
         "status": str(payload.get("status") or "idle"),
@@ -1673,6 +1694,22 @@ def batch_status(db: Session, tenant_id: str) -> dict:
         "stored": int(payload.get("stored") or 0),
         "message": str(payload.get("message") or ""),
     }
+
+
+def release_stale_batch(db: Session, tenant_id: str, max_age_seconds: int = 180) -> None:
+    """A batch that stopped writing progress must not stay running forever."""
+    row = _batch_row(db, tenant_id)
+    payload = dict((row.payload if row else None) or {})
+    if row is None or payload.get("status") != "running":
+        return
+    updated = as_utc(row.updated_at) if row.updated_at else None
+    if updated is not None and utcnow() - updated < timedelta(seconds=max_age_seconds):
+        return
+    payload["status"] = "error"
+    payload["message"] = "Batch interrompu après un délai. Relancez-le."
+    row.payload = payload
+    row.updated_at = utcnow()
+    db.flush()
 
 
 def _save_batch(db: Session, tenant_id: str, payload: dict) -> None:
@@ -1733,7 +1770,7 @@ def run_batch(db: Session, tenant_id: str, *, fetch=http_get, only_due: bool = F
         _save_batch(db, tenant_id, payload)
         db.commit()
     if archive_years:
-        def _archive_progress(done: int, history_stored: int) -> None:
+        def _archive_progress(done: int, history_stored: int, message: str | None = None) -> None:
             step = len(sources) + done
             running = {
                 "status": "running",
@@ -1741,19 +1778,23 @@ def run_batch(db: Session, tenant_id: str, *, fetch=http_get, only_due: bool = F
                 "done": step,
                 "total": total,
                 "stored": stored + history_stored,
-                "message": f"Archives {done}/{archive_years} ans",
+                "message": message or f"Archives {done}/{archive_years} ans",
             }
             _save_batch(db, tenant_id, running)
             db.commit()
 
         history = collect_history(db, tenant_id, years=archive_years, fetch=fetch, progress=_archive_progress)
         stored += int(history["stored"])
+        archive_errors = history.get("errors") or []
     for _ in range(10):
         processed = process_queue(db, tenant_id, limit=20)
         db.commit()
         if not processed["analyzed"] and not processed["failed"]:
             break
-    payload = {"status": "completed", "progress": 100, "done": total, "total": total, "stored": stored, "message": "Batch terminé."}
+    message = "Batch terminé."
+    if archive_years and archive_errors:
+        message = "Batch terminé. Certaines archives n'ont pas répondu."
+    payload = {"status": "completed", "progress": 100, "done": total, "total": total, "stored": stored, "message": message}
     _save_batch(db, tenant_id, payload)
     db.commit()
     return payload
@@ -2197,6 +2238,8 @@ def collect_history(
     stored = 0
     errors: list[str] = []
     for index, (start, end) in enumerate(windows, start=1):
+        if progress is not None:
+            progress(index - 1, stored, f"Archives {index}/{span} ans")
         targets = (
             (_archive_google_url(start, end, "fr"), google, parse_rss),
             (_archive_google_url(start, end, "en"), google, parse_rss),
@@ -2208,14 +2251,14 @@ def collect_history(
             except AdverseMediaError as exc:
                 errors.append(exc.message)
                 continue
-            except (OSError, ValueError) as exc:
-                errors.append(exc.__class__.__name__)
+            except Exception as exc:
+                errors.append(getattr(exc, "message", None) or exc.__class__.__name__)
                 continue
             kept, added = _store_items(db, source, items[:12])
             retrieved += kept
             stored += added
         if progress is not None:
-            progress(index, stored)
+            progress(index, stored, f"Archives {index}/{span} ans")
     for _round in range(8):
         outcome = process_queue(db, tenant_id, limit=25)
         if not outcome["analyzed"] and not outcome["failed"]:

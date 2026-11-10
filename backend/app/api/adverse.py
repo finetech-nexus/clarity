@@ -137,8 +137,10 @@ def batch(principal: Principal = Depends(clarity_principal), db: Session = Depen
 def start_batch(request: Request, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
     if not principal.allows("admin", "analyst"):
         raise clarity_error(403, "forbidden", "Batch réservé à l'administrateur ou à l'analyste.")
-    if batch_status(db, principal.tenant_id)["status"] == "running":
-        return batch_status(db, principal.tenant_id)
+    status = batch_status(db, principal.tenant_id)
+    db.commit()
+    if status["status"] == "running":
+        return status
     return launch_batch(request.app.state.database.session_factory, principal.tenant_id)
 
 

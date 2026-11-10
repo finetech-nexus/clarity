@@ -2,6 +2,7 @@
 
 import io
 import json
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -14,6 +15,7 @@ from app.adverse_media import (
     NLP_ENGINE,
     AdverseMediaError,
     analyze_text,
+    batch_status,
     screening_contract,
     analyze_version,
     collect_source,
@@ -467,6 +469,41 @@ def test_batch_progress_stores_only_what_the_source_returns(tmp_path):
         assert licensed["stored"] == 0
         assert licensed["progress"] == 100
         assert "licence" in licensed["message"]
+
+
+def test_slow_source_cannot_hold_the_batch_and_a_silent_batch_is_released(tmp_path, monkeypatch):
+    def urlopen(_request, timeout=0):
+        time.sleep(5)
+        raise AssertionError(f"la lecture aurait dû être abandonnée ({timeout})")
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    started = time.monotonic()
+    try:
+        http_get("https://exemple.media/lent", 1)
+        raise AssertionError("délai attendu")
+    except AdverseMediaError as exc:
+        assert "délai" in exc.message
+    assert time.monotonic() - started < 3
+
+    with _client(tmp_path) as client:
+        db = _session(client)
+        from app.models import ConfigDocument
+        from app.timeutil import utcnow
+
+        row = ConfigDocument(
+            tenant_id=TENANT_ID,
+            kind="adverse_media_batch",
+            name="Adverse media batch",
+            status="active",
+            payload={"status": "running", "progress": 90, "done": 28, "total": 31, "stored": 4, "message": "Archives 2/5 ans"},
+        )
+        db.add(row)
+        db.commit()
+        row.updated_at = utcnow() - timedelta(minutes=10)
+        db.commit()
+        status = batch_status(db, TENANT_ID)
+        assert status["status"] == "error"
+        assert "Relancez" in status["message"]
 
 
 def test_five_year_archive_runs_in_the_batch_and_search_stays_local(tmp_path):
