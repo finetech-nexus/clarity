@@ -125,17 +125,12 @@ _PARTICLES = ("ben", "bin", "ibn", "ould", "ouled", "el", "al", "bn")
 _STOP = {"le", "la", "les", "de", "des", "du", "et", "the", "and", "of", "pour", "dans", "une", "un"}
 _SOURCE_CATALOG = (
     {"name": "GDELT", "kind": "gdelt", "url": "https://api.gdeltproject.org/api/v2/doc/doc", "language": "multi", "config": {"query": "Tunisia OR Tunisie", "timeout_seconds": 12, "quota_per_hour": 20, "max_records": 25}},
-    {"name": "La Presse de Tunisie", "kind": "tunisian", "url": "https://lapresse.tn/feed/", "language": "fr", "config": {"timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
-    {"name": "Business News Tunisie", "kind": "tunisian", "url": "https://businessnews.com.tn/feed/", "language": "fr", "config": {"timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
-    {"name": "BBC World", "kind": "international", "url": "https://feeds.bbci.co.uk/news/world/rss.xml", "language": "en", "config": {"timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
-    {"name": "France 24", "kind": "international", "url": "https://www.france24.com/fr/rss", "language": "fr", "config": {"timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
-    {"name": "Jeune Afrique", "kind": "international", "url": "https://www.jeuneafrique.com/feed/", "language": "fr", "config": {"timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
-    {"name": "Presse tunisienne", "kind": "tunisian", "url": "", "language": "fr", "config": {"timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
-    {"name": "Presse internationale", "kind": "international", "url": "", "language": "en", "config": {"timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
-    {"name": "Flux RSS", "kind": "rss", "url": "", "language": "multi", "config": {"timeout_seconds": 12, "quota_per_hour": 60, "format": "rss"}},
-    {"name": "Publications officielles", "kind": "official", "url": "", "language": "fr", "config": {"timeout_seconds": 12, "quota_per_hour": 20, "format": "rss"}},
-    {"name": "Sources institutionnelles", "kind": "institutional", "url": "", "language": "fr", "config": {"timeout_seconds": 12, "quota_per_hour": 20, "format": "rss"}},
-    {"name": "API publique", "kind": "public_api", "url": "", "language": "multi", "config": {"timeout_seconds": 12, "quota_per_hour": 20, "format": "json"}},
+    {"name": "Presse tunisienne", "kind": "tunisian", "url": "https://lapresse.tn/feed/", "language": "fr", "config": {"timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
+    {"name": "Presse internationale", "kind": "international", "url": "https://feeds.bbci.co.uk/news/world/rss.xml", "language": "en", "config": {"timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
+    {"name": "Flux RSS", "kind": "rss", "url": "https://www.france24.com/fr/rss", "language": "fr", "config": {"timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
+    {"name": "Publications officielles", "kind": "official", "url": "https://ec.europa.eu/commission/presscorner/api/rss?language=fr", "language": "fr", "config": {"timeout_seconds": 12, "quota_per_hour": 20, "format": "rss"}},
+    {"name": "Sources institutionnelles", "kind": "institutional", "url": "https://news.un.org/feed/subscribe/en/news/all/rss.xml", "language": "en", "config": {"timeout_seconds": 12, "quota_per_hour": 20, "format": "rss"}},
+    {"name": "API publique", "kind": "public_api", "url": "https://www.jeuneafrique.com/feed/", "language": "fr", "config": {"timeout_seconds": 12, "quota_per_hour": 20, "format": "rss"}},
 )
 _DEFAULT_POLICY = {
     "identity_threshold": 82,
@@ -246,9 +241,7 @@ def _source_ready(kind: str, url: str, config: dict) -> bool:
 def ensure_sources(db: Session, tenant_id: str) -> list[AdverseMediaSource]:
     existing = {row.name: row for row in db.scalars(select(AdverseMediaSource).where(AdverseMediaSource.tenant_id == tenant_id)).all()}
     for spec in _SOURCE_CATALOG:
-        config = dict(spec["config"])
-        config["seeded"] = True
-        ready = _source_ready(spec["kind"], spec["url"], config)
+        seed_config = dict(spec["config"])
         row = existing.get(spec["name"])
         if row is None:
             db.add(
@@ -259,26 +252,28 @@ def ensure_sources(db: Session, tenant_id: str) -> list[AdverseMediaSource]:
                     url=spec["url"],
                     language=spec["language"],
                     frequency_minutes=60,
-                    active=ready,
+                    active=_source_ready(spec["kind"], spec["url"], seed_config),
                     availability="unknown",
-                    config=config,
+                    config=seed_config,
                 )
             )
             continue
-        if (row.config or {}).get("seeded"):
-            continue
         current = dict(row.config or {})
-        if not row.url and spec["url"]:
+        filled = False
+        if not str(row.url or "").strip() and spec["url"]:
             row.url = spec["url"]
-        if spec["kind"] == "gdelt" and not str(current.get("query") or "").strip() and config.get("query"):
-            current["query"] = config["query"]
-        for key, value in config.items():
+            filled = True
+        if row.kind == "gdelt" and not str(current.get("query") or "").strip() and seed_config.get("query"):
+            current["query"] = seed_config["query"]
+            filled = True
+        for key, value in seed_config.items():
+            if key == "query" and str(current.get("query") or "").strip():
+                continue
             current.setdefault(key, value)
-        current["seeded"] = True
         row.config = current
-        if _source_ready(row.kind, row.url, current):
+        if filled and _source_ready(row.kind, row.url or "", current):
             row.active = True
-        row.updated_at = utcnow()
+            row.updated_at = utcnow()
     db.flush()
     return list(db.scalars(select(AdverseMediaSource).where(AdverseMediaSource.tenant_id == tenant_id).order_by(AdverseMediaSource.name)).all())
 

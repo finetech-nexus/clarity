@@ -35,4 +35,4 @@ Les actionnaires sont des `Party` de rôle `shareholder`, au même titre que les
 
 Les déclarations de soupçon ne sont ni lues ni écrites ici. Les articles sont stockés comme le reste du KYC.
 
-L'écran AML Adverse media couvre le tableau de bord, la recherche, les sources, les articles, les alertes et le journal. Au démarrage, les flux vérifiés sont enregistrés et actifs : GDELT (Tunisie), La Presse, Business News, BBC World, France 24 et Jeune Afrique. Les emplacements sans flux public vérifié restent inactifs.
+L'écran AML Adverse media couvre le tableau de bord, la recherche, les sources, les articles, les alertes et le journal. Au démarrage, les sept sources sont enregistrées actives avec un flux public vérifié : GDELT (requête Tunisie), La Presse, BBC World, France 24, les communiqués de la Commission européenne, le fil RSS de l'ONU et Jeune Afrique. Une source déjà enregistrée sans URL reçoit ce flux. Une URL saisie par un administrateur n'est pas remplacée.
