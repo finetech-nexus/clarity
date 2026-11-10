@@ -146,6 +146,9 @@ _DEFAULT_POLICY = {
 _DEEP_THEMES = "(corruption OR fraud OR fraude OR laundering OR blanchiment OR embezzlement OR detournement OR scam OR escroquerie OR smuggling OR contrebande OR terrorisme OR terrorist)"
 _DEEP_LOCK = threading.Lock()
 _DEEP_RUNNING: set[str] = set()
+_GDELT_LOCK = threading.Lock()
+_GDELT_READY = 0.0
+_GDELT_GAP = 6.0
 _logger = logging.getLogger(__name__)
 
 
@@ -346,15 +349,45 @@ def _quota(source: AdverseMediaSource) -> int:
     return max(1, min(int((source.config or {}).get("quota_per_hour") or 30), 500))
 
 
-def http_get(url: str, timeout: int) -> bytes:
+def _read_http(url: str, timeout: int) -> bytes:
     if not url.startswith(("https://", "http://")):
         raise AdverseMediaError("URL refusée.")
     request = urllib.request.Request(url, headers={"User-Agent": "ClarityAdverseMedia/1.0", "Accept": "application/json, application/rss+xml, application/xml, text/xml, */*"})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.read(750_001)[:750_000]
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            detail = exc.read(400).decode("utf-8", errors="replace")
+        except Exception:
+            detail = ""
+        if exc.code == 429 or "limit requests" in detail.lower():
+            raise AdverseMediaError("GDELT limite les requêtes à une toutes les 5 secondes.") from exc
+        raise AdverseMediaError(f"Source indisponible : HTTP {exc.code}.") from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise AdverseMediaError(f"Source indisponible : {exc.__class__.__name__}") from exc
+
+
+def http_get(url: str, timeout: int) -> bytes:
+    if "api.gdeltproject.org" not in url:
+        return _read_http(url, timeout)
+    global _GDELT_READY
+    with _GDELT_LOCK:
+        for attempt in range(3):
+            wait = _GDELT_READY - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
+            try:
+                body = _read_http(url, timeout)
+            except AdverseMediaError as exc:
+                _GDELT_READY = time.monotonic() + _GDELT_GAP
+                if "5 secondes" not in str(exc) or attempt == 2:
+                    raise
+                continue
+            _GDELT_READY = time.monotonic() + _GDELT_GAP
+            return body
+    raise AdverseMediaError("GDELT limite les requêtes à une toutes les 5 secondes.")
 
 
 def _canonical_url(value: str) -> str:
@@ -673,7 +706,7 @@ def deep_search(
     start: datetime | None = None,
     end: datetime | None = None,
     fetch=http_get,
-    pause: float = 5.0,
+    pause: float = 0.0,
     max_calls: int = 80,
 ) -> dict:
     """Walk GDELT month by month. Only articles the API returns are stored."""

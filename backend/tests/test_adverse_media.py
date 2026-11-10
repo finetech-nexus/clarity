@@ -1,7 +1,10 @@
 """Adverse media: lexicon analysis, matching, collection and score. Fictional data only."""
 
+import io
 import json
+import urllib.error
 import urllib.parse
+import urllib.request
 from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
@@ -15,6 +18,7 @@ from app.adverse_media import (
     collect_source,
     content_hash,
     deep_search,
+    http_get,
     identity_assessment,
     ingest_article,
     name_similarity,
@@ -381,3 +385,30 @@ def test_deep_search_walks_gdelt_history_and_keeps_only_returned_articles(tmp_pa
         assert started.status_code == 200
         assert started.json()["status"] == "started"
         assert started.json()["years"] == 3
+
+
+def test_gdelt_rate_limit_waits_and_retries(monkeypatch):
+    calls = {"n": 0}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _size):
+            return b'{"articles":[]}'
+
+    def urlopen(request, timeout):
+        calls["n"] += 1
+        assert timeout == 5
+        if calls["n"] == 1:
+            raise urllib.error.HTTPError(request.full_url, 429, "Too Many Requests", {}, io.BytesIO(b"Please limit requests to one every 5 seconds"))
+        return Response()
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr("app.adverse_media.time.sleep", lambda *_args: None)
+    body = http_get("https://api.gdeltproject.org/api/v2/doc/doc?query=Tunisie", 5)
+    assert body == b'{"articles":[]}'
+    assert calls["n"] == 2
