@@ -1,6 +1,8 @@
 """Adverse media: lexicon analysis, matching, collection and score. Fictional data only."""
 
-from datetime import timedelta
+import json
+import urllib.parse
+from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
@@ -12,6 +14,7 @@ from app.adverse_media import (
     analyze_version,
     collect_source,
     content_hash,
+    deep_search,
     identity_assessment,
     ingest_article,
     name_similarity,
@@ -324,3 +327,57 @@ def test_gdelt_reads_the_article_page_and_shareholders_are_parties(tmp_path):
     assert content_hash("Titre", "Corps") == content_hash("Titre", "  Corps  ")
     old = utcnow() - timedelta(days=1)
     assert old < utcnow()
+
+
+def test_deep_search_walks_gdelt_history_and_keeps_only_returned_articles(tmp_path, monkeypatch):
+    calls = []
+
+    def fetch(url, timeout):
+        calls.append(url)
+        assert "startdatetime=" in url
+        assert "corruption" in urllib.parse.unquote(url)
+        if len(calls) == 1:
+            articles = [{"url": f"https://exemple.media/bulk-{i}", "title": f"Lot {i}", "seendate": "20240115T120000Z"} for i in range(100)]
+            return json.dumps({"articles": articles}).encode()
+        stamp = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["startdatetime"][0]
+        return json.dumps({"articles": [{"url": f"https://exemple.media/{stamp}", "title": "Fraude fictive ancienne", "seendate": stamp}]}).encode()
+
+    with _client(tmp_path) as client:
+        db = _session(client)
+        source = AdverseMediaSource(
+            tenant_id=TENANT_ID,
+            name="GDELT historique",
+            kind="gdelt",
+            url="https://api.gdeltproject.org/api/v2/doc/doc",
+            language="multi",
+            active=True,
+            config={"query": "Tunisia OR Tunisie", "timeout_seconds": 5},
+        )
+        db.add(source)
+        db.commit()
+        start = datetime(2024, 1, 1, tzinfo=UTC)
+        end = datetime(2024, 1, 20, tzinfo=UTC)
+        result = deep_search(db, source, years=1, start=start, end=end, fetch=fetch, pause=0)
+        assert result["status"] == "completed"
+        assert result["calls"] == 3
+        assert result["stored"] == 2
+        assert db.scalar(select(func.count()).select_from(AdverseMediaArticle).where(AdverseMediaArticle.tenant_id == TENANT_ID)) == 2
+        article = db.scalar(select(AdverseMediaArticle).where(AdverseMediaArticle.url.like("https://exemple.media/2024%")))
+        assert article is not None and article.published_at is not None
+        other = AdverseMediaSource(tenant_id=TENANT_ID, name="RSS loin", kind="rss", url="https://exemple.media/rss.xml", language="fr", active=True, config={})
+        db.add(other)
+        db.commit()
+        try:
+            deep_search(db, other, years=1, start=start, end=end, fetch=fetch, pause=0)
+            raise AssertionError("recherche lointaine hors GDELT")
+        except AdverseMediaError as exc:
+            assert "GDELT" in exc.message
+        monkeypatch.setattr("app.api.adverse.launch_deep_search", lambda factory, source_id, years: {"status": "started", "years": years})
+        token = client.post("/api/clarity/v1/auth/login", json={"email": ANALYST_EMAIL, "password": DEMO_PASSWORD}).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        denied = client.post(f"/api/clarity/v1/adverse-media/sources/{other.id}/deep-search", headers=headers, json={"years": 5})
+        assert denied.status_code == 400
+        started = client.post(f"/api/clarity/v1/adverse-media/sources/{source.id}/deep-search", headers=headers, json={"years": 3})
+        assert started.status_code == 200
+        assert started.json()["status"] == "started"
+        assert started.json()["years"] == 3

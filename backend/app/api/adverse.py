@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Request, UploadFile
 from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -12,11 +12,13 @@ from app.adverse_media import (
     add_attachment,
     collect_source,
     desk_summary,
+    launch_deep_search,
     ensure_sources,
     get_policy,
     process_queue,
     reanalyze,
     record_decision,
+    request_deep_search,
     retry_failed,
     run_due,
     save_policy,
@@ -122,6 +124,19 @@ def collect(source_id: str, principal: Principal = Depends(clarity_principal), d
     result = collect_source(db, _source(db, principal, source_id))
     processed = process_queue(db, principal.tenant_id)
     return {"collection": result, "processing": processed}
+
+
+@router.post("/sources/{source_id}/deep-search")
+def deep_search_source(source_id: str, body: dict, request: Request, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    if not principal.allows("admin", "analyst"):
+        raise clarity_error(403, "forbidden", "Recherche lointaine réservée à l'administrateur ou à l'analyste.")
+    source = _source(db, principal, source_id)
+    try:
+        years = request_deep_search(source, (body or {}).get("years") or 3)
+        db.commit()
+        return launch_deep_search(request.app.state.database.session_factory, source.id, years)
+    except AdverseMediaError as exc:
+        _failure(exc)
 
 
 @router.get("/articles")

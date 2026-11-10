@@ -14,7 +14,7 @@ type Source = {
   availability: string;
   last_error?: string | null;
   last_collected_at?: string | null;
-  config?: { query?: string; quota_per_hour?: number };
+  config?: { query?: string; quota_per_hour?: number; deep_search?: { status?: string; stored?: number; years?: number; error?: string } };
 };
 
 type Article = { id: string; title: string; url: string; status: string; language?: string | null; published_at?: string | null };
@@ -36,6 +36,7 @@ export function AdverseMediaDesk() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [hours, setHours] = useState({ high: "24", medium: "168", low: "720" });
+  const [deepYears, setDeepYears] = useState("3");
 
   async function load() {
     const [nextSummary, nextSources, nextArticles, nextAlerts, nextLogs] = await Promise.all([
@@ -127,10 +128,28 @@ export function AdverseMediaDesk() {
           {source.kind === "gdelt" ? <label>Requête GDELT<input name="query" defaultValue={source.config?.query || ""} /></label> : <input type="hidden" name="query" value={source.config?.query || ""} />}
           <label>Fréquence (minutes)<input name="frequency" type="number" min={15} defaultValue={source.frequency_minutes} /></label>
           <label><input name="active" type="checkbox" defaultChecked={source.active} /> Active</label>
+          {source.kind === "gdelt" ? (
+            <>
+              <label>Recherche lointaine
+                <select value={deepYears} onChange={(event) => setDeepYears(event.target.value)}>
+                  <option value="1">1 an</option>
+                  <option value="3">3 ans</option>
+                  <option value="5">5 ans</option>
+                </select>
+              </label>
+              <p className="label">Parcourt GDELT sur la période choisie. La requête est croisée avec corruption, fraude, blanchiment et terrorisme. Seuls les articles renvoyés sont enregistrés.</p>
+            </>
+          ) : null}
           <div className="actions">
             <button type="submit">Enregistrer</button>
             <button className="ghost" type="button" onClick={() => void run(() => api(`/api/clarity/v1/adverse-media/sources/${source.id}/collect`, { method: "POST" }), "Collecte lancée.")}>Collecter</button>
+            {source.kind === "gdelt" ? (
+              <button className="ghost" type="button" onClick={() => void run(() => api(`/api/clarity/v1/adverse-media/sources/${source.id}/deep-search`, { method: "POST", body: JSON.stringify({ years: Number(deepYears) }) }), "Recherche lointaine lancée. Les articles arrivent au fil de l'eau.")}>Recherche lointaine</button>
+            ) : null}
           </div>
+          {source.config?.deep_search?.status === "running" ? <p className="label">Recherche lointaine en cours.</p> : null}
+          {source.config?.deep_search?.status === "completed" ? <p className="label">Recherche lointaine terminée · {source.config.deep_search.stored ?? 0} articles sur {source.config.deep_search.years} ans.</p> : null}
+          {source.config?.deep_search?.status === "error" ? <p className="error">{source.config.deep_search.error || "Recherche lointaine interrompue."}</p> : null}
         </form>
       ))}
 

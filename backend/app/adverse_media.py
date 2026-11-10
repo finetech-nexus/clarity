@@ -10,13 +10,16 @@ from __future__ import annotations
 import hashlib
 import html
 import json
+import logging
 import re
+import threading
+import time
 import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from difflib import SequenceMatcher
 from email.utils import parsedate_to_datetime
 from xml.etree import ElementTree
@@ -138,6 +141,12 @@ _DEFAULT_POLICY = {
     "frequencies_hours": {"high": 24, "medium": 168, "low": 720},
     "article_window_days": 90,
 }
+
+
+_DEEP_THEMES = "(corruption OR fraud OR fraude OR laundering OR blanchiment OR embezzlement OR detournement OR scam OR escroquerie OR smuggling OR contrebande OR terrorisme OR terrorist)"
+_DEEP_LOCK = threading.Lock()
+_DEEP_RUNNING: set[str] = set()
+_logger = logging.getLogger(__name__)
 
 
 class AdverseMediaError(Exception):
@@ -362,9 +371,12 @@ def _published(value: str | None) -> datetime | None:
     text = str(value or "").strip()
     if not text:
         return None
+    compact = re.fullmatch(r"(\d{4})(\d{2})(\d{2})T?(\d{2})(\d{2})(\d{2})Z?", text)
+    if compact:
+        return datetime(*[int(part) for part in compact.groups()], tzinfo=UTC)
     try:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        return parsed if parsed.tzinfo else parsed.replace(tzinfo=utcnow().tzinfo)
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
     except ValueError:
         pass
     try:
@@ -581,6 +593,201 @@ def collect_source(db: Session, source: AdverseMediaSource, fetch=http_get) -> d
     _log_collection(db, source, "success", kept, stored, None, started)
     db.flush()
     return {"status": "success", "fetched": kept, "stored": stored}
+
+
+def _deep_query(source: AdverseMediaSource) -> str:
+    base = str((source.config or {}).get("query") or "").strip()
+    if not base:
+        raise AdverseMediaError("Requête GDELT absente.")
+    if any(theme in base.lower() for theme in ("blanchiment", "corruption", "fraude", "fraud", "laundering", "terroris")):
+        return base
+    return f"({base}) {_DEEP_THEMES}"
+
+
+def _gdelt_history_url(source: AdverseMediaSource, query: str, start: datetime, end: datetime, max_records: int) -> str:
+    params = {
+        "query": query,
+        "mode": "artlist",
+        "format": "json",
+        "maxrecords": str(max_records),
+        "sort": "datedesc",
+        "startdatetime": start.astimezone(UTC).strftime("%Y%m%d%H%M%S"),
+        "enddatetime": end.astimezone(UTC).strftime("%Y%m%d%H%M%S"),
+    }
+    return f"{source.url.split('?', 1)[0]}?{urllib.parse.urlencode(params)}"
+
+
+def _write_deep(source: AdverseMediaSource, payload: dict) -> None:
+    config = dict(source.config or {})
+    config["deep_search"] = payload
+    source.config = config
+    source.updated_at = utcnow()
+
+
+def _store_items(db: Session, source: AdverseMediaSource, items: list[dict]) -> tuple[int, int]:
+    kept = 0
+    stored = 0
+    for item in items:
+        try:
+            outcome = ingest_article(
+                db,
+                source,
+                url=str(item.get("url") or ""),
+                title=str(item.get("title") or ""),
+                body=str(item.get("body") or ""),
+                published=str(item.get("published") or ""),
+                external_id=str(item.get("external_id") or ""),
+                language=str(item.get("language") or source.language or ""),
+            )
+        except AdverseMediaError:
+            continue
+        kept += 1
+        if outcome == "stored":
+            stored += 1
+    return kept, stored
+
+
+def request_deep_search(source: AdverseMediaSource, years: int) -> int:
+    try:
+        span = int(years)
+    except (TypeError, ValueError) as exc:
+        raise AdverseMediaError("La profondeur doit être 1, 3 ou 5 ans.") from exc
+    if span not in (1, 3, 5):
+        raise AdverseMediaError("La profondeur doit être 1, 3 ou 5 ans.")
+    if source.kind != "gdelt":
+        raise AdverseMediaError("La recherche lointaine est disponible pour GDELT.")
+    if not source.active:
+        raise AdverseMediaError("Source inactive.")
+    _deep_query(source)
+    state = (source.config or {}).get("deep_search") or {}
+    if state.get("status") == "running":
+        raise AdverseMediaError("Une recherche lointaine est déjà en cours.")
+    return span
+
+
+def deep_search(
+    db: Session,
+    source: AdverseMediaSource,
+    *,
+    years: int = 3,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    fetch=http_get,
+    pause: float = 5.0,
+    max_calls: int = 80,
+) -> dict:
+    """Walk GDELT month by month. Only articles the API returns are stored."""
+    span = request_deep_search(source, years) if start is None else max(1, min(int(years), 5))
+    if source.kind != "gdelt":
+        raise AdverseMediaError("La recherche lointaine est disponible pour GDELT.")
+    finish = end or utcnow()
+    begin = start or (finish - timedelta(days=365 * span))
+    query = _deep_query(source)
+    max_records = 100
+    calls = 0
+    fetched = 0
+    stored = 0
+    truncated = 0
+    failures = 0
+    started_at = utcnow()
+    _write_deep(source, {"status": "running", "years": span, "started_at": started_at.isoformat()})
+    db.commit()
+
+    def walk(win_start: datetime, win_end: datetime) -> None:
+        nonlocal calls, fetched, stored, truncated, failures
+        if calls >= max_calls or win_end <= win_start:
+            truncated += 1
+            return
+        if calls and pause:
+            time.sleep(pause)
+        calls += 1
+        url = _gdelt_history_url(source, query, win_start, win_end, max_records)
+        try:
+            payload = fetch(url, _timeout(source))
+            if b"limit requests" in payload[:240].lower():
+                if pause:
+                    time.sleep(max(pause, 5))
+                payload = fetch(url, _timeout(source))
+            items = parse_gdelt(payload)
+        except AdverseMediaError:
+            failures += 1
+            return
+        width = win_end - win_start
+        if len(items) >= max_records and width > timedelta(days=7) and calls < max_calls:
+            middle = win_start + width / 2
+            walk(win_start, middle)
+            walk(middle, win_end)
+            return
+        if len(items) >= max_records:
+            truncated += 1
+        kept, saved = _store_items(db, source, items)
+        fetched += kept
+        stored += saved
+        db.commit()
+
+    cursor = begin
+    while cursor < finish:
+        nxt = min(cursor + timedelta(days=31), finish)
+        walk(cursor, nxt)
+        cursor = nxt
+    status = "error" if failures and not fetched else "completed"
+    result = {
+        "status": status,
+        "years": span,
+        "started_at": started_at.isoformat(),
+        "finished_at": utcnow().isoformat(),
+        "fetched": fetched,
+        "stored": stored,
+        "calls": calls,
+        "truncated": truncated,
+        "failures": failures,
+    }
+    _write_deep(source, result)
+    note = None
+    if failures:
+        note = "Une partie des fenêtres GDELT n'a pas répondu."
+    elif truncated:
+        note = "Certaines fenêtres ont atteint 100 articles."
+    _log_collection(db, source, "success" if status == "completed" else "error", fetched, stored, note, started_at)
+    db.commit()
+    return result
+
+
+def launch_deep_search(session_factory, source_id: str, years: int) -> dict:
+    with _DEEP_LOCK:
+        if source_id in _DEEP_RUNNING:
+            raise AdverseMediaError("Une recherche lointaine est déjà en cours.")
+        _DEEP_RUNNING.add(source_id)
+
+    def _run() -> None:
+        db = session_factory()
+        try:
+            source = db.get(AdverseMediaSource, source_id)
+            if source is None:
+                return
+            deep_search(db, source, years=years)
+            for _ in range(30):
+                processed = process_queue(db, source.tenant_id, limit=20)
+                db.commit()
+                if not processed["analyzed"] and not processed["failed"]:
+                    break
+        except Exception:
+            db.rollback()
+            _logger.exception("adverse media deep search failed")
+            try:
+                source = db.get(AdverseMediaSource, source_id)
+                if source is not None:
+                    _write_deep(source, {"status": "error", "years": years, "error": "Recherche lointaine interrompue."})
+                    db.commit()
+            except Exception:
+                db.rollback()
+        finally:
+            db.close()
+            with _DEEP_LOCK:
+                _DEEP_RUNNING.discard(source_id)
+
+    threading.Thread(target=_run, name="adverse-deep-search", daemon=True).start()
+    return {"status": "started", "years": years}
 
 
 def ingest_article(

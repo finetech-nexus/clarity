@@ -29,7 +29,11 @@ L'onglet Adverse media lit `adverse_media` sur `GET /api/clarity/v1/desks/kyc/{r
 
 L'analyse `lexicon-1.0` classe des expressions. Elle ne produit pas une lecture de modèle neuronal et ne conclut pas à la culpabilité.
 
-GDELT publie le titre. Le collecteur ouvre ensuite la page de l'article. Si le site ne répond pas, seul le titre est enregistré.
+GDELT publie le titre. Le collecteur courant ouvre ensuite la page de l'article. Si le site ne répond pas, seul le titre est enregistré.
+
+La recherche lointaine, `POST /api/clarity/v1/adverse-media/sources/{id}/deep-search`, ne concerne que GDELT. Elle parcourt un, trois ou cinq ans par fenêtres d'un mois, ajoute à la requête les thèmes corruption, fraude, blanchiment et terrorisme, et attend cinq secondes entre deux appels. Seuls les articles renvoyés par GDELT sont enregistrés. Pendant ce parcours, la page de l'article n'est pas ouverte : le titre fait office de texte. Une fenêtre qui renvoie 100 articles est coupée en deux, jusqu'à une semaine.
+
+GDELT est un projet de données public. L'API DOC se consulte sans clé. Ce n'est pas un logiciel à installer.
 
 Les actionnaires sont des `Party` de rôle `shareholder`, au même titre que les dirigeants et les bénéficiaires effectifs.
 
