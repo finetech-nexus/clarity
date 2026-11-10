@@ -464,6 +464,22 @@ def test_batch_progress_stores_only_what_the_source_returns(tmp_path):
         assert result["progress"] == 100
         assert result["total"] >= 9
         assert result["stored"] == 0
+        assert result["message"] == "Batch terminé."
+
+
+def test_failed_archive_names_google_and_gdelt(tmp_path):
+    def fetch(url, _timeout):
+        if "news.google.com" in url:
+            raise AdverseMediaError("Flux RSS illisible.")
+        if "gdeltproject.org" in url:
+            raise AdverseMediaError("GDELT est occupé.")
+        return b"<rss><channel></channel></rss>"
+
+    with _client(tmp_path) as client:
+        db = _session(client)
+        result = run_batch(db, TENANT_ID, fetch=fetch)
+        assert result["status"] == "completed"
+        assert result["message"] == "Batch terminé. Sans réponse : Google Actualités (Flux RSS illisible.) · GDELT (GDELT est occupé.)."
         assert db.scalar(select(func.count()).select_from(AdverseMediaArticle).where(AdverseMediaArticle.tenant_id == TENANT_ID)) == 0
         from app.models import ProviderConnection
 

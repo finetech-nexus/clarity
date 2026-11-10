@@ -1796,14 +1796,14 @@ def run_batch(db: Session, tenant_id: str, *, fetch=http_get, only_due: bool = F
         history = collect_history(db, tenant_id, years=archive_years, fetch=fetch, progress=_archive_progress)
         stored += int(history["stored"])
         archive_errors = history.get("errors") or []
+    else:
+        archive_errors = []
     for _ in range(10):
         processed = process_queue(db, tenant_id, limit=20)
         db.commit()
         if not processed["analyzed"] and not processed["failed"]:
             break
-    message = "Batch terminé."
-    if archive_years and archive_errors:
-        message = "Batch terminé. Certaines archives n'ont pas répondu."
+    message = _archive_notice(archive_errors)
     payload = {"status": "completed", "progress": 100, "done": total, "total": total, "stored": stored, "message": message}
     _save_batch(db, tenant_id, payload)
     db.commit()
@@ -2231,6 +2231,17 @@ def _google_source(db: Session, tenant_id: str) -> AdverseMediaSource:
     return row
 
 
+def _archive_notice(errors: list[str]) -> str:
+    reasons: dict[str, str] = {}
+    for item in errors:
+        label, _, reason = item.partition(" : ")
+        reasons.setdefault(label, reason or item)
+    if not reasons:
+        return "Batch terminé."
+    detail = " · ".join(f"{label} ({reason})" for label, reason in reasons.items())
+    return f"Batch terminé. Sans réponse : {detail}."
+
+
 def collect_history(
     db: Session,
     tenant_id: str,
@@ -2259,14 +2270,17 @@ def collect_history(
         for label, (url, source, parser) in zip(labels, targets, strict=True):
             if progress is not None:
                 progress(index - 1, stored, f"Archives {index}/{span} · {label}")
+            budget = call_timeout
+            if call_timeout >= 15:
+                budget += 8 if "api.gdeltproject.org" in url else 4
             try:
-                payload = _wait_for(lambda url=url: fetch(url, 12), call_timeout)
+                payload = _wait_for(lambda url=url: fetch(url, 12), budget)
                 items = parser(payload)[:12]
             except AdverseMediaError as exc:
-                errors.append(exc.message)
+                errors.append(f"{label} : {exc.message}")
                 continue
             except Exception as exc:
-                errors.append(getattr(exc, "message", None) or exc.__class__.__name__)
+                errors.append(f"{label} : {getattr(exc, 'message', None) or exc.__class__.__name__}")
                 continue
             kept, added = _store_items(db, source, items)
             retrieved += kept
