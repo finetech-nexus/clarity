@@ -5,8 +5,8 @@ import { api } from "../lib/api";
 
 type AlertRow = { id: string; title: string; status: string; customer_id?: string | null; payload?: { stance?: string; category?: string; identity_score?: number; media_score?: number; excerpt?: string; article_title?: string } };
 type Summary = { sources: number; active_sources: number; open_alerts: number };
-type SearchHit = { entity: string; identity_score: number; article_title: string; explanation: string[] };
-type SearchReport = { status: string; screening_status?: string; screening_meaning?: string; suggested_action?: string; results: SearchHit[]; identity_confirmed_by_name_alone?: boolean };
+type SearchHit = { entity: string; identity_score: number; article_title: string; article_url?: string; published_at?: string; stance?: string; category?: string; explanation: string[] };
+type SearchReport = { status: string; screening_status?: string; screening_meaning?: string; suggested_action?: string; results: SearchHit[]; identity_confirmed_by_name_alone?: boolean; retrieved?: number; period_start?: string; period_end?: string; years?: number };
 type Batch = { status: string; progress: number; done: number; total: number; message: string };
 
 export function AdverseMediaDesk() {
@@ -14,6 +14,7 @@ export function AdverseMediaDesk() {
   const [alerts, setAlerts] = useState<AlertRow[]>([]);
   const [batch, setBatch] = useState<Batch>({ status: "idle", progress: 0, done: 0, total: 0, message: "" });
   const [query, setQuery] = useState("");
+  const [years, setYears] = useState("5");
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [report, setReport] = useState<SearchReport | null>(null);
   const [rationale, setRationale] = useState("");
@@ -75,16 +76,25 @@ export function AdverseMediaDesk() {
         <form className="form" onSubmit={(event) => {
           event.preventDefault();
           void run(async () => {
-            const body = await api<SearchReport>("/api/clarity/v1/adverse-media/search", { method: "POST", body: JSON.stringify({ name: query }) });
+            setMessage("Parcours des années passées sur Google Actualités et GDELT.");
+            const body = await api<SearchReport>("/api/clarity/v1/adverse-media/search", { method: "POST", body: JSON.stringify({ name: query, years: Number(years) }) });
             setReport(body);
             setHits(body.results || []);
           }, "Recherche terminée.");
         }}>
           <label>Nom<input value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+          <label>Années
+            <select value={years} onChange={(event) => setYears(event.target.value)}>
+              <option value="1">1 an</option>
+              <option value="3">3 ans</option>
+              <option value="5">5 ans</option>
+            </select>
+          </label>
           <button type="submit">Rechercher</button>
         </form>
+        <p className="label">Chaque année est lue à part. Cinq ans prennent environ une minute, à cause du délai GDELT.</p>
         {report ? <p className="label">{report.screening_status} — {report.screening_meaning} {report.suggested_action}</p> : null}
-        {hits.map((hit) => <p key={`${hit.entity}-${hit.article_title}`}>{hit.entity} · identité {hit.identity_score} · {hit.article_title}</p>)}
+        {hits.map((hit) => <p key={`${hit.article_url || hit.article_title}`}>{hit.published_at || "date inconnue"} · {hit.article_title} · {hit.stance || ""} · {hit.category || ""}</p>)}
       </article>
 
       <h2>Résultats à revoir</h2>

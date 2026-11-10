@@ -339,7 +339,11 @@ def search(body: dict, principal: Principal = Depends(clarity_principal), db: Se
     name = str(body.get("name") or "").strip()
     if len(name) < 3:
         raise clarity_error(400, "invalid", "Le nom recherché est trop court.")
-    return search_report(db, principal.tenant_id, name, body.get("dob"), body.get("country"))
+    years = body.get("years", 5)
+    try:
+        return search_report(db, principal.tenant_id, name, body.get("dob"), body.get("country"), years=years)
+    except AdverseMediaError as exc:
+        _failure(exc)
 
 
 @router.post("/cycle")

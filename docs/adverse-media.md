@@ -33,7 +33,9 @@ L'analyse `lexicon-1.0` classe des expressions. Elle ne produit pas une lecture 
 
 GDELT publie le titre. Le collecteur courant ouvre ensuite la page de l'article. Si le site ne répond pas, seul le titre est enregistré.
 
-La recherche lointaine, `POST /api/clarity/v1/adverse-media/sources/{id}/deep-search`, ne concerne que GDELT. Elle parcourt un, trois ou cinq ans par fenêtres d'un mois et ajoute à la requête les thèmes corruption, fraude, blanchiment et terrorisme. Seuls les articles renvoyés par GDELT sont enregistrés. Pendant ce parcours, la page de l'article n'est pas ouverte : le titre fait office de texte. Une fenêtre qui renvoie 100 articles est coupée en deux, jusqu'à une semaine. Les appels GDELT sont espacés de six secondes et une réponse « trop de requêtes » est relancée.
+La recherche d'un nom, `POST /api/clarity/v1/adverse-media/search`, interroge Google Actualités et GDELT sur un, trois ou cinq ans, par tranches d'un an. La requête ajoute les thèmes corruption, fraude, blanchiment, condamnation, arrestation, poursuites et terrorisme. Seuls les articles renvoyés sont enregistrés. `lexicon-1.0` tourne ensuite, avant le statut. Un article neutre reste `NoRelevantMediaFound`, avec le nombre d'articles lus. La source « Recherche internet » n'entre pas dans le batch horaire.
+
+La recherche lointaine d'une source, `POST /api/clarity/v1/adverse-media/sources/{id}/deep-search`, ne concerne que GDELT. Elle parcourt un, trois ou cinq ans par fenêtres d'un mois et ajoute à la requête les thèmes corruption, fraude, blanchiment et terrorisme. Seuls les articles renvoyés par GDELT sont enregistrés. Pendant ce parcours, la page de l'article n'est pas ouverte : le titre fait office de texte. Une fenêtre qui renvoie 100 articles est coupée en deux, jusqu'à une semaine. Les appels GDELT sont espacés de six secondes et une réponse « trop de requêtes » est relancée.
 
 GDELT est un projet de données public. L'API DOC se consulte sans clé. Ce n'est pas un logiciel à installer.
 

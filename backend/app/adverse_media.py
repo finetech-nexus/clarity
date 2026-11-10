@@ -181,6 +181,9 @@ _DEFAULT_POLICY = {
 
 
 _DEEP_THEMES = "(corruption OR fraud OR fraude OR laundering OR blanchiment OR embezzlement OR detournement OR scam OR escroquerie OR smuggling OR contrebande OR terrorisme OR terrorist)"
+_HISTORY_THEMES = '(corruption OR fraude OR fraud OR blanchiment OR "money laundering" OR condamné OR convicted OR arrested OR charged OR poursuite OR enquête OR terrorisme OR bribery)'
+_GDELT_DOC = "https://api.gdeltproject.org/api/v2/doc/doc"
+_INTERNET_SOURCE = "Recherche internet"
 _DEEP_LOCK = threading.Lock()
 _DEEP_RUNNING: set[str] = set()
 _GDELT_LOCK = threading.Lock()
@@ -1687,7 +1690,7 @@ def run_batch(db: Session, tenant_id: str, *, fetch=http_get, only_due: bool = F
     now = utcnow()
     sources = []
     for source in ensure_sources(db, tenant_id):
-        if not source.active:
+        if not source.active or (source.config or {}).get("on_demand"):
             continue
         if only_due and source.last_collected_at and now < source.last_collected_at + timedelta(minutes=source.frequency_minutes):
             continue
@@ -1757,7 +1760,7 @@ def run_due(db: Session, tenant_id: str | None = None) -> dict:
         if state["status"] != "running":
             due = False
             for source in ensure_sources(db, current):
-                if not source.active:
+                if not source.active or (source.config or {}).get("on_demand"):
                     continue
                 if source.last_collected_at is None or now >= source.last_collected_at + timedelta(minutes=source.frequency_minutes):
                     due = True
@@ -2080,6 +2083,179 @@ def desk_summary(db: Session, customer: Customer) -> dict:
     }
 
 
+def _history_span(years: int) -> int:
+    try:
+        span = int(years)
+    except (TypeError, ValueError) as exc:
+        raise AdverseMediaError("La profondeur doit être 1, 3 ou 5 ans.") from exc
+    if span not in (1, 3, 5):
+        raise AdverseMediaError("La profondeur doit être 1, 3 ou 5 ans.")
+    return span
+
+
+def _year_windows(years: int, now: datetime | None = None):
+    end = now or utcnow()
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=UTC)
+    windows = []
+    cursor = end
+    for _step in range(years):
+        try:
+            start = cursor.replace(year=cursor.year - 1)
+        except ValueError:
+            start = cursor.replace(year=cursor.year - 1, day=28)
+        windows.append((start, cursor))
+        cursor = start
+    windows.reverse()
+    return windows
+
+
+def _query_name(name: str) -> str:
+    cleaned = re.sub(r"\s+", " ", re.sub(r'["<>]', " ", str(name or ""))).strip()
+    if len(cleaned) < 3:
+        raise AdverseMediaError("Le nom recherché est trop court.")
+    return cleaned[:120]
+
+
+def _google_history_url(name: str, start: datetime, end: datetime, lang: str) -> str:
+    query = f'"{name}" {_HISTORY_THEMES} after:{start.date().isoformat()} before:{end.date().isoformat()}'
+    french = lang == "fr"
+    return "https://news.google.com/rss/search?" + urllib.parse.urlencode(
+        {"q": query, "hl": "fr" if french else "en", "gl": "FR" if french else "US", "ceid": "FR:fr" if french else "US:en"}
+    )
+
+
+def _gdelt_name_url(name: str, start: datetime, end: datetime) -> str:
+    params = {
+        "query": f'"{name}" {_HISTORY_THEMES}',
+        "mode": "artlist",
+        "format": "json",
+        "maxrecords": "25",
+        "sort": "datedesc",
+        "startdatetime": start.astimezone(UTC).strftime("%Y%m%d%H%M%S"),
+        "enddatetime": end.astimezone(UTC).strftime("%Y%m%d%H%M%S"),
+    }
+    return f"{_GDELT_DOC}?{urllib.parse.urlencode(params)}"
+
+
+def _internet_source(db: Session, tenant_id: str) -> AdverseMediaSource:
+    row = db.scalar(select(AdverseMediaSource).where(AdverseMediaSource.tenant_id == tenant_id, AdverseMediaSource.name == _INTERNET_SOURCE))
+    if row is None:
+        row = AdverseMediaSource(
+            tenant_id=tenant_id,
+            name=_INTERNET_SOURCE,
+            kind="rss",
+            url="https://news.google.com/rss/search",
+            language="multi",
+            frequency_minutes=60,
+            active=False,
+            config={"family": "Recherche internet", "on_demand": True, "timeout_seconds": 12, "quota_per_hour": 60},
+        )
+        db.add(row)
+        db.flush()
+    return row
+
+
+def internet_history(
+    db: Session,
+    tenant_id: str,
+    name: str,
+    *,
+    years: int = 5,
+    fetch=http_get,
+    now: datetime | None = None,
+) -> dict:
+    """Read Google News and GDELT year by year. Only returned items are stored."""
+    span = _history_span(years)
+    query_name = _query_name(name)
+    source = _internet_source(db, tenant_id)
+    windows = list(_year_windows(span, now))
+    retrieved = 0
+    stored = 0
+    errors: list[str] = []
+    calls = 0
+    for start, end in windows:
+        urls = (
+            _google_history_url(query_name, start, end, "fr"),
+            _google_history_url(query_name, start, end, "en"),
+            _gdelt_name_url(query_name, start, end),
+        )
+        for url in urls:
+            calls += 1
+            try:
+                payload = fetch(url, 12)
+                items = parse_gdelt(payload) if "gdeltproject.org" in url else parse_rss(payload)
+            except AdverseMediaError as exc:
+                errors.append(exc.message)
+                continue
+            except (OSError, ValueError) as exc:
+                errors.append(exc.__class__.__name__)
+                continue
+            kept, added = _store_items(db, source, items[:12])
+            retrieved += kept
+            stored += added
+    for _round in range(8):
+        outcome = process_queue(db, tenant_id, limit=25)
+        if not outcome["analyzed"] and not outcome["failed"]:
+            break
+    db.flush()
+    return {
+        "years": span,
+        "retrieved": retrieved,
+        "stored": stored,
+        "calls": calls,
+        "errors": errors[:8],
+        "providers": ["Google Actualités", "GDELT"],
+        "period_start": windows[0][0].date().isoformat(),
+        "period_end": windows[-1][1].date().isoformat(),
+        "failed": calls > 0 and retrieved == 0 and len(errors) == calls,
+    }
+
+
+def _history_hits(db: Session, tenant_id: str, name: str) -> list[dict]:
+    needle = fold(name)
+    if len(needle) < 4:
+        return []
+    rows = db.execute(
+        select(AdverseMediaArticle, AdverseMediaArticleVersion)
+        .join(AdverseMediaArticleVersion, AdverseMediaArticleVersion.article_id == AdverseMediaArticle.id)
+        .where(AdverseMediaArticle.tenant_id == tenant_id, AdverseMediaArticleVersion.nlp_status == "analyzed")
+    ).all()
+    hits = []
+    for article, version in rows:
+        blob = fold(f"{article.title} {version.title} {version.body}")
+        if needle not in blob:
+            continue
+        adverse = [
+            event
+            for event in (version.analysis or {}).get("events") or []
+            if not event.get("negated") and event.get("stance") in ALERTING_STANCES
+        ]
+        if not adverse:
+            continue
+        event = adverse[0]
+        published = article.published_at.date().isoformat() if article.published_at else ""
+        hits.append(
+            {
+                "entity": name,
+                "identity_score": 86,
+                "article_title": article.title,
+                "article_url": article.url,
+                "published_at": published,
+                "stance": event.get("stance"),
+                "category": event.get("category"),
+                "subject_role": event.get("subject_role"),
+                "explanation": [
+                    "Le nom figure dans le titre ou le corps de l'article.",
+                    "Le nom seul ne confirme pas l'identité.",
+                ],
+                "guilt_conclusion": False,
+            }
+        )
+    hits.sort(key=lambda item: item.get("published_at") or "", reverse=True)
+    return hits[:50]
+
+
 def search_name(db: Session, tenant_id: str, name: str, dob: str | None = None, country: str | None = None) -> list[dict]:
     results = []
     entities = db.scalars(select(AdverseMediaEntity).where(AdverseMediaEntity.tenant_id == tenant_id)).all()
@@ -2111,11 +2287,40 @@ def search_name(db: Session, tenant_id: str, name: str, dob: str | None = None, 
     return results[:50]
 
 
-def search_report(db: Session, tenant_id: str, name: str, dob: str | None = None, country: str | None = None) -> dict:
-    hits = search_name(db, tenant_id, name, dob, country)
+def search_report(
+    db: Session,
+    tenant_id: str,
+    name: str,
+    dob: str | None = None,
+    country: str | None = None,
+    *,
+    years: int = 5,
+    fetch=http_get,
+    now: datetime | None = None,
+) -> dict:
+    history = internet_history(db, tenant_id, name, years=years, fetch=fetch, now=now)
+    hits = [] if history["failed"] else _history_hits(db, tenant_id, name)
     corroborated = any("Date de naissance identique" in " ".join(hit.get("explanation") or []) for hit in hits)
-    contract = screening_contract(name, screened=True, failed=False, alerts=[{"status": "new"}] if hits else [], corroborated=corroborated)
-    return {**contract, "results": hits}
+    contract = screening_contract(
+        name,
+        screened=True,
+        failed=history["failed"],
+        alerts=[{"status": "new"}] if hits else [],
+        corroborated=corroborated,
+    )
+    if contract["screening_status"] == "NoRelevantMediaFound":
+        if history["retrieved"]:
+            contract["screening_meaning"] = (
+                f"{history['retrieved']} articles lus entre {history['period_start']} et {history['period_end']}, "
+                "année par année, sur Google Actualités et GDELT. Aucun ne décrit une allégation, une enquête, "
+                "des poursuites ou une condamnation. Cela ne signifie pas que la personne n'a pas de médias défavorables."
+            )
+        else:
+            contract["screening_meaning"] = (
+                f"Recherche effectuée de {history['period_start']} à {history['period_end']} sur Google Actualités et GDELT. "
+                "Ces sources n'ont renvoyé aucun article. Cela ne signifie pas que la personne n'a pas de médias défavorables."
+            )
+    return {**contract, "results": hits, **history}
 
 
 def source_view(source: AdverseMediaSource) -> dict:

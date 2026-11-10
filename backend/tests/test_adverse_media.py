@@ -29,6 +29,7 @@ from app.adverse_media import (
     record_decision,
     retry_failed,
     screen_customer,
+    search_report,
 )
 from app.ids import ADMIN_EMAIL, ANALYST_EMAIL, DEMO_PASSWORD, TENANT_ID
 from app.models import (
@@ -465,3 +466,73 @@ def test_batch_progress_stores_only_what_the_source_returns(tmp_path):
         assert licensed["stored"] == 0
         assert licensed["progress"] == 100
         assert "licence" in licensed["message"]
+
+
+def test_name_search_reads_each_past_year_on_google_and_gdelt(tmp_path):
+    calls = []
+    moment = datetime(2026, 1, 15, tzinfo=UTC)
+
+    def fetch(url, timeout):
+        calls.append(url)
+        decoded = urllib.parse.unquote(url)
+        assert timeout == 12
+        if "news.google.com" in url:
+            assert "after:" in decoded and "before:" in decoded
+            if "after:2023-01-15" in decoded and "hl=fr" in url:
+                return (
+                    "<rss><channel><item>"
+                    "<title>Zoubeida Mentest fait l'objet de poursuites pour fraude.</title>"
+                    "<link>https://exemple.media/zoubeida-2023</link>"
+                    "<pubDate>Wed, 15 Mar 2023 10:00:00 GMT</pubDate>"
+                    "<description>Zoubeida Mentest fait l'objet de poursuites pour fraude.</description>"
+                    "</item></channel></rss>"
+                ).encode()
+            return b"<rss><channel></channel></rss>"
+        assert "gdeltproject.org" in url
+        assert "startdatetime=" in url
+        assert "enddatetime=" in url
+        return b'{"articles":[]}'
+
+    with _client(tmp_path) as client:
+        db = _session(client)
+        report = search_report(db, TENANT_ID, "Zoubeida Mentest", years=3, fetch=fetch, now=moment)
+        assert len(calls) == 9
+        gdelt_years = sorted(
+            urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["startdatetime"][0][:4]
+            for url in calls
+            if "gdeltproject.org" in url
+        )
+        assert gdelt_years == ["2023", "2024", "2025"]
+        assert report["retrieved"] == 1
+        assert report["period_start"] == "2023-01-15"
+        assert report["period_end"] == "2026-01-15"
+        assert report["screening_status"] == "ManualReviewRequired"
+        assert report["identity_confirmed_by_name_alone"] is False
+        assert report["results"][0]["published_at"] == "2023-03-15"
+        assert report["results"][0]["category"] == "fraud"
+        source = db.scalar(select(AdverseMediaSource).where(AdverseMediaSource.tenant_id == TENANT_ID, AdverseMediaSource.name == "Recherche internet"))
+        assert source is not None and source.active is False and source.config["on_demand"] is True
+
+        def boom(_url, _timeout):
+            raise AdverseMediaError("Source indisponible : HTTP 503")
+
+        failed = search_report(db, TENANT_ID, "Nassim Khelifi", years=1, fetch=boom, now=moment)
+        assert failed["screening_status"] == "ScreeningFailed"
+        assert failed["results"] == []
+
+        def quiet(url, _timeout):
+            if "gdeltproject.org" in url:
+                return b'{"articles":[]}'
+            return (
+                "<rss><channel><item>"
+                "<title>Lina Ferchichi ouvre une boulangerie</title>"
+                "<link>https://exemple.media/lina-boulangerie</link>"
+                "<description>Inauguration fictive à Tunis.</description>"
+                "</item></channel></rss>"
+            ).encode()
+
+        quiet_report = search_report(db, TENANT_ID, "Lina Ferchichi", years=1, fetch=quiet, now=moment)
+        assert quiet_report["retrieved"] >= 1
+        assert quiet_report["screening_status"] == "NoRelevantMediaFound"
+        assert "articles lus" in quiet_report["screening_meaning"]
+        assert "ne signifie pas" in quiet_report["screening_meaning"]
