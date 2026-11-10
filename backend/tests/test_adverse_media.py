@@ -260,7 +260,54 @@ def test_desk_exposes_adverse_media_and_keeps_opensanctions_path(tmp_path):
         assert denied.status_code == 403
 
 
-def test_content_hash_is_stable_for_the_same_words():
+def test_gdelt_reads_the_article_page_and_shareholders_are_parties(tmp_path):
+    listing = b'{"articles":[{"url":"https://exemple.media/gdelt-zoubeida","title":"Une depeche","language":"French"}]}'
+    page = b"<html><body><p>Zoubeida Mentest fait l'objet de poursuites pour fraude.</p></body></html>"
+
+    def fetch(url, timeout):
+        assert timeout == 8
+        if "mode=artlist" in url:
+            return listing
+        assert url == "https://exemple.media/gdelt-zoubeida"
+        return page
+
+    with _client(tmp_path) as client:
+        db = _session(client)
+        customer = _person(db, "Zoubeida Mentest")
+        business = Customer(tenant_id=TENANT_ID, kind="business", display_name="Atelier Fictif", external_ref="adv-shareholder", canonical_status="approved")
+        db.add(business)
+        db.flush()
+        from app.services import _parties
+
+        _parties(db, TENANT_ID, business.id, {"shareholders": [{"full_name": "Zoubeida Mentest", "ownership_pct": 30}]})
+        holder = db.scalar(select(Party).where(Party.business_customer_id == business.id, Party.role == "shareholder"))
+        assert holder is not None
+        assert holder.full_name == "Zoubeida Mentest"
+        source = AdverseMediaSource(
+            tenant_id=TENANT_ID,
+            name="GDELT test",
+            kind="gdelt",
+            url="https://api.gdeltproject.org/api/v2/doc/doc",
+            language="fr",
+            active=True,
+            config={"query": "Tunisie", "timeout_seconds": 8, "quota_per_hour": 5, "max_records": 5},
+        )
+        db.add(source)
+        db.commit()
+        result = collect_source(db, source, fetch=fetch)
+        db.commit()
+        assert result["stored"] == 1
+        version = db.scalar(select(AdverseMediaArticleVersion))
+        assert "poursuites" in version.body
+        assert process_queue(db, TENANT_ID)["analyzed"] == 1
+        db.commit()
+        alerts = db.scalars(select(AdverseMediaAlert).where(AdverseMediaAlert.customer_id == customer.id)).all()
+        assert alerts
+        token = client.post("/api/clarity/v1/auth/login", json={"email": ANALYST_EMAIL, "password": DEMO_PASSWORD}).json()["access_token"]
+        summary = client.get("/api/clarity/v1/adverse-media/summary", headers={"Authorization": f"Bearer {token}"})
+        assert summary.status_code == 200
+        assert summary.json()["articles"] >= 1
+        assert summary.json()["guilt_conclusion"] is False
     assert content_hash("Titre", "Corps") == content_hash("Titre", "  Corps  ")
     old = utcnow() - timedelta(days=1)
     assert old < utcnow()

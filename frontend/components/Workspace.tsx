@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
+import { AdverseMediaDesk } from "./AdverseMediaDesk";
 import CaseDesk from "./CaseDesk";
 import KycDesk, { RiskScoreChip, VerificationPreview } from "./KycDesk";
 import ScreeningDesk from "./ScreeningDesk";
@@ -41,6 +42,7 @@ const GROUPS = [
     links: [
       ["/aml", "nav.overview"],
       ["/screening", "nav.screening"],
+      ["/adverse-media", "nav.adverseMedia"],
       ["/risk", "nav.risk"],
       ["/transactions", "nav.transactions"],
       ["/alerts", "nav.alerts"],
@@ -367,6 +369,7 @@ export default function Workspace({ section, customerId }: { section: string; cu
         {!customerId && section === "verification" ? <KycDesk /> : null}
         {!customerId && section === "kyb-verification" ? <KycDesk kind="business" /> : null}
         {!customerId && section === "screening" ? <ScreeningDesk /> : null}
+        {!customerId && section === "adverse-media" ? <AdverseMediaDesk /> : null}
         {!customerId && section === "risk" ? <RiskBoard /> : null}
         {!customerId && section === "transactions" ? <TransactionBoard /> : null}
         {!customerId && section === "alerts" ? <AlertBoard /> : null}
@@ -406,6 +409,7 @@ const OVERVIEWS: Record<string, { title: string; lede: string; cards: Array<[str
     cards: [
       ["Transactions", "transactions", "/transactions"],
       ["Alertes ouvertes", "open_alerts", "/alerts"],
+      ["Médias défavorables", "media_alerts", "/adverse-media"],
       ["Investigations", "open_cases", "/investigations"],
       ["Tâches", "open_tasks", "/reviews"],
     ],

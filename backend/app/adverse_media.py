@@ -455,6 +455,25 @@ def _connector_request(source: AdverseMediaSource) -> tuple[str, str]:
     return fmt, source.url
 
 
+def enrich_gdelt_items(items: list[dict], fetch, timeout: int, limit: int = 8) -> list[dict]:
+    """GDELT artlist returns titles. Read the article page when the site responds."""
+    enriched = []
+    for item in items[:limit]:
+        row = dict(item)
+        url = str(row.get("url") or "")
+        title = str(row.get("title") or "")
+        if url.startswith(("https://", "http://")):
+            try:
+                page = fetch(url, timeout)
+                text = plain_text(page.decode("utf-8", errors="replace"))
+                if len(text) > len(title) + 40:
+                    row["body"] = text
+            except AdverseMediaError:
+                row["body"] = row.get("body") or title
+        enriched.append(row)
+    return enriched
+
+
 def _parse_payload(fmt: str, payload: bytes) -> list[dict]:
     if fmt == "gdelt":
         return parse_gdelt(payload)
@@ -508,6 +527,8 @@ def collect_source(db: Session, source: AdverseMediaSource, fetch=http_get) -> d
         fmt, url = _connector_request(source)
         payload = fetch(url, _timeout(source))
         items = _parse_payload(fmt, payload)
+        if fmt == "gdelt":
+            items = enrich_gdelt_items(items, fetch, _timeout(source))
     except AdverseMediaError as exc:
         _log_collection(db, source, "error", 0, 0, exc.message, started)
         db.flush()

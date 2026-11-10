@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.adverse_media import (
@@ -66,6 +66,36 @@ def _alert(db: Session, principal: Principal, alert_id: str) -> AdverseMediaAler
     if not row or row.tenant_id != principal.tenant_id:
         raise clarity_error(404, "not_found", "Alerte introuvable.")
     return row
+
+
+@router.get("/summary")
+def summary(principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    from app.models import AdverseMediaArticleVersion
+
+    tenant_id = principal.tenant_id
+    sources = ensure_sources(db, tenant_id)
+
+    def count(model, *filters):
+        return int(db.scalar(select(func.count()).select_from(model).where(model.tenant_id == tenant_id, *filters)) or 0)
+
+    pending = int(
+        db.scalar(
+            select(func.count())
+            .select_from(AdverseMediaArticleVersion)
+            .join(AdverseMediaArticle, AdverseMediaArticle.id == AdverseMediaArticleVersion.article_id)
+            .where(AdverseMediaArticle.tenant_id == tenant_id, AdverseMediaArticleVersion.nlp_status.in_(("pending", "failed")))
+        )
+        or 0
+    )
+    return {
+        "sources": len(sources),
+        "active_sources": sum(1 for row in sources if row.active),
+        "articles": count(AdverseMediaArticle),
+        "pending_analyses": pending,
+        "open_alerts": count(AdverseMediaAlert, AdverseMediaAlert.status.in_(("new", "in_review", "waiting_info", "escalated"))),
+        "policy": get_policy(db, tenant_id),
+        "guilt_conclusion": False,
+    }
 
 
 @router.get("/sources")

@@ -12,6 +12,7 @@ from app.config import ROOT
 from app.deps import clarity_principal, db_session
 from app.ids import DEMO_PASSWORD
 from app.models import (
+    AdverseMediaAlert,
     ConfigDocument,
     Alert,
     AuditEvent,
@@ -99,6 +100,7 @@ class BusinessBody(BaseModel):
     representative_id_number: str | None = None
     directors: list[PartyBody] = Field(default_factory=list)
     beneficial_owners: list[PartyBody] = Field(default_factory=list)
+    shareholders: list[PartyBody] = Field(default_factory=list)
     external_ref: str | None = None
 
 
@@ -289,6 +291,7 @@ def dashboard(principal: Principal = Depends(clarity_principal), db: Session = D
         "kyc_sessions": count(WorkflowInstance, WorkflowInstance.definition_key == "clarityKycIndividual"),
         "kyb_sessions": count(WorkflowInstance, WorkflowInstance.definition_key == "clarityKybBusiness"),
         "open_alerts": count(Alert, Alert.status == "open"),
+        "media_alerts": count(AdverseMediaAlert, AdverseMediaAlert.status.in_(("new", "in_review", "waiting_info", "escalated"))),
         "open_cases": count(CaseRecord, CaseRecord.status != "closed"),
         "open_tasks": count(WorkflowTask, WorkflowTask.status == "open"),
         "transactions": count(Transaction),

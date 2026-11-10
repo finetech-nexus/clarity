@@ -27,4 +27,12 @@ L'onglet Adverse media lit `adverse_media` sur `GET /api/clarity/v1/desks/kyc/{r
 
 ## Limites
 
-Pas de modèle neuronal. Pas de chiffrement de champ au-delà du stockage déjà utilisé pour le KYC. Les déclarations de soupçon ne sont ni lues ni écrites ici. GDELT ne fournit que le titre dans le mode `artlist`.
+L'analyse `lexicon-1.0` classe des expressions. Elle ne produit pas une lecture de modèle neuronal et ne conclut pas à la culpabilité.
+
+GDELT publie le titre. Le collecteur ouvre ensuite la page de l'article. Si le site ne répond pas, seul le titre est enregistré.
+
+Les actionnaires sont des `Party` de rôle `shareholder`, au même titre que les dirigeants et les bénéficiaires effectifs.
+
+Les déclarations de soupçon ne sont ni lues ni écrites ici. Les articles sont stockés comme le reste du KYC.
+
+L'écran AML Adverse media couvre le tableau de bord, la recherche, les sources, les articles, les alertes et le journal. Les sources restent inactives tant qu'une URL, et une requête pour GDELT, ne sont pas enregistrées.

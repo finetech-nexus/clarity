@@ -1848,6 +1848,21 @@ def _parties(db: Session, tenant_id: str, business_id: str, data: dict) -> None:
                 ownership_pct=owner.get("ownership_pct") or owner.get("ownershipPercentage"),
             )
         )
+    for holder in data.get("shareholders") or []:
+        name = holder.get("name") or holder.get("full_name") or ""
+        if not str(name).strip():
+            continue
+        db.add(
+            Party(
+                tenant_id=tenant_id,
+                business_customer_id=business_id,
+                role="shareholder",
+                full_name=name,
+                date_of_birth=holder.get("date_of_birth") or holder.get("dateOfBirth"),
+                nationality=holder.get("nationality"),
+                ownership_pct=holder.get("ownership_pct") or holder.get("ownershipPercentage"),
+            )
+        )
 
 
 def open_business_workflow(
