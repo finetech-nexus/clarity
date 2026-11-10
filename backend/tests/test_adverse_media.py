@@ -19,6 +19,7 @@ from app.adverse_media import (
     content_hash,
     deep_search,
     http_get,
+    run_batch,
     identity_assessment,
     ingest_article,
     name_similarity,
@@ -264,7 +265,8 @@ def test_desk_exposes_adverse_media_and_keeps_opensanctions_path(tmp_path):
         sources = client.get("/api/clarity/v1/adverse-media/sources", headers=headers)
         assert sources.status_code == 200
         catalog = [row for row in sources.json() if row["name"] != "Fiche"]
-        assert len(catalog) == 7
+        assert any(row["name"] == "Business News" and row["url"] == "https://businessnews.com.tn/feed/" and row["active"] is True for row in catalog)
+        assert any(row["name"] == "Réalités" and row["active"] is True for row in catalog)
         assert all(row["active"] is True and str(row["url"]).startswith("https://") for row in catalog)
         assert any(row["name"] == "Presse tunisienne" and row["url"] == "https://lapresse.tn/feed/" for row in catalog)
         assert any(row["name"] == "GDELT" and row["config"]["query"] == "Tunisia OR Tunisie" for row in catalog)
@@ -412,3 +414,31 @@ def test_gdelt_rate_limit_waits_and_retries(monkeypatch):
     body = http_get("https://api.gdeltproject.org/api/v2/doc/doc?query=Tunisie", 5)
     assert body == b'{"articles":[]}'
     assert calls["n"] == 2
+
+
+def test_batch_progress_stores_only_what_the_source_returns(tmp_path):
+    def fetch(url, _timeout):
+        if "gdeltproject.org" in url:
+            return b'{"articles":[]}'
+        return b'<?xml version="1.0"?><rss><channel></channel></rss>'
+
+    with _client(tmp_path) as client:
+        db = _session(client)
+        result = run_batch(db, TENANT_ID, fetch=fetch)
+        assert result["status"] == "completed"
+        assert result["progress"] == 100
+        assert result["total"] >= 9
+        assert result["stored"] == 0
+        assert db.scalar(select(func.count()).select_from(AdverseMediaArticle).where(AdverseMediaArticle.tenant_id == TENANT_ID)) == 0
+        from app.models import ProviderConnection
+
+        connection = db.scalar(select(ProviderConnection).where(ProviderConnection.tenant_id == TENANT_ID, ProviderConnection.kind == "adverse_media"))
+        if connection is None:
+            connection = ProviderConnection(tenant_id=TENANT_ID, kind="adverse_media", name="Dow Jones", mode="not_configured", configured=False, detail={})
+            db.add(connection)
+        connection.detail = {"provider": "dow_jones"}
+        db.commit()
+        licensed = run_batch(db, TENANT_ID, fetch=fetch)
+        assert licensed["stored"] == 0
+        assert licensed["progress"] == 100
+        assert "licence" in licensed["message"]

@@ -453,6 +453,7 @@ export function AuditBoard() {
 const PURPOSES = [
   ["sanctions", "Sanctions"],
   ["identity", "Identité"],
+  ["adverse_media", "Adverse media"],
 ] as const;
 
 type ProviderField = { key: string; label: string; secret: boolean };
@@ -465,6 +466,8 @@ type ScreeningSource = {
   covered: boolean;
   enabled: boolean;
 };
+type MediaSource = { id: string; name: string; family: string; language: string; enabled: boolean };
+type MediaBatch = { status: string; progress: number; done: number; total: number; stored: number; message: string };
 
 export function IntegrationBoard() {
   const [rows, setRows] = useState<Row[]>([]);
@@ -472,6 +475,8 @@ export function IntegrationBoard() {
   const [chosen, setChosen] = useState<Record<string, string>>({});
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [sources, setSources] = useState<ScreeningSource[]>([]);
+  const [mediaSources, setMediaSources] = useState<MediaSource[]>([]);
+  const [batch, setBatch] = useState<MediaBatch>({ status: "idle", progress: 0, done: 0, total: 0, stored: 0, message: "" });
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -485,7 +490,19 @@ export function IntegrationBoard() {
     const sanctions = connections.find((item) => item.kind === "sanctions");
     const listed = Array.isArray(sanctions?.sources) ? (sanctions.sources as ScreeningSource[]) : [];
     setSources(listed);
+    const media = connections.find((item) => item.kind === "adverse_media");
+    setMediaSources(Array.isArray(media?.sources) ? (media.sources as MediaSource[]) : []);
+    const nextBatch = media?.batch as MediaBatch | undefined;
+    if (nextBatch) setBatch(nextBatch);
   }
+
+  useEffect(() => {
+    if (batch.status !== "running") return;
+    const timer = window.setInterval(() => {
+      void api<MediaBatch>("/api/clarity/v1/adverse-media/batch").then(setBatch).catch(() => undefined);
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [batch.status]);
 
   useEffect(() => {
     void load().catch((err: Error) => setError(err.message));
@@ -518,6 +535,9 @@ export function IntegrationBoard() {
         sources.filter((source) => source.id !== "opensanctions").map((source) => [source.id, source.enabled])
       );
     }
+    if (kind === "adverse_media") {
+      body.sources = Object.fromEntries(mediaSources.map((source) => [source.id, source.enabled]));
+    }
     try {
       await api(`/api/clarity/v1/integrations/${kind}`, { method: "PATCH", body: JSON.stringify(body) });
       const checked = await api<Row>(`/api/clarity/v1/integrations/${kind}/check`, { method: "POST" });
@@ -542,7 +562,7 @@ export function IntegrationBoard() {
 
   return (
     <div className="stack">
-      <p className="lede">Pour chaque usage, choisissez un fournisseur dans la liste connue. La clé enregistrée n'est pas renvoyée. Sans clé, le criblage reste sur la liste de démonstration.</p>
+      <p className="lede">Pour chaque usage, choisissez un fournisseur dans la liste connue. La clé enregistrée n'est pas renvoyée. Les sources d'adverse media se règlent ici. Le batch affiche seulement sa progression.</p>
       {error ? <p className="error">{error}</p> : null}
       {message ? <p>{message}</p> : null}
       <div className="connectors">
@@ -607,10 +627,52 @@ export function IntegrationBoard() {
                   ))}
                 </fieldset>
               ) : null}
+              {kind === "adverse_media" && provider.id === "public_media" && mediaSources.length ? (
+                <fieldset className="stack">
+                  <legend>Sources</legend>
+                  {mediaSources.map((source) => (
+                    <label key={source.id}>
+                      <input
+                        type="checkbox"
+                        checked={source.enabled}
+                        onChange={(event) =>
+                          setMediaSources((current) =>
+                            current.map((item) => (item.id === source.id ? { ...item, enabled: event.target.checked } : item))
+                          )
+                        }
+                      />
+                      {source.name}
+                      <span className="label"> · {source.family} · {source.language}</span>
+                    </label>
+                  ))}
+                </fieldset>
+              ) : null}
+              {kind === "adverse_media" ? (
+                <div>
+                  <p className="label">Batch {batch.progress}% · {batch.done}/{batch.total} · {batch.message || batch.status}</p>
+                  <div style={{ height: 8, background: "#e6e6e6" }}>
+                    <div style={{ width: `${Math.max(0, Math.min(batch.progress, 100))}%`, height: 8, background: "#1f6b4a" }} />
+                  </div>
+                </div>
+              ) : null}
               {row?.connection_message ? <p>{String(row.connection_message)}</p> : null}
               <div className="actions">
                 <button type="submit">Enregistrer</button>
                 <button type="button" className="ghost" onClick={() => void check(kind)}>Vérifier</button>
+                {kind === "adverse_media" && provider.id === "public_media" ? (
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => {
+                      setBatch((current) => ({ ...current, status: "running", progress: 0, message: "Batch en cours." }));
+                      void api<MediaBatch>("/api/clarity/v1/adverse-media/batch", { method: "POST" })
+                        .then((next) => setBatch(next))
+                        .catch((err: Error) => setError(err.message));
+                    }}
+                  >
+                    Lancer le batch
+                  </button>
+                ) : null}
               </div>
             </form>
           );

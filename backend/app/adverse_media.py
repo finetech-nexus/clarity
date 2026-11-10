@@ -127,13 +127,16 @@ _ARABIC = {
 _PARTICLES = ("ben", "bin", "ibn", "ould", "ouled", "el", "al", "bn")
 _STOP = {"le", "la", "les", "de", "des", "du", "et", "the", "and", "of", "pour", "dans", "une", "un"}
 _SOURCE_CATALOG = (
-    {"name": "GDELT", "kind": "gdelt", "url": "https://api.gdeltproject.org/api/v2/doc/doc", "language": "multi", "config": {"query": "Tunisia OR Tunisie", "timeout_seconds": 12, "quota_per_hour": 20, "max_records": 25}},
-    {"name": "Presse tunisienne", "kind": "tunisian", "url": "https://lapresse.tn/feed/", "language": "fr", "config": {"timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
-    {"name": "Presse internationale", "kind": "international", "url": "https://feeds.bbci.co.uk/news/world/rss.xml", "language": "en", "config": {"timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
-    {"name": "Flux RSS", "kind": "rss", "url": "https://www.france24.com/fr/rss", "language": "fr", "config": {"timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
-    {"name": "Publications officielles", "kind": "official", "url": "https://ec.europa.eu/commission/presscorner/api/rss?language=fr", "language": "fr", "config": {"timeout_seconds": 12, "quota_per_hour": 20, "format": "rss"}},
-    {"name": "Sources institutionnelles", "kind": "institutional", "url": "https://news.un.org/feed/subscribe/en/news/all/rss.xml", "language": "en", "config": {"timeout_seconds": 12, "quota_per_hour": 20, "format": "rss"}},
-    {"name": "API publique", "kind": "public_api", "url": "https://www.jeuneafrique.com/feed/", "language": "fr", "config": {"timeout_seconds": 12, "quota_per_hour": 20, "format": "rss"}},
+    {"name": "GDELT", "kind": "gdelt", "url": "https://api.gdeltproject.org/api/v2/doc/doc", "language": "multi", "config": {"family": "Recherche mondiale", "query": "Tunisia OR Tunisie", "timeout_seconds": 12, "quota_per_hour": 20, "max_records": 25}},
+    {"name": "Presse tunisienne", "kind": "tunisian", "url": "https://lapresse.tn/feed/", "language": "fr", "config": {"family": "Presse locale", "timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
+    {"name": "Business News", "kind": "tunisian", "url": "https://businessnews.com.tn/feed/", "language": "fr", "config": {"family": "Presse économique", "timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
+    {"name": "Réalités", "kind": "tunisian", "url": "https://www.realites.com.tn/feed/", "language": "fr", "config": {"family": "Presse locale", "timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
+    {"name": "Presse internationale", "kind": "international", "url": "https://feeds.bbci.co.uk/news/world/rss.xml", "language": "en", "config": {"family": "Presse internationale", "timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
+    {"name": "Flux RSS", "kind": "rss", "url": "https://www.france24.com/fr/rss", "language": "fr", "config": {"family": "Presse internationale", "timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
+    {"name": "Jeune Afrique", "kind": "international", "url": "https://www.jeuneafrique.com/feed/", "language": "fr", "config": {"family": "Presse régionale", "timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
+    {"name": "Publications officielles", "kind": "official", "url": "https://ec.europa.eu/commission/presscorner/api/rss?language=fr", "language": "fr", "config": {"family": "Publications officielles", "timeout_seconds": 12, "quota_per_hour": 20, "format": "rss"}},
+    {"name": "Sources institutionnelles", "kind": "institutional", "url": "https://news.un.org/feed/subscribe/en/news/all/rss.xml", "language": "en", "config": {"family": "Institutions", "timeout_seconds": 12, "quota_per_hour": 20, "format": "rss"}},
+    {"name": "API publique", "kind": "public_api", "url": "https://www.jeuneafrique.com/feed/", "language": "fr", "config": {"family": "Presse régionale", "timeout_seconds": 12, "quota_per_hour": 20, "format": "rss"}},
 )
 _DEFAULT_POLICY = {
     "identity_threshold": 82,
@@ -1576,18 +1579,134 @@ def rescreen_due(db: Session, tenant_id: str) -> int:
     return done
 
 
+def _batch_row(db: Session, tenant_id: str) -> ConfigDocument | None:
+    return db.scalar(
+        select(ConfigDocument).where(
+            ConfigDocument.tenant_id == tenant_id,
+            ConfigDocument.kind == "adverse_media_batch",
+            ConfigDocument.status == "active",
+        )
+    )
+
+
+def batch_status(db: Session, tenant_id: str) -> dict:
+    payload = dict((_batch_row(db, tenant_id).payload if _batch_row(db, tenant_id) else None) or {})
+    return {
+        "status": str(payload.get("status") or "idle"),
+        "progress": int(payload.get("progress") or 0),
+        "done": int(payload.get("done") or 0),
+        "total": int(payload.get("total") or 0),
+        "stored": int(payload.get("stored") or 0),
+        "message": str(payload.get("message") or ""),
+    }
+
+
+def _save_batch(db: Session, tenant_id: str, payload: dict) -> None:
+    row = _batch_row(db, tenant_id)
+    if row is None:
+        db.add(ConfigDocument(tenant_id=tenant_id, kind="adverse_media_batch", name="Adverse media batch", status="active", payload=payload))
+    else:
+        row.payload = payload
+        row.updated_at = utcnow()
+    db.flush()
+
+
+def _media_provider(db: Session, tenant_id: str) -> str:
+    from app.models import ProviderConnection
+
+    row = db.scalar(select(ProviderConnection).where(ProviderConnection.tenant_id == tenant_id, ProviderConnection.kind == "adverse_media"))
+    return str(((row.detail if row else None) or {}).get("provider") or "public_media")
+
+
+def run_batch(db: Session, tenant_id: str, *, fetch=http_get, only_due: bool = False) -> dict:
+    """Collect the enabled public sources. Progress is a percentage, not an article list."""
+    provider = _media_provider(db, tenant_id)
+    if provider != "public_media":
+        payload = {"status": "completed", "progress": 100, "done": 0, "total": 0, "stored": 0, "message": "Le fournisseur sous licence n'est pas relié. Aucun article n'est créé."}
+        _save_batch(db, tenant_id, payload)
+        db.commit()
+        return payload
+    now = utcnow()
+    sources = []
+    for source in ensure_sources(db, tenant_id):
+        if not source.active:
+            continue
+        if only_due and source.last_collected_at and now < source.last_collected_at + timedelta(minutes=source.frequency_minutes):
+            continue
+        sources.append(source)
+    total = len(sources)
+    payload = {"status": "running", "progress": 0, "done": 0, "total": total, "stored": 0, "message": "Batch en cours."}
+    _save_batch(db, tenant_id, payload)
+    db.commit()
+    stored = 0
+    if total == 0:
+        payload = {"status": "completed", "progress": 100, "done": 0, "total": 0, "stored": 0, "message": "Aucune source active."}
+        _save_batch(db, tenant_id, payload)
+        db.commit()
+        return payload
+    for index, source in enumerate(sources, start=1):
+        result = collect_source(db, source, fetch=fetch)
+        stored += int(result.get("stored") or 0)
+        payload = {
+            "status": "running",
+            "progress": int(100 * index / total),
+            "done": index,
+            "total": total,
+            "stored": stored,
+            "message": f"{index}/{total}",
+        }
+        _save_batch(db, tenant_id, payload)
+        db.commit()
+    for _ in range(10):
+        processed = process_queue(db, tenant_id, limit=20)
+        db.commit()
+        if not processed["analyzed"] and not processed["failed"]:
+            break
+    payload = {"status": "completed", "progress": 100, "done": total, "total": total, "stored": stored, "message": "Batch terminé."}
+    _save_batch(db, tenant_id, payload)
+    db.commit()
+    return payload
+
+
+def launch_batch(session_factory, tenant_id: str) -> dict:
+    current = {"status": "running", "progress": 0, "done": 0, "total": 0, "stored": 0, "message": "Batch en cours."}
+
+    def _run() -> None:
+        db = session_factory()
+        try:
+            run_batch(db, tenant_id)
+        except Exception:
+            db.rollback()
+            _logger.exception("adverse media batch failed")
+            try:
+                _save_batch(db, tenant_id, {"status": "error", "progress": 0, "done": 0, "total": 0, "stored": 0, "message": "Batch interrompu."})
+                db.commit()
+            except Exception:
+                db.rollback()
+        finally:
+            db.close()
+
+    threading.Thread(target=_run, name="adverse-batch", daemon=True).start()
+    return current
+
+
 def run_due(db: Session, tenant_id: str | None = None) -> dict:
     tenant_ids = [tenant_id] if tenant_id else list(db.scalars(select(Tenant.id)).all())
     summary = {"collected": 0, "analyzed": 0, "rescreened": 0}
     now = utcnow()
     for current in tenant_ids:
-        for source in ensure_sources(db, current):
-            if not source.active:
-                continue
-            if source.last_collected_at and now < source.last_collected_at + timedelta(minutes=source.frequency_minutes):
-                continue
-            result = collect_source(db, source)
-            summary["collected"] += int(result.get("stored") or 0)
+        state = batch_status(db, current)
+        if state["status"] != "running":
+            due = False
+            for source in ensure_sources(db, current):
+                if not source.active:
+                    continue
+                if source.last_collected_at is None or now >= source.last_collected_at + timedelta(minutes=source.frequency_minutes):
+                    due = True
+                    break
+            if due:
+                result = run_batch(db, current, only_due=True)
+                summary["collected"] += int(result.get("stored") or 0)
         processed = process_queue(db, current)
         summary["analyzed"] += int(processed["analyzed"])
         summary["rescreened"] += rescreen_due(db, current)

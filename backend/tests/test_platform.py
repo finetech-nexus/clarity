@@ -1132,9 +1132,9 @@ def test_import_integrations_and_replacement(tmp_path):
         assert secret not in saved.text
         listed = client.get("/api/clarity/v1/integrations", headers=headers)
         assert secret not in listed.text
-        assert {row["kind"] for row in listed.json()} == {"sanctions", "identity"}
+        assert {row["kind"] for row in listed.json()} == {"sanctions", "identity", "adverse_media"}
         providers = client.get("/api/clarity/v1/integrations/providers", headers=headers)
-        assert {row["id"] for row in providers.json()} == {"opensanctions", "veriff"}
+        assert {row["id"] for row in providers.json()} == {"opensanctions", "veriff", "public_media", "dow_jones", "lexisnexis", "complyadvantage_media"}
         with patch("app.integrations_store.httpx.get", return_value=Mock(status_code=200)):
             checked = client.post("/api/clarity/v1/integrations/sanctions/check", headers=headers)
         assert checked.status_code == 200, checked.text

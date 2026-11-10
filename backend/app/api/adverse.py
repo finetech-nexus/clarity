@@ -10,8 +10,10 @@ from sqlalchemy.orm import Session
 from app.adverse_media import (
     AdverseMediaError,
     add_attachment,
+    batch_status,
     collect_source,
     desk_summary,
+    launch_batch,
     launch_deep_search,
     ensure_sources,
     get_policy,
@@ -124,6 +126,20 @@ def collect(source_id: str, principal: Principal = Depends(clarity_principal), d
     result = collect_source(db, _source(db, principal, source_id))
     processed = process_queue(db, principal.tenant_id)
     return {"collection": result, "processing": processed}
+
+
+@router.get("/batch")
+def batch(principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    return batch_status(db, principal.tenant_id)
+
+
+@router.post("/batch")
+def start_batch(request: Request, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
+    if not principal.allows("admin", "analyst"):
+        raise clarity_error(403, "forbidden", "Batch réservé à l'administrateur ou à l'analyste.")
+    if batch_status(db, principal.tenant_id)["status"] == "running":
+        return batch_status(db, principal.tenant_id)
+    return launch_batch(request.app.state.database.session_factory, principal.tenant_id)
 
 
 @router.post("/sources/{source_id}/deep-search")

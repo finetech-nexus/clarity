@@ -24,6 +24,30 @@ CATALOG = {
             {"key": "base_url", "label": "URL de base", "secret": False},
         ],
     },
+    "public_media": {
+        "purpose": "adverse_media",
+        "name": "Sources publiques",
+        "hint": "Presse, publications officielles, institutions et recherche GDELT. Le batch périodique n'enregistre que ce que la source renvoie.",
+        "fields": [],
+    },
+    "dow_jones": {
+        "purpose": "adverse_media",
+        "name": "Dow Jones Risk & Compliance",
+        "hint": "Fournisseur sous licence. Sans connexion réelle, aucune recherche n'est lancée et aucun article n'est créé.",
+        "fields": [{"key": "api_key", "label": "Clé API", "secret": True}],
+    },
+    "lexisnexis": {
+        "purpose": "adverse_media",
+        "name": "LexisNexis",
+        "hint": "Fournisseur sous licence. Sans connexion réelle, aucune recherche n'est lancée et aucun article n'est créé.",
+        "fields": [{"key": "api_key", "label": "Clé API", "secret": True}],
+    },
+    "complyadvantage_media": {
+        "purpose": "adverse_media",
+        "name": "ComplyAdvantage Adverse Media",
+        "hint": "Fournisseur sous licence. Sans connexion réelle, aucune recherche n'est lancée et aucun article n'est créé.",
+        "fields": [{"key": "api_key", "label": "Clé API", "secret": True}],
+    },
 }
 
 _OVERLAY = {
@@ -31,7 +55,7 @@ _OVERLAY = {
     "veriff": {"api_key": "veriff_api_key", "shared_secret": "veriff_shared_secret", "base_url": "veriff_base_url"},
 }
 
-_DEFAULT = {"sanctions": "opensanctions", "identity": "veriff"}
+_DEFAULT = {"sanctions": "opensanctions", "identity": "veriff", "adverse_media": "public_media"}
 
 
 def provider_catalog() -> list[dict]:
@@ -56,7 +80,7 @@ def load_overlay(db: Session) -> None:
     set_runtime_overlay(values)
 
 
-def public_integration(row: ProviderConnection) -> dict:
+def public_integration(row: ProviderConnection, db: Session | None = None) -> dict:
     detail = row.detail or {}
     provider = provider_of(row)
     secret = bool(detail.get("api_key") or detail.get("shared_secret"))
@@ -76,6 +100,21 @@ def public_integration(row: ProviderConnection) -> dict:
         from app.screening_sources import source_catalog
 
         payload["sources"] = source_catalog(detail.get("sources"), master=bool(detail.get("enabled", True)))
+    if row.kind == "adverse_media" and db is not None:
+        from app.adverse_media import batch_status, ensure_sources
+
+        payload["sources"] = [
+            {
+                "id": source.id,
+                "name": source.name,
+                "kind": source.kind,
+                "language": source.language,
+                "enabled": source.active,
+                "family": str((source.config or {}).get("family") or source.kind),
+            }
+            for source in ensure_sources(db, row.tenant_id)
+        ]
+        payload["batch"] = batch_status(db, row.tenant_id)
     return payload
 
 
@@ -106,9 +145,16 @@ def save_integration(db: Session, row: ProviderConnection, body: dict) -> Provid
             store_sources(detail, body["sources"])
         if "enabled" in body:
             detail["enabled"] = bool(body["enabled"])
+    if provider == "public_media" and isinstance(body.get("sources"), dict):
+        from app.adverse_media import ensure_sources
+
+        flags = {str(key): bool(value) for key, value in body["sources"].items()}
+        for source in ensure_sources(db, row.tenant_id):
+            if source.id in flags:
+                source.active = flags[source.id]
     row.detail = detail
     row.name = spec["name"]
-    row.configured = bool(detail.get("api_key") or detail.get("shared_secret"))
+    row.configured = bool(detail.get("api_key") or detail.get("shared_secret") or provider == "public_media")
     row.mode = "configured" if row.configured else "not_configured"
     load_overlay(db)
     return row
@@ -139,6 +185,10 @@ def probe_integration(row: ProviderConnection) -> tuple[bool, str]:
         if detail.get("api_key") and detail.get("shared_secret"):
             return True, "Clés Veriff enregistrées. L'essai ne crée pas de session."
         return False, "La clé et le secret Veriff sont requis."
+    if provider == "public_media":
+        return True, "Sources publiques prêtes. Le batch n'invente aucun article."
+    if provider in {"dow_jones", "lexisnexis", "complyadvantage_media"}:
+        return False, "Ce fournisseur sous licence n'est pas relié. Aucun article n'est créé."
     return False, "Ce fournisseur ne se vérifie pas encore."
 
 

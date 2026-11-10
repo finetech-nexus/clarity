@@ -39,4 +39,6 @@ Les actionnaires sont des `Party` de rôle `shareholder`, au même titre que les
 
 Les déclarations de soupçon ne sont ni lues ni écrites ici. Les articles sont stockés comme le reste du KYC.
 
-L'écran AML Adverse media couvre le tableau de bord, la recherche, les sources, les articles, les alertes et le journal. Au démarrage, les sept sources sont enregistrées actives avec un flux public vérifié : GDELT (requête Tunisie), La Presse, BBC World, France 24, les communiqués de la Commission européenne, le fil RSS de l'ONU et Jeune Afrique. Une source déjà enregistrée sans URL reçoit ce flux. Une URL saisie par un administrateur n'est pas remplacée.
+Les sources se configurent dans Administration, onglet Third party. Le catalogue public couvre la presse locale et économique, la presse internationale, les publications officielles, les institutions et GDELT. Dow Jones, LexisNexis et ComplyAdvantage apparaissent comme fournisseurs sous licence : sans connexion réelle, ils ne créent aucun article.
+
+Le batch tourne périodiquement, et à la demande. Il expose un pourcentage d'avancement, pas le détail des articles. L'écran Adverse media sert à la recherche et à la revue des résultats.

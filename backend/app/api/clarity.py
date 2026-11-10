@@ -1043,14 +1043,14 @@ def integrations(principal: Principal = Depends(clarity_principal), db: Session 
 
     _third_parties(db, principal.tenant_id)
     rows = db.scalars(select(ProviderConnection).where(ProviderConnection.tenant_id == principal.tenant_id)).all()
-    return [public_integration(row) for row in rows if row.kind in {"sanctions", "identity"}]
+    return [public_integration(row, db) for row in rows if row.kind in {"sanctions", "identity", "adverse_media"}]
 
 
 @router.patch("/integrations/{kind}")
 def update_integration(kind: str, body: IntegrationUpdate, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
     from app.integrations_store import public_integration, save_integration
 
-    if kind not in {"sanctions", "identity"}:
+    if kind not in {"sanctions", "identity", "adverse_media"}:
         raise clarity_error(404, "not_found", "Ce connecteur ne se configure pas ici.")
     _third_parties(db, principal.tenant_id)
     row = db.scalar(select(ProviderConnection).where(ProviderConnection.tenant_id == principal.tenant_id, ProviderConnection.kind == kind))
@@ -1058,20 +1058,20 @@ def update_integration(kind: str, body: IntegrationUpdate, principal: Principal 
         raise clarity_error(404, "not_found", "Connecteur introuvable.")
     save_integration(db, row, body.model_dump(exclude_none=True))
     audit(db, principal.tenant_id, actor_label(principal), "integration.update", "provider", kind, {"configured": row.configured, "provider": (row.detail or {}).get("provider")})
-    return public_integration(row)
+    return public_integration(row, db)
 
 
 @router.post("/integrations/{kind}/check")
 def check_saved_integration(kind: str, principal: Principal = Depends(clarity_principal), db: Session = Depends(db_session)):
     from app.integrations_store import check_integration, public_integration
 
-    if kind not in {"sanctions", "identity"}:
+    if kind not in {"sanctions", "identity", "adverse_media"}:
         raise clarity_error(404, "not_found", "Ce connecteur ne se vérifie pas ici.")
     row = db.scalar(select(ProviderConnection).where(ProviderConnection.tenant_id == principal.tenant_id, ProviderConnection.kind == kind))
     if not row:
         raise clarity_error(404, "not_found", "Connecteur introuvable.")
     check_integration(db, row)
-    return public_integration(row)
+    return public_integration(row, db)
 
 
 @router.post("/imports")
