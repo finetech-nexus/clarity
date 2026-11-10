@@ -28,6 +28,7 @@ from app.adverse_media import (
     reanalyze,
     record_decision,
     retry_failed,
+    collect_history,
     screen_customer,
     search_report,
 )
@@ -468,7 +469,7 @@ def test_batch_progress_stores_only_what_the_source_returns(tmp_path):
         assert "licence" in licensed["message"]
 
 
-def test_name_search_reads_each_past_year_on_google_and_gdelt(tmp_path):
+def test_five_year_archive_runs_in_the_batch_and_search_stays_local(tmp_path):
     calls = []
     moment = datetime(2026, 1, 15, tzinfo=UTC)
 
@@ -478,7 +479,8 @@ def test_name_search_reads_each_past_year_on_google_and_gdelt(tmp_path):
         assert timeout == 12
         if "news.google.com" in url:
             assert "after:" in decoded and "before:" in decoded
-            if "after:2023-01-15" in decoded and "hl=fr" in url:
+            assert "Tunisie" in decoded
+            if "after:2021-01-15" in decoded and "hl=fr" in url:
                 return (
                     "<rss><channel><item>"
                     "<title>Zoubeida Mentest fait l'objet de poursuites pour fraude.</title>"
@@ -488,51 +490,38 @@ def test_name_search_reads_each_past_year_on_google_and_gdelt(tmp_path):
                     "</item></channel></rss>"
                 ).encode()
             return b"<rss><channel></channel></rss>"
-        assert "gdeltproject.org" in url
-        assert "startdatetime=" in url
-        assert "enddatetime=" in url
-        return b'{"articles":[]}'
+        if "startdatetime=" in url:
+            return b'{"articles":[]}'
+        return b'<?xml version="1.0"?><rss><channel></channel></rss>'
 
     with _client(tmp_path) as client:
         db = _session(client)
-        report = search_report(db, TENANT_ID, "Zoubeida Mentest", years=3, fetch=fetch, now=moment)
-        assert len(calls) == 9
+        history = collect_history(db, TENANT_ID, fetch=fetch, now=moment)
         gdelt_years = sorted(
             urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["startdatetime"][0][:4]
             for url in calls
-            if "gdeltproject.org" in url
+            if "startdatetime=" in url
         )
-        assert gdelt_years == ["2023", "2024", "2025"]
-        assert report["retrieved"] == 1
-        assert report["period_start"] == "2023-01-15"
-        assert report["period_end"] == "2026-01-15"
+        assert history["years"] == 5
+        assert history["period_start"] == "2021-01-15"
+        assert history["period_end"] == "2026-01-15"
+        assert gdelt_years == ["2021", "2022", "2023", "2024", "2025"]
+        assert history["retrieved"] == 1
+        seen = len(calls)
+        report = search_report(db, TENANT_ID, "Zoubeida Mentest")
+        assert len(calls) == seen
         assert report["screening_status"] == "ManualReviewRequired"
         assert report["identity_confirmed_by_name_alone"] is False
         assert report["results"][0]["published_at"] == "2023-03-15"
         assert report["results"][0]["category"] == "fraud"
-        source = db.scalar(select(AdverseMediaSource).where(AdverseMediaSource.tenant_id == TENANT_ID, AdverseMediaSource.name == "Recherche internet"))
+        source = db.scalar(select(AdverseMediaSource).where(AdverseMediaSource.tenant_id == TENANT_ID, AdverseMediaSource.name == "Google Actualités"))
         assert source is not None and source.active is False and source.config["on_demand"] is True
-
-        def boom(_url, _timeout):
-            raise AdverseMediaError("Source indisponible : HTTP 503")
-
-        failed = search_report(db, TENANT_ID, "Nassim Khelifi", years=1, fetch=boom, now=moment)
-        assert failed["screening_status"] == "ScreeningFailed"
-        assert failed["results"] == []
-
-        def quiet(url, _timeout):
-            if "gdeltproject.org" in url:
-                return b'{"articles":[]}'
-            return (
-                "<rss><channel><item>"
-                "<title>Lina Ferchichi ouvre une boulangerie</title>"
-                "<link>https://exemple.media/lina-boulangerie</link>"
-                "<description>Inauguration fictive à Tunis.</description>"
-                "</item></channel></rss>"
-            ).encode()
-
-        quiet_report = search_report(db, TENANT_ID, "Lina Ferchichi", years=1, fetch=quiet, now=moment)
-        assert quiet_report["retrieved"] >= 1
-        assert quiet_report["screening_status"] == "NoRelevantMediaFound"
-        assert "articles lus" in quiet_report["screening_meaning"]
-        assert "ne signifie pas" in quiet_report["screening_meaning"]
+        assert any(row.name == "Kapitalis" and row.url == "https://kapitalis.com/anbaa-tounes/feed/" and row.active for row in db.scalars(select(AdverseMediaSource).where(AdverseMediaSource.tenant_id == TENANT_ID)))
+        calls.clear()
+        due = run_batch(db, TENANT_ID, fetch=fetch, only_due=True)
+        assert due["status"] == "completed"
+        assert not any("after:" in urllib.parse.unquote(url) for url in calls)
+        quiet = search_report(db, TENANT_ID, "Lina Ferchichi")
+        assert quiet["screening_status"] == "NoRelevantMediaFound"
+        assert "déjà collectés" in quiet["screening_meaning"]
+        assert "ne signifie pas" in quiet["screening_meaning"]

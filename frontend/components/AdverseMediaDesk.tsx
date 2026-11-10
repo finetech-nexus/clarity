@@ -14,7 +14,6 @@ export function AdverseMediaDesk() {
   const [alerts, setAlerts] = useState<AlertRow[]>([]);
   const [batch, setBatch] = useState<Batch>({ status: "idle", progress: 0, done: 0, total: 0, message: "" });
   const [query, setQuery] = useState("");
-  const [years, setYears] = useState("5");
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [report, setReport] = useState<SearchReport | null>(null);
   const [rationale, setRationale] = useState("");
@@ -76,23 +75,15 @@ export function AdverseMediaDesk() {
         <form className="form" onSubmit={(event) => {
           event.preventDefault();
           void run(async () => {
-            setMessage("Parcours des années passées sur Google Actualités et GDELT.");
-            const body = await api<SearchReport>("/api/clarity/v1/adverse-media/search", { method: "POST", body: JSON.stringify({ name: query, years: Number(years) }) });
+            const body = await api<SearchReport>("/api/clarity/v1/adverse-media/search", { method: "POST", body: JSON.stringify({ name: query }) });
             setReport(body);
             setHits(body.results || []);
           }, "Recherche terminée.");
         }}>
           <label>Nom<input value={query} onChange={(event) => setQuery(event.target.value)} /></label>
-          <label>Années
-            <select value={years} onChange={(event) => setYears(event.target.value)}>
-              <option value="1">1 an</option>
-              <option value="3">3 ans</option>
-              <option value="5">5 ans</option>
-            </select>
-          </label>
           <button type="submit">Rechercher</button>
         </form>
-        <p className="label">Chaque année est lue à part. Cinq ans prennent environ une minute, à cause du délai GDELT.</p>
+        <p className="label">La recherche lit les articles déjà collectés. Les cinq ans se parcourent dans le batch, sous Administration, Third party.</p>
         {report ? <p className="label">{report.screening_status} — {report.screening_meaning} {report.suggested_action}</p> : null}
         {hits.map((hit) => <p key={`${hit.article_url || hit.article_title}`}>{hit.published_at || "date inconnue"} · {hit.article_title} · {hit.stance || ""} · {hit.category || ""}</p>)}
       </article>

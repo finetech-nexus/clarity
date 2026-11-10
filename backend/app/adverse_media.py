@@ -171,6 +171,18 @@ _SOURCE_CATALOG = (
     {"name": "Publications officielles", "kind": "official", "url": "https://ec.europa.eu/commission/presscorner/api/rss?language=fr", "language": "fr", "config": {"family": "Publications officielles", "timeout_seconds": 12, "quota_per_hour": 20, "format": "rss"}},
     {"name": "Sources institutionnelles", "kind": "institutional", "url": "https://news.un.org/feed/subscribe/en/news/all/rss.xml", "language": "en", "config": {"family": "Institutions", "timeout_seconds": 12, "quota_per_hour": 20, "format": "rss"}},
     {"name": "API publique", "kind": "public_api", "url": "https://www.jeuneafrique.com/feed/", "language": "fr", "config": {"family": "Presse régionale", "timeout_seconds": 12, "quota_per_hour": 20, "format": "rss"}},
+    {"name": "Kapitalis", "kind": "tunisian", "url": "https://kapitalis.com/anbaa-tounes/feed/", "language": "fr", "config": {"family": "Presse tunisienne", "timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
+    {"name": "African Manager", "kind": "tunisian", "url": "https://africanmanager.com/feed/", "language": "fr", "config": {"family": "Presse économique", "timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
+    {"name": "L'Economiste Maghrébin", "kind": "tunisian", "url": "https://www.leconomistemaghrebin.com/feed/", "language": "fr", "config": {"family": "Presse économique", "timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
+    {"name": "Nawaat", "kind": "tunisian", "url": "https://nawaat.org/feed/", "language": "fr", "config": {"family": "Presse d'investigation", "timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
+    {"name": "Mosaïque FM", "kind": "tunisian", "url": "https://www.mosaiquefm.net/fr/rss", "language": "fr", "config": {"family": "Presse tunisienne", "timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
+    {"name": "Leaders", "kind": "tunisian", "url": "https://www.leaders.com.tn/rss", "language": "fr", "config": {"family": "Presse économique", "timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
+    {"name": "Espace Manager", "kind": "tunisian", "url": "https://espacemanager.com/feed/", "language": "fr", "config": {"family": "Presse économique", "timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
+    {"name": "Al Chourouk", "kind": "tunisian", "url": "https://www.alchourouk.com/rss", "language": "ar", "config": {"family": "Presse tunisienne", "timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
+    {"name": "Inkyfada", "kind": "tunisian", "url": "https://inkyfada.com/fr/feed/", "language": "fr", "config": {"family": "Presse d'investigation", "timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
+    {"name": "Assarih", "kind": "tunisian", "url": "https://assarih.com/feed/", "language": "ar", "config": {"family": "Presse tunisienne", "timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
+    {"name": "Web Manager Center", "kind": "tunisian", "url": "https://ar.webmanagercenter.com/feed/", "language": "ar", "config": {"family": "Presse économique", "timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
+    {"name": "Babnet", "kind": "tunisian", "url": "https://www.babnet.net/feed.php", "language": "fr", "config": {"family": "Presse tunisienne", "timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
 )
 _DEFAULT_POLICY = {
     "identity_threshold": 82,
@@ -183,7 +195,8 @@ _DEFAULT_POLICY = {
 _DEEP_THEMES = "(corruption OR fraud OR fraude OR laundering OR blanchiment OR embezzlement OR detournement OR scam OR escroquerie OR smuggling OR contrebande OR terrorisme OR terrorist)"
 _HISTORY_THEMES = '(corruption OR fraude OR fraud OR blanchiment OR "money laundering" OR condamné OR convicted OR arrested OR charged OR poursuite OR enquête OR terrorisme OR bribery)'
 _GDELT_DOC = "https://api.gdeltproject.org/api/v2/doc/doc"
-_INTERNET_SOURCE = "Recherche internet"
+_GOOGLE_SOURCE = "Google Actualités"
+_ARCHIVE_YEARS = 5
 _DEEP_LOCK = threading.Lock()
 _DEEP_RUNNING: set[str] = set()
 _GDELT_LOCK = threading.Lock()
@@ -1695,7 +1708,8 @@ def run_batch(db: Session, tenant_id: str, *, fetch=http_get, only_due: bool = F
         if only_due and source.last_collected_at and now < source.last_collected_at + timedelta(minutes=source.frequency_minutes):
             continue
         sources.append(source)
-    total = len(sources)
+    archive_years = 0 if only_due else _ARCHIVE_YEARS
+    total = len(sources) + archive_years
     payload = {"status": "running", "progress": 0, "done": 0, "total": total, "stored": 0, "message": "Batch en cours."}
     _save_batch(db, tenant_id, payload)
     db.commit()
@@ -1718,6 +1732,22 @@ def run_batch(db: Session, tenant_id: str, *, fetch=http_get, only_due: bool = F
         }
         _save_batch(db, tenant_id, payload)
         db.commit()
+    if archive_years:
+        def _archive_progress(done: int, history_stored: int) -> None:
+            step = len(sources) + done
+            running = {
+                "status": "running",
+                "progress": int(100 * step / total),
+                "done": step,
+                "total": total,
+                "stored": stored + history_stored,
+                "message": f"Archives {done}/{archive_years} ans",
+            }
+            _save_batch(db, tenant_id, running)
+            db.commit()
+
+        history = collect_history(db, tenant_id, years=archive_years, fetch=fetch, progress=_archive_progress)
+        stored += int(history["stored"])
     for _ in range(10):
         processed = process_queue(db, tenant_id, limit=20)
         db.commit()
@@ -2110,24 +2140,17 @@ def _year_windows(years: int, now: datetime | None = None):
     return windows
 
 
-def _query_name(name: str) -> str:
-    cleaned = re.sub(r"\s+", " ", re.sub(r'["<>]', " ", str(name or ""))).strip()
-    if len(cleaned) < 3:
-        raise AdverseMediaError("Le nom recherché est trop court.")
-    return cleaned[:120]
-
-
-def _google_history_url(name: str, start: datetime, end: datetime, lang: str) -> str:
-    query = f'"{name}" {_HISTORY_THEMES} after:{start.date().isoformat()} before:{end.date().isoformat()}'
+def _archive_google_url(start: datetime, end: datetime, lang: str) -> str:
+    query = f"(Tunisie OR Tunisia) {_HISTORY_THEMES} after:{start.date().isoformat()} before:{end.date().isoformat()}"
     french = lang == "fr"
     return "https://news.google.com/rss/search?" + urllib.parse.urlencode(
         {"q": query, "hl": "fr" if french else "en", "gl": "FR" if french else "US", "ceid": "FR:fr" if french else "US:en"}
     )
 
 
-def _gdelt_name_url(name: str, start: datetime, end: datetime) -> str:
+def _archive_gdelt_url(start: datetime, end: datetime) -> str:
     params = {
-        "query": f'"{name}" {_HISTORY_THEMES}',
+        "query": f"(Tunisia OR Tunisie) {_HISTORY_THEMES}",
         "mode": "artlist",
         "format": "json",
         "maxrecords": "25",
@@ -2138,53 +2161,50 @@ def _gdelt_name_url(name: str, start: datetime, end: datetime) -> str:
     return f"{_GDELT_DOC}?{urllib.parse.urlencode(params)}"
 
 
-def _internet_source(db: Session, tenant_id: str) -> AdverseMediaSource:
-    row = db.scalar(select(AdverseMediaSource).where(AdverseMediaSource.tenant_id == tenant_id, AdverseMediaSource.name == _INTERNET_SOURCE))
+def _google_source(db: Session, tenant_id: str) -> AdverseMediaSource:
+    row = db.scalar(select(AdverseMediaSource).where(AdverseMediaSource.tenant_id == tenant_id, AdverseMediaSource.name == _GOOGLE_SOURCE))
     if row is None:
         row = AdverseMediaSource(
             tenant_id=tenant_id,
-            name=_INTERNET_SOURCE,
+            name=_GOOGLE_SOURCE,
             kind="rss",
             url="https://news.google.com/rss/search",
             language="multi",
             frequency_minutes=60,
             active=False,
-            config={"family": "Recherche internet", "on_demand": True, "timeout_seconds": 12, "quota_per_hour": 60},
+            config={"family": "Recherche mondiale", "on_demand": True, "timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"},
         )
         db.add(row)
         db.flush()
     return row
 
 
-def internet_history(
+def collect_history(
     db: Session,
     tenant_id: str,
-    name: str,
     *,
-    years: int = 5,
+    years: int = _ARCHIVE_YEARS,
     fetch=http_get,
     now: datetime | None = None,
+    progress=None,
 ) -> dict:
-    """Read Google News and GDELT year by year. Only returned items are stored."""
+    """Read five years of Google News and GDELT. Called by the batch, never by a name search."""
     span = _history_span(years)
-    query_name = _query_name(name)
-    source = _internet_source(db, tenant_id)
-    windows = list(_year_windows(span, now))
+    windows = _year_windows(span, now)
+    google = _google_source(db, tenant_id)
+    gdelt = db.scalar(select(AdverseMediaSource).where(AdverseMediaSource.tenant_id == tenant_id, AdverseMediaSource.name == "GDELT"))
     retrieved = 0
     stored = 0
     errors: list[str] = []
-    calls = 0
-    for start, end in windows:
-        urls = (
-            _google_history_url(query_name, start, end, "fr"),
-            _google_history_url(query_name, start, end, "en"),
-            _gdelt_name_url(query_name, start, end),
+    for index, (start, end) in enumerate(windows, start=1):
+        targets = (
+            (_archive_google_url(start, end, "fr"), google, parse_rss),
+            (_archive_google_url(start, end, "en"), google, parse_rss),
+            (_archive_gdelt_url(start, end), gdelt or google, parse_gdelt),
         )
-        for url in urls:
-            calls += 1
+        for url, source, parser in targets:
             try:
-                payload = fetch(url, 12)
-                items = parse_gdelt(payload) if "gdeltproject.org" in url else parse_rss(payload)
+                items = parser(fetch(url, 12))
             except AdverseMediaError as exc:
                 errors.append(exc.message)
                 continue
@@ -2194,6 +2214,8 @@ def internet_history(
             kept, added = _store_items(db, source, items[:12])
             retrieved += kept
             stored += added
+        if progress is not None:
+            progress(index, stored)
     for _round in range(8):
         outcome = process_queue(db, tenant_id, limit=25)
         if not outcome["analyzed"] and not outcome["failed"]:
@@ -2203,12 +2225,10 @@ def internet_history(
         "years": span,
         "retrieved": retrieved,
         "stored": stored,
-        "calls": calls,
         "errors": errors[:8],
         "providers": ["Google Actualités", "GDELT"],
         "period_start": windows[0][0].date().isoformat(),
         "period_end": windows[-1][1].date().isoformat(),
-        "failed": calls > 0 and retrieved == 0 and len(errors) == calls,
     }
 
 
@@ -2287,40 +2307,17 @@ def search_name(db: Session, tenant_id: str, name: str, dob: str | None = None, 
     return results[:50]
 
 
-def search_report(
-    db: Session,
-    tenant_id: str,
-    name: str,
-    dob: str | None = None,
-    country: str | None = None,
-    *,
-    years: int = 5,
-    fetch=http_get,
-    now: datetime | None = None,
-) -> dict:
-    history = internet_history(db, tenant_id, name, years=years, fetch=fetch, now=now)
-    hits = [] if history["failed"] else _history_hits(db, tenant_id, name)
+def search_report(db: Session, tenant_id: str, name: str, dob: str | None = None, country: str | None = None) -> dict:
+    hits = _history_hits(db, tenant_id, name)
     corroborated = any("Date de naissance identique" in " ".join(hit.get("explanation") or []) for hit in hits)
-    contract = screening_contract(
-        name,
-        screened=True,
-        failed=history["failed"],
-        alerts=[{"status": "new"}] if hits else [],
-        corroborated=corroborated,
-    )
+    contract = screening_contract(name, screened=True, failed=False, alerts=[{"status": "new"}] if hits else [], corroborated=corroborated)
     if contract["screening_status"] == "NoRelevantMediaFound":
-        if history["retrieved"]:
-            contract["screening_meaning"] = (
-                f"{history['retrieved']} articles lus entre {history['period_start']} et {history['period_end']}, "
-                "année par année, sur Google Actualités et GDELT. Aucun ne décrit une allégation, une enquête, "
-                "des poursuites ou une condamnation. Cela ne signifie pas que la personne n'a pas de médias défavorables."
-            )
-        else:
-            contract["screening_meaning"] = (
-                f"Recherche effectuée de {history['period_start']} à {history['period_end']} sur Google Actualités et GDELT. "
-                "Ces sources n'ont renvoyé aucun article. Cela ne signifie pas que la personne n'a pas de médias défavorables."
-            )
-    return {**contract, "results": hits, **history}
+        contract["screening_meaning"] = (
+            "La recherche lit les articles déjà collectés. Le batch couvre les médias tunisiens et cinq ans de Google Actualités et de GDELT. "
+            "Aucun article lu ne décrit une allégation, une enquête, des poursuites ou une condamnation. "
+            "Cela ne signifie pas que la personne n'a pas de médias défavorables."
+        )
+    return {**contract, "results": hits}
 
 
 def source_view(source: AdverseMediaSource) -> dict:
