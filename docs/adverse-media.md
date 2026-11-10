@@ -33,6 +33,8 @@ L'analyse `lexicon-1.0` classe des expressions. Elle ne produit pas une lecture 
 
 GDELT publie le titre. Le collecteur courant ouvre ensuite la page de l'article. Si le site ne répond pas, seul le titre est enregistré.
 
+Si l'appel HTTP échoue, la même URL est relue une fois avec Scrapy. Un refus GDELT « une requête toutes les 5 secondes » n'est pas relancé par Scrapy.
+
 La recherche d'un nom, `POST /api/clarity/v1/adverse-media/search`, lit uniquement les articles déjà collectés. Elle ne contacte pas Google ni GDELT.
 
 Le batch lancé à la main collecte d'abord les flux actifs, dont la presse tunisienne, puis cinq ans de Google Actualités et de GDELT, année par année, sur les thèmes corruption, fraude, blanchiment, condamnation, arrestation, poursuites et terrorisme. Seuls les articles renvoyés sont enregistrés. `lexicon-1.0` tourne à la fin du batch. Le cycle horaire ne refait pas ces cinq ans : il ne reprend que les flux dus. Google Actualités reste hors du cycle horaire.

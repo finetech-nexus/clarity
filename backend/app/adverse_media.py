@@ -402,7 +402,7 @@ def _quota(source: AdverseMediaSource) -> int:
     return max(1, min(int((source.config or {}).get("quota_per_hour") or 30), 500))
 
 
-def _read_http_once(url: str, timeout: int) -> bytes:
+def _urllib_get(url: str, timeout: int) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": "ClarityAdverseMedia/1.0", "Accept": "application/json, application/rss+xml, application/xml, text/xml, */*"})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -418,6 +418,20 @@ def _read_http_once(url: str, timeout: int) -> bytes:
         raise AdverseMediaError(f"Source indisponible : HTTP {exc.code}.") from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise AdverseMediaError(f"Source indisponible : {exc.__class__.__name__}") from exc
+
+
+def _read_http_once(url: str, timeout: int) -> bytes:
+    from app.scrapy_fetch import scrapy_get
+
+    try:
+        return _urllib_get(url, timeout)
+    except AdverseMediaError as exc:
+        if "5 secondes" in exc.message:
+            raise
+        try:
+            return scrapy_get(url, timeout)
+        except AdverseMediaError:
+            raise exc from None
 
 
 def _read_http(url: str, timeout: int) -> bytes:

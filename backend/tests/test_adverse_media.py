@@ -443,6 +443,37 @@ def test_gdelt_rate_limit_waits_and_retries(monkeypatch):
     assert calls["n"] == 2
 
 
+def test_scrapy_reads_the_url_when_the_http_call_fails(monkeypatch):
+    seen = {}
+
+    def urlopen(request, timeout):
+        raise urllib.error.HTTPError(request.full_url, 503, "unavailable", {}, io.BytesIO(b"down"))
+
+    def scrapy_get(url, timeout):
+        seen["url"] = url
+        seen["timeout"] = timeout
+        return b"<rss><channel></channel></rss>"
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr("app.scrapy_fetch.scrapy_get", scrapy_get)
+    body = http_get("https://exemple.media/rss.xml", 8)
+    assert body.startswith(b"<rss>")
+    assert seen["url"] == "https://exemple.media/rss.xml"
+    assert seen["timeout"] == 8
+
+    def blocked(request, timeout):
+        raise urllib.error.HTTPError(request.full_url, 429, "Too Many Requests", {}, io.BytesIO(b"Please limit requests to one every 5 seconds"))
+
+    monkeypatch.setattr(urllib.request, "urlopen", blocked)
+    monkeypatch.setattr("app.adverse_media.time.sleep", lambda *_args: None)
+    try:
+        http_get("https://api.gdeltproject.org/api/v2/doc/doc?query=Tunisie", 5)
+        raise AssertionError("le quota GDELT ne doit pas passer par Scrapy")
+    except AdverseMediaError as exc:
+        assert "5 secondes" in exc.message
+        assert seen["url"] == "https://exemple.media/rss.xml"
+
+
 def test_batch_progress_stores_only_what_the_source_returns(tmp_path):
     def fetch(url, _timeout):
         if "gdeltproject.org" in url:
