@@ -184,6 +184,9 @@ def seed_demo(db: Session, engine=None, seed_clients: bool = True) -> None:
         ensure_risk_score_case(db, engine, seed_clients=seed_clients)
         if seed_clients:
             ensure_kyc_cycles(db)
+        from app.adverse_media import ensure_sources
+
+        ensure_sources(db, TENANT_ID)
         return
     tenant = Tenant(
         id=TENANT_ID,
@@ -344,6 +347,9 @@ def seed_demo(db: Session, engine=None, seed_clients: bool = True) -> None:
     ensure_risk_score_case(db, engine, seed_clients=seed_clients)
     if seed_clients:
         ensure_kyc_cycles(db)
+    from app.adverse_media import ensure_sources
+
+    ensure_sources(db, TENANT_ID)
 
 
 def ensure_watchlist_entries(db: Session) -> None:

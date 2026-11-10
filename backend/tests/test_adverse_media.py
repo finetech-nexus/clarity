@@ -138,7 +138,7 @@ def test_collection_dedup_retry_and_no_fabricated_article(tmp_path):
         assert third["status"] == "quota"
         assert calls["n"] == 2
 
-        inactive = next(row for row in ensure_sources(db, TENANT_ID) if row.kind == "gdelt")
+        inactive = next(row for row in ensure_sources(db, TENANT_ID) if row.name == "Publications officielles")
         assert inactive.active is False
         skipped = collect_source(db, inactive, fetch=lambda url, timeout: (_ for _ in ()).throw(AssertionError("reseau")))
         assert skipped["status"] == "skipped"
@@ -247,7 +247,9 @@ def test_desk_exposes_adverse_media_and_keeps_opensanctions_path(tmp_path):
         assert media["alerts"][0]["media_score"] >= 40
         sources = client.get("/api/clarity/v1/adverse-media/sources", headers=headers)
         assert sources.status_code == 200
-        assert any(row["kind"] == "gdelt" and row["active"] is False for row in sources.json())
+        assert any(row["name"] == "La Presse de Tunisie" and row["url"] == "https://lapresse.tn/feed/" and row["active"] is True for row in sources.json())
+        assert any(row["name"] == "GDELT" and row["config"]["query"] == "Tunisia OR Tunisie" and row["active"] is True for row in sources.json())
+        assert any(row["name"] == "Publications officielles" and row["active"] is False for row in sources.json())
         admin = client.post("/api/clarity/v1/auth/login", json={"email": ADMIN_EMAIL, "password": DEMO_PASSWORD}).json()["access_token"]
         policy = client.put(
             "/api/clarity/v1/adverse-media/policy",

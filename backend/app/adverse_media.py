@@ -124,7 +124,12 @@ _ARABIC = {
 _PARTICLES = ("ben", "bin", "ibn", "ould", "ouled", "el", "al", "bn")
 _STOP = {"le", "la", "les", "de", "des", "du", "et", "the", "and", "of", "pour", "dans", "une", "un"}
 _SOURCE_CATALOG = (
-    {"name": "GDELT", "kind": "gdelt", "url": "https://api.gdeltproject.org/api/v2/doc/doc", "language": "multi", "config": {"query": "", "timeout_seconds": 12, "quota_per_hour": 20, "max_records": 25}},
+    {"name": "GDELT", "kind": "gdelt", "url": "https://api.gdeltproject.org/api/v2/doc/doc", "language": "multi", "config": {"query": "Tunisia OR Tunisie", "timeout_seconds": 12, "quota_per_hour": 20, "max_records": 25}},
+    {"name": "La Presse de Tunisie", "kind": "tunisian", "url": "https://lapresse.tn/feed/", "language": "fr", "config": {"timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
+    {"name": "Business News Tunisie", "kind": "tunisian", "url": "https://businessnews.com.tn/feed/", "language": "fr", "config": {"timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
+    {"name": "BBC World", "kind": "international", "url": "https://feeds.bbci.co.uk/news/world/rss.xml", "language": "en", "config": {"timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
+    {"name": "France 24", "kind": "international", "url": "https://www.france24.com/fr/rss", "language": "fr", "config": {"timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
+    {"name": "Jeune Afrique", "kind": "international", "url": "https://www.jeuneafrique.com/feed/", "language": "fr", "config": {"timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
     {"name": "Presse tunisienne", "kind": "tunisian", "url": "", "language": "fr", "config": {"timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
     {"name": "Presse internationale", "kind": "international", "url": "", "language": "en", "config": {"timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
     {"name": "Flux RSS", "kind": "rss", "url": "", "language": "multi", "config": {"timeout_seconds": 12, "quota_per_hour": 60, "format": "rss"}},
@@ -230,24 +235,50 @@ def save_policy(db: Session, tenant_id: str, payload: dict, actor: str) -> dict:
     return current
 
 
+def _source_ready(kind: str, url: str, config: dict) -> bool:
+    if not url:
+        return False
+    if kind == "gdelt" and not str(config.get("query") or "").strip():
+        return False
+    return True
+
+
 def ensure_sources(db: Session, tenant_id: str) -> list[AdverseMediaSource]:
     existing = {row.name: row for row in db.scalars(select(AdverseMediaSource).where(AdverseMediaSource.tenant_id == tenant_id)).all()}
     for spec in _SOURCE_CATALOG:
-        if spec["name"] in existing:
-            continue
-        db.add(
-            AdverseMediaSource(
-                tenant_id=tenant_id,
-                name=spec["name"],
-                kind=spec["kind"],
-                url=spec["url"],
-                language=spec["language"],
-                frequency_minutes=60,
-                active=False,
-                availability="unknown",
-                config=dict(spec["config"]),
+        config = dict(spec["config"])
+        config["seeded"] = True
+        ready = _source_ready(spec["kind"], spec["url"], config)
+        row = existing.get(spec["name"])
+        if row is None:
+            db.add(
+                AdverseMediaSource(
+                    tenant_id=tenant_id,
+                    name=spec["name"],
+                    kind=spec["kind"],
+                    url=spec["url"],
+                    language=spec["language"],
+                    frequency_minutes=60,
+                    active=ready,
+                    availability="unknown",
+                    config=config,
+                )
             )
-        )
+            continue
+        if (row.config or {}).get("seeded"):
+            continue
+        current = dict(row.config or {})
+        if not row.url and spec["url"]:
+            row.url = spec["url"]
+        if spec["kind"] == "gdelt" and not str(current.get("query") or "").strip() and config.get("query"):
+            current["query"] = config["query"]
+        for key, value in config.items():
+            current.setdefault(key, value)
+        current["seeded"] = True
+        row.config = current
+        if _source_ready(row.kind, row.url, current):
+            row.active = True
+        row.updated_at = utcnow()
     db.flush()
     return list(db.scalars(select(AdverseMediaSource).where(AdverseMediaSource.tenant_id == tenant_id).order_by(AdverseMediaSource.name)).all())
 

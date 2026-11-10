@@ -35,4 +35,4 @@ Les actionnaires sont des `Party` de rôle `shareholder`, au même titre que les
 
 Les déclarations de soupçon ne sont ni lues ni écrites ici. Les articles sont stockés comme le reste du KYC.
 
-L'écran AML Adverse media couvre le tableau de bord, la recherche, les sources, les articles, les alertes et le journal. Les sources restent inactives tant qu'une URL, et une requête pour GDELT, ne sont pas enregistrées.
+L'écran AML Adverse media couvre le tableau de bord, la recherche, les sources, les articles, les alertes et le journal. Au démarrage, les flux vérifiés sont enregistrés et actifs : GDELT (Tunisie), La Presse, Business News, BBC World, France 24 et Jeune Afrique. Les emplacements sans flux public vérifié restent inactifs.
