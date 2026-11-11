@@ -650,7 +650,7 @@ export function IntegrationBoard() {
               {kind === "adverse_media" ? (
                 <div>
                   <p className="label">Batch {batch.progress}% · {batch.done}/{batch.total} · {batch.message || batch.status}</p>
-                  <p className="label">Le batch lit les flux, puis cinq ans de Google Actualités et de GDELT. La recherche d'un nom ne refait pas ce parcours.</p>
+                  <p className="label">Le batch lit les flux, puis cinq ans de Google Actualités. GDELT part de 2010 pour chaque nom déjà recherché. La recherche d'un nom ne refait pas ce parcours.</p>
                   <div style={{ height: 8, background: "#e6e6e6" }}>
                     <div style={{ width: `${Math.max(0, Math.min(batch.progress, 100))}%`, height: 8, background: "#1f6b4a" }} />
                   </div>

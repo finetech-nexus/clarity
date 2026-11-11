@@ -31,6 +31,8 @@ from app.adverse_media import (
     record_decision,
     retry_failed,
     collect_history,
+    gdelt_person_url,
+    remember_gdelt_name,
     screen_customer,
     search_report,
 )
@@ -296,7 +298,7 @@ def test_desk_exposes_adverse_media_and_keeps_opensanctions_path(tmp_path):
         assert any(row["name"] == "Réalités" and row["active"] is True for row in catalog)
         assert all(row["active"] is True and str(row["url"]).startswith("https://") for row in catalog)
         assert any(row["name"] == "Presse tunisienne" and row["url"] == "https://lapresse.tn/feed/" for row in catalog)
-        assert any(row["name"] == "GDELT" and row["config"]["query"] == "Tunisia OR Tunisie" for row in catalog)
+        assert any(row["name"] == "GDELT" and "money laundering" in row["config"]["query"] and row["config"]["on_demand"] is True for row in catalog)
         admin = client.post("/api/clarity/v1/auth/login", json={"email": ADMIN_EMAIL, "password": DEMO_PASSWORD}).json()["access_token"]
         policy = client.put(
             "/api/clarity/v1/adverse-media/policy",
@@ -467,6 +469,22 @@ def test_batch_progress_stores_only_what_the_source_returns(tmp_path):
         assert result["message"] == "Batch terminé."
 
 
+def test_gdelt_person_query_uses_the_name_themes_and_2010():
+    url = gdelt_person_url("John Smith")
+    decoded = urllib.parse.unquote(url)
+    assert url.startswith("https://api.gdeltproject.org/api/v2/doc/doc?")
+    assert '"John Smith" (fraud OR fraude OR Betrug' in decoded
+    assert '"money laundering"' in decoded
+    assert '"blanchiment d\'argent"' in decoded
+    assert "غسل الأموال" in decoded
+    assert "mode=ArtList" in url
+    assert "format=json" in url
+    assert "startdatetime=20100101000000" in url
+    assert "maxrecords=250" in url
+    assert "sort=DateDesc" in url
+    assert "enddatetime=" not in url
+
+
 def test_failed_archive_names_google_and_gdelt(tmp_path):
     def fetch(url, _timeout):
         if "news.google.com" in url:
@@ -477,6 +495,7 @@ def test_failed_archive_names_google_and_gdelt(tmp_path):
 
     with _client(tmp_path) as client:
         db = _session(client)
+        remember_gdelt_name(db, TENANT_ID, "John Smith")
         result = run_batch(db, TENANT_ID, fetch=fetch)
         assert result["status"] == "completed"
         assert result["message"] == "Batch terminé. Sans réponse : Google Actualités (Flux RSS illisible.) · GDELT (GDELT est occupé.)."
@@ -551,8 +570,8 @@ def test_five_year_archive_runs_in_the_batch_and_search_stays_local(tmp_path):
     def fetch(url, timeout):
         calls.append(url)
         decoded = urllib.parse.unquote(url)
-        assert timeout == 12
         if "news.google.com" in url:
+            assert timeout == 12
             assert "after:" in decoded and "before:" in decoded
             assert "Tunisie" in decoded
             if "after:2021-01-15" in decoded and "hl=fr" in url:
@@ -565,22 +584,25 @@ def test_five_year_archive_runs_in_the_batch_and_search_stays_local(tmp_path):
                     "</item></channel></rss>"
                 ).encode()
             return b"<rss><channel></channel></rss>"
-        if "startdatetime=" in url:
+        if "api.gdeltproject.org" in url:
+            assert timeout == 20
+            assert '"Zoubeida Mentest"' in decoded
+            assert "startdatetime=20100101000000" in url
+            assert "maxrecords=250" in url
+            assert "mode=ArtList" in url
+            assert "sort=DateDesc" in url
             return b'{"articles":[]}'
         return b'<?xml version="1.0"?><rss><channel></channel></rss>'
 
     with _client(tmp_path) as client:
         db = _session(client)
+        remember_gdelt_name(db, TENANT_ID, "Zoubeida Mentest")
         history = collect_history(db, TENANT_ID, fetch=fetch, now=moment)
-        gdelt_years = sorted(
-            urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["startdatetime"][0][:4]
-            for url in calls
-            if "startdatetime=" in url
-        )
+        gdelt_calls = [url for url in calls if "api.gdeltproject.org" in url]
+        assert gdelt_calls == [gdelt_person_url("Zoubeida Mentest")]
         assert history["years"] == 5
         assert history["period_start"] == "2021-01-15"
         assert history["period_end"] == "2026-01-15"
-        assert gdelt_years == ["2021", "2022", "2023", "2024", "2025"]
         assert history["retrieved"] == 1
         seen = len(calls)
         report = search_report(db, TENANT_ID, "Zoubeida Mentest")

@@ -158,8 +158,17 @@ _ARABIC = {
 }
 _PARTICLES = ("ben", "bin", "ibn", "ould", "ouled", "el", "al", "bn")
 _STOP = {"le", "la", "les", "de", "des", "du", "et", "the", "and", "of", "pour", "dans", "une", "un"}
+_GDELT_THEMES = (
+    "fraud OR fraude OR Betrug OR corrupción OR corrupção OR мошенничество OR "
+    "فساد OR احتيال OR 詐欺 OR 사기 OR 欺诈 OR "
+    "corruption OR Korruption OR bribery OR Bestechung OR soborno OR رشوة OR "
+    '"money laundering" OR "blanchiment d\'argent" OR Geldwäsche OR "lavado de dinero" OR '
+    '"lavagem de dinheiro" OR "غسل الأموال" OR "отмывание денег" OR '
+    "embezzlement OR détournement OR tax-evasion OR \"tax fraud\" OR "
+    '"terrorist financing" OR "organized crime" OR "sanctions evasion"'
+)
 _SOURCE_CATALOG = (
-    {"name": "GDELT", "kind": "gdelt", "url": "https://api.gdeltproject.org/api/v2/doc/doc", "language": "multi", "config": {"family": "Recherche mondiale", "query": "Tunisia OR Tunisie", "timeout_seconds": 12, "quota_per_hour": 20, "max_records": 25}},
+    {"name": "GDELT", "kind": "gdelt", "url": "https://api.gdeltproject.org/api/v2/doc/doc", "language": "multi", "config": {"family": "Recherche mondiale", "query": _GDELT_THEMES, "on_demand": True, "timeout_seconds": 20, "quota_per_hour": 20, "max_records": 250}},
     {"name": "Presse tunisienne", "kind": "tunisian", "url": "https://lapresse.tn/feed/", "language": "fr", "config": {"family": "Presse locale", "timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
     {"name": "Business News", "kind": "tunisian", "url": "https://businessnews.com.tn/feed/", "language": "fr", "config": {"family": "Presse économique", "timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
     {"name": "Réalités", "kind": "tunisian", "url": "https://www.realites.com.tn/feed/", "language": "fr", "config": {"family": "Presse locale", "timeout_seconds": 12, "quota_per_hour": 30, "format": "rss"}},
@@ -193,6 +202,9 @@ _DEFAULT_POLICY = {
 _DEEP_THEMES = "(corruption OR fraud OR fraude OR laundering OR blanchiment OR embezzlement OR detournement OR scam OR escroquerie OR smuggling OR contrebande OR terrorisme OR terrorist)"
 _HISTORY_THEMES = '(corruption OR fraude OR fraud OR blanchiment OR "money laundering" OR condamné OR convicted OR arrested OR charged OR poursuite OR enquête OR terrorisme OR bribery)'
 _GDELT_DOC = "https://api.gdeltproject.org/api/v2/doc/doc"
+_GDELT_START = "20100101000000"
+_GDELT_MAX_RECORDS = 250
+_GDELT_NAMES = "adverse_media_gdelt_names"
 _GOOGLE_SOURCE = "Google Actualités"
 _ARCHIVE_YEARS = 5
 _DEEP_LOCK = threading.Lock()
@@ -361,7 +373,7 @@ def update_source(db: Session, source: AdverseMediaSource, payload: dict, actor:
         if "quota_per_hour" in merged:
             merged["quota_per_hour"] = max(1, min(int(merged["quota_per_hour"]), 500))
         if "max_records" in merged:
-            merged["max_records"] = max(1, min(int(merged["max_records"]), 100))
+            merged["max_records"] = max(1, min(int(merged["max_records"]), 250))
         source.config = merged
     if "active" in payload:
         active = bool(payload["active"])
@@ -1756,7 +1768,8 @@ def run_batch(db: Session, tenant_id: str, *, fetch=http_get, only_due: bool = F
             continue
         sources.append(source)
     archive_years = 0 if only_due else _ARCHIVE_YEARS
-    total = len(sources) + archive_years
+    gdelt_names = [] if only_due else gdelt_subject_names(db, tenant_id)
+    total = len(sources) + archive_years + len(gdelt_names)
     payload = {"status": "running", "progress": 0, "done": 0, "total": total, "stored": 0, "message": "Batch en cours."}
     _save_batch(db, tenant_id, payload)
     db.commit()
@@ -1793,7 +1806,7 @@ def run_batch(db: Session, tenant_id: str, *, fetch=http_get, only_due: bool = F
             _save_batch(db, tenant_id, running)
             db.commit()
 
-        history = collect_history(db, tenant_id, years=archive_years, fetch=fetch, progress=_archive_progress)
+        history = collect_history(db, tenant_id, years=archive_years, fetch=fetch, progress=_archive_progress, names=gdelt_names)
         stored += int(history["stored"])
         archive_errors = history.get("errors") or []
     else:
@@ -2200,17 +2213,63 @@ def _archive_google_url(start: datetime, end: datetime, lang: str) -> str:
     )
 
 
-def _archive_gdelt_url(start: datetime, end: datetime) -> str:
+def gdelt_person_query(name: str) -> str:
+    clean = " ".join(str(name or "").replace('"', " ").split())
+    return f'"{clean}" ({_GDELT_THEMES})'
+
+
+def gdelt_person_url(name: str) -> str:
     params = {
-        "query": f"(Tunisia OR Tunisie) {_HISTORY_THEMES}",
-        "mode": "artlist",
+        "query": gdelt_person_query(name),
+        "mode": "ArtList",
         "format": "json",
-        "maxrecords": "25",
-        "sort": "datedesc",
-        "startdatetime": start.astimezone(UTC).strftime("%Y%m%d%H%M%S"),
-        "enddatetime": end.astimezone(UTC).strftime("%Y%m%d%H%M%S"),
+        "startdatetime": _GDELT_START,
+        "maxrecords": str(_GDELT_MAX_RECORDS),
+        "sort": "DateDesc",
     }
-    return f"{_GDELT_DOC}?{urllib.parse.urlencode(params)}"
+    return f"{_GDELT_DOC}?{urllib.parse.urlencode(params, quote_via=urllib.parse.quote)}"
+
+
+def remember_gdelt_name(db: Session, tenant_id: str, name: str) -> None:
+    clean = " ".join(str(name or "").replace('"', " ").split())
+    if len(fold(clean)) < 4:
+        return
+    row = db.scalar(
+        select(ConfigDocument).where(
+            ConfigDocument.tenant_id == tenant_id,
+            ConfigDocument.kind == _GDELT_NAMES,
+            ConfigDocument.status == "active",
+        )
+    )
+    names = [str(item) for item in ((row.payload if row else None) or {}).get("names") or []]
+    key = fold(clean)
+    names = [clean, *[item for item in names if fold(item) != key]][:20]
+    if row is None:
+        db.add(ConfigDocument(tenant_id=tenant_id, kind=_GDELT_NAMES, name="Noms GDELT", status="active", payload={"names": names}))
+    else:
+        row.payload = {"names": names}
+        row.updated_at = utcnow()
+    db.flush()
+
+
+def gdelt_subject_names(db: Session, tenant_id: str) -> list[str]:
+    row = db.scalar(
+        select(ConfigDocument).where(
+            ConfigDocument.tenant_id == tenant_id,
+            ConfigDocument.kind == _GDELT_NAMES,
+            ConfigDocument.status == "active",
+        )
+    )
+    names = []
+    seen = set()
+    for item in ((row.payload if row else None) or {}).get("names") or []:
+        clean = " ".join(str(item or "").split())
+        key = fold(clean)
+        if len(key) < 4 or key in seen:
+            continue
+        seen.add(key)
+        names.append(clean)
+    return names
 
 
 def _google_source(db: Session, tenant_id: str) -> AdverseMediaSource:
@@ -2242,6 +2301,13 @@ def _archive_notice(errors: list[str]) -> str:
     return f"Batch terminé. Sans réponse : {detail}."
 
 
+def _archive_fetch(fetch, url: str, call_timeout: int, limit: int):
+    budget = call_timeout
+    if call_timeout >= 15:
+        budget += 8 if "api.gdeltproject.org" in url else 4
+    return _wait_for(lambda url=url: fetch(url, limit), budget)
+
+
 def collect_history(
     db: Session,
     tenant_id: str,
@@ -2251,31 +2317,28 @@ def collect_history(
     now: datetime | None = None,
     progress=None,
     call_timeout: int = 15,
+    names: list[str] | None = None,
 ) -> dict:
-    """Read five years of Google News and GDELT. Called by the batch, never by a name search."""
+    """Read five years of Google News, then one GDELT call per searched name. Never called by a name search."""
     span = _history_span(years)
     windows = _year_windows(span, now)
     google = _google_source(db, tenant_id)
     gdelt = db.scalar(select(AdverseMediaSource).where(AdverseMediaSource.tenant_id == tenant_id, AdverseMediaSource.name == "GDELT"))
+    people = list(names) if names is not None else gdelt_subject_names(db, tenant_id)
     retrieved = 0
     stored = 0
     errors: list[str] = []
-    labels = ("Google Actualités", "Google Actualités", "GDELT")
     for index, (start, end) in enumerate(windows, start=1):
         targets = (
-            (_archive_google_url(start, end, "fr"), google, parse_rss),
-            (_archive_google_url(start, end, "en"), google, parse_rss),
-            (_archive_gdelt_url(start, end), gdelt or google, parse_gdelt),
+            (_archive_google_url(start, end, "fr"), google, parse_rss, "Google Actualités", 12),
+            (_archive_google_url(start, end, "en"), google, parse_rss, "Google Actualités", 12),
         )
-        for label, (url, source, parser) in zip(labels, targets, strict=True):
+        for url, source, parser, label, keep in targets:
             if progress is not None:
                 progress(index - 1, stored, f"Archives {index}/{span} · {label}")
-            budget = call_timeout
-            if call_timeout >= 15:
-                budget += 8 if "api.gdeltproject.org" in url else 4
             try:
-                payload = _wait_for(lambda url=url: fetch(url, 12), budget)
-                items = parser(payload)[:12]
+                payload = _archive_fetch(fetch, url, call_timeout, 12)
+                items = parser(payload)[:keep]
             except AdverseMediaError as exc:
                 errors.append(f"{label} : {exc.message}")
                 continue
@@ -2287,18 +2350,41 @@ def collect_history(
             stored += added
         if progress is not None:
             progress(index, stored, f"Archives {index}/{span} ans")
+    for offset, person in enumerate(people, start=1):
+        if progress is not None:
+            progress(span + offset - 1, stored, f"GDELT · {person}")
+        try:
+            payload = _archive_fetch(fetch, gdelt_person_url(person), call_timeout, 20)
+            items = parse_gdelt(payload)[:_GDELT_MAX_RECORDS]
+        except AdverseMediaError as exc:
+            errors.append(f"GDELT : {exc.message}")
+            continue
+        except Exception as exc:
+            errors.append(f"GDELT : {getattr(exc, 'message', None) or exc.__class__.__name__}")
+            continue
+        kept, added = _store_items(db, gdelt or google, items)
+        retrieved += kept
+        stored += added
     if progress is not None:
-        progress(span, stored, "Analyse des articles")
+        progress(span + len(people), stored, "Analyse des articles")
     for _round in range(8):
         outcome = process_queue(db, tenant_id, limit=25)
         if not outcome["analyzed"] and not outcome["failed"]:
             break
     db.flush()
+    reported: list[str] = []
+    seen_labels: set[str] = set()
+    for item in errors:
+        label = item.split(" : ", 1)[0]
+        if label in seen_labels:
+            continue
+        seen_labels.add(label)
+        reported.append(item)
     return {
         "years": span,
         "retrieved": retrieved,
         "stored": stored,
-        "errors": errors[:8],
+        "errors": reported[:8],
         "providers": ["Google Actualités", "GDELT"],
         "period_start": windows[0][0].date().isoformat(),
         "period_end": windows[-1][1].date().isoformat(),
@@ -2381,12 +2467,14 @@ def search_name(db: Session, tenant_id: str, name: str, dob: str | None = None, 
 
 
 def search_report(db: Session, tenant_id: str, name: str, dob: str | None = None, country: str | None = None) -> dict:
+    remember_gdelt_name(db, tenant_id, name)
     hits = _history_hits(db, tenant_id, name)
     corroborated = any("Date de naissance identique" in " ".join(hit.get("explanation") or []) for hit in hits)
     contract = screening_contract(name, screened=True, failed=False, alerts=[{"status": "new"}] if hits else [], corroborated=corroborated)
     if contract["screening_status"] == "NoRelevantMediaFound":
         contract["screening_meaning"] = (
-            "La recherche lit les articles déjà collectés. Le batch couvre les médias tunisiens et cinq ans de Google Actualités et de GDELT. "
+            "La recherche lit les articles déjà collectés. Le batch lit les médias tunisiens, cinq ans de Google Actualités, "
+            "puis GDELT depuis 2010 pour chaque nom déjà recherché. "
             "Aucun article lu ne décrit une allégation, une enquête, des poursuites ou une condamnation. "
             "Cela ne signifie pas que la personne n'a pas de médias défavorables."
         )

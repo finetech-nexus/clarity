@@ -83,7 +83,7 @@ export function AdverseMediaDesk() {
           <label>Nom<input value={query} onChange={(event) => setQuery(event.target.value)} /></label>
           <button type="submit">Rechercher</button>
         </form>
-        <p className="label">La recherche lit les articles déjà collectés. Les cinq ans se parcourent dans le batch, sous Administration, Third party.</p>
+        <p className="label">La recherche lit les articles déjà collectés. Le batch, sous Administration → Third party, lit cinq ans de Google Actualités et interroge GDELT depuis 2010 pour chaque nom déjà recherché.</p>
         {report ? <p className="label">{report.screening_status} — {report.screening_meaning} {report.suggested_action}</p> : null}
         {hits.map((hit) => <p key={`${hit.article_url || hit.article_title}`}>{hit.published_at || "date inconnue"} · {hit.article_title} · {hit.stance || ""} · {hit.category || ""}</p>)}
       </article>
