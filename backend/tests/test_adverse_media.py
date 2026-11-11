@@ -32,6 +32,7 @@ from app.adverse_media import (
     retry_failed,
     collect_history,
     gdelt_person_url,
+    gdelt_slices,
     remember_gdelt_name,
     screen_customer,
     search_report,
@@ -483,6 +484,51 @@ def test_gdelt_person_query_uses_the_name_themes_and_2010():
     assert "maxrecords=250" in url
     assert "sort=DateDesc" in url
     assert "enddatetime=" not in url
+    origin = datetime(2010, 1, 1, tzinfo=UTC)
+    assert gdelt_slices(origin, datetime(2012, 3, 15, tzinfo=UTC))[0] == (origin, datetime(2011, 1, 1, tzinfo=UTC))
+    assert len(gdelt_slices(origin, datetime(2011, 1, 1, tzinfo=UTC))) == 12
+    assert len(gdelt_slices(origin, datetime(2010, 2, 1, tzinfo=UTC))) == 5
+
+
+def _gdelt_page(prefix: str, count: int) -> bytes:
+    articles = [
+        {"url": f"https://exemple.media/{prefix}-{index}", "title": f"{prefix} {index}", "seendate": "20100615T120000Z"}
+        for index in range(count)
+    ]
+    return json.dumps({"articles": articles}).encode()
+
+
+def test_full_gdelt_page_is_reread_by_year_then_month_and_every_article_is_stored(tmp_path):
+    def fetch(url, _timeout):
+        if "news.google.com" in url or "gdeltproject.org" not in url:
+            return b"<rss><channel></channel></rss>"
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+        start = query.get("startdatetime", ["20100101000000"])[0]
+        end = query.get("enddatetime", [""])[0]
+        assert "maxrecords=250" in url
+        if not end:
+            return _gdelt_page("plein", 250)
+        opened = datetime.strptime(start, "%Y%m%d%H%M%S").replace(tzinfo=UTC)
+        closed = datetime.strptime(end, "%Y%m%d%H%M%S").replace(tzinfo=UTC)
+        days = (closed - opened).days
+        if days > 40:
+            return _gdelt_page(f"annee-{start}", 250)
+        if days > 7:
+            if start.startswith("201001"):
+                return _gdelt_page("janvier", 250)
+            return _gdelt_page(f"mois-{start}", 1)
+        return _gdelt_page(f"semaine-{start}", 1)
+
+    with _client(tmp_path) as client:
+        db = _session(client)
+        moment = datetime(2012, 3, 15, tzinfo=UTC)
+        history = collect_history(db, TENANT_ID, years=1, fetch=fetch, now=moment, names=["Zoubeida Mentest"])
+        urls = list(db.scalars(select(AdverseMediaArticle.url).where(AdverseMediaArticle.tenant_id == TENANT_ID)))
+        assert history["stored"] == len(urls) == 31
+        assert not any("/plein-" in url or "/annee-" in url or "/janvier-" in url for url in urls)
+        assert any(url.startswith("https://exemple.media/mois-201002") for url in urls)
+        assert any(url.startswith("https://exemple.media/semaine-20100101") for url in urls)
+        assert any(url.startswith("https://exemple.media/mois-201101") for url in urls)
 
 
 def test_failed_archive_names_google_and_gdelt(tmp_path):

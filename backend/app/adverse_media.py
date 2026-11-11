@@ -2218,16 +2218,54 @@ def gdelt_person_query(name: str) -> str:
     return f'"{clean}" ({_GDELT_THEMES})'
 
 
-def gdelt_person_url(name: str) -> str:
+def gdelt_person_url(name: str, start: datetime | None = None, end: datetime | None = None) -> str:
+    moment = start or datetime(2010, 1, 1, tzinfo=UTC)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
     params = {
         "query": gdelt_person_query(name),
         "mode": "ArtList",
         "format": "json",
-        "startdatetime": _GDELT_START,
+        "startdatetime": moment.astimezone(UTC).strftime("%Y%m%d%H%M%S"),
         "maxrecords": str(_GDELT_MAX_RECORDS),
         "sort": "DateDesc",
     }
+    if end is not None:
+        finish = end if end.tzinfo else end.replace(tzinfo=UTC)
+        params["enddatetime"] = finish.astimezone(UTC).strftime("%Y%m%d%H%M%S")
     return f"{_GDELT_DOC}?{urllib.parse.urlencode(params, quote_via=urllib.parse.quote)}"
+
+
+def _gdelt_advance(moment: datetime, unit: str) -> datetime:
+    if unit == "year":
+        return moment.replace(year=moment.year + 1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    if unit == "month":
+        year = moment.year + (1 if moment.month == 12 else 0)
+        month = 1 if moment.month == 12 else moment.month + 1
+        return moment.replace(year=year, month=month, day=1, hour=0, minute=0, second=0, microsecond=0)
+    if unit == "week":
+        return moment + timedelta(days=7)
+    return moment + timedelta(days=1)
+
+
+def gdelt_slices(start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
+    """Split a full GDELT page by year, then month, then week, then day."""
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=UTC)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=UTC)
+    for unit in ("year", "month", "week", "day"):
+        slices: list[tuple[datetime, datetime]] = []
+        cursor = start
+        while cursor < end:
+            nxt = min(_gdelt_advance(cursor, unit), end)
+            if nxt <= cursor:
+                break
+            slices.append((cursor, nxt))
+            cursor = nxt
+        if len(slices) >= 2:
+            return slices
+    return []
 
 
 def remember_gdelt_name(db: Session, tenant_id: str, name: str) -> None:
@@ -2319,7 +2357,7 @@ def collect_history(
     call_timeout: int = 15,
     names: list[str] | None = None,
 ) -> dict:
-    """Read five years of Google News, then one GDELT call per searched name. Never called by a name search."""
+    """Read five years of Google News, then every GDELT article for each searched name. Never called by a name search."""
     span = _history_span(years)
     windows = _year_windows(span, now)
     google = _google_source(db, tenant_id)
@@ -2350,25 +2388,48 @@ def collect_history(
             stored += added
         if progress is not None:
             progress(index, stored, f"Archives {index}/{span} ans")
-    for offset, person in enumerate(people, start=1):
+    origin = datetime(2010, 1, 1, tzinfo=UTC)
+    finish = now or utcnow()
+    if finish.tzinfo is None:
+        finish = finish.replace(tzinfo=UTC)
+
+    def _read_gdelt(person: str, step: int, start: datetime | None, end: datetime | None) -> None:
+        nonlocal retrieved, stored
+        window = ""
+        if start is not None and end is not None:
+            window = f" · {start.date().isoformat()} → {end.date().isoformat()}"
         if progress is not None:
-            progress(span + offset - 1, stored, f"GDELT · {person}")
+            progress(step, stored, f"GDELT · {person}{window}")
         try:
-            payload = _archive_fetch(fetch, gdelt_person_url(person), call_timeout, 20)
-            items = parse_gdelt(payload)[:_GDELT_MAX_RECORDS]
+            payload = _archive_fetch(fetch, gdelt_person_url(person, start, end), call_timeout, 20)
+            items = parse_gdelt(payload)
         except AdverseMediaError as exc:
             errors.append(f"GDELT : {exc.message}")
-            continue
+            return
         except Exception as exc:
             errors.append(f"GDELT : {getattr(exc, 'message', None) or exc.__class__.__name__}")
-            continue
+            return
+        opened = start or origin
+        closed = end or finish
+        if len(items) >= _GDELT_MAX_RECORDS:
+            children = gdelt_slices(opened, closed)
+            if children:
+                for child_start, child_end in children:
+                    _read_gdelt(person, step, child_start, child_end)
+                return
+            errors.append(f"GDELT : {person} {opened.date().isoformat()} encore limité à {_GDELT_MAX_RECORDS} articles.")
         kept, added = _store_items(db, gdelt or google, items)
         retrieved += kept
         stored += added
+
+    for offset, person in enumerate(people, start=1):
+        _read_gdelt(person, span + offset - 1, None, None)
     if progress is not None:
         progress(span + len(people), stored, "Analyse des articles")
-    for _round in range(8):
+    for _round in range(400):
         outcome = process_queue(db, tenant_id, limit=25)
+        if progress is not None and _round % 4 == 0:
+            progress(span + len(people), stored, "Analyse des articles")
         if not outcome["analyzed"] and not outcome["failed"]:
             break
     db.flush()
@@ -2474,7 +2535,7 @@ def search_report(db: Session, tenant_id: str, name: str, dob: str | None = None
     if contract["screening_status"] == "NoRelevantMediaFound":
         contract["screening_meaning"] = (
             "La recherche lit les articles déjà collectés. Le batch lit les médias tunisiens, cinq ans de Google Actualités, "
-            "puis GDELT depuis 2010 pour chaque nom déjà recherché. "
+            "puis GDELT depuis 2010 pour chaque nom déjà recherché. Une page pleine est relue par année, puis par mois, et tous les articles sont stockés. "
             "Aucun article lu ne décrit une allégation, une enquête, des poursuites ou une condamnation. "
             "Cela ne signifie pas que la personne n'a pas de médias défavorables."
         )
